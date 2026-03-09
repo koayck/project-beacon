@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
+import uuid
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.genai import types as genai_types
 from pydantic import BaseModel
 
 from backend.db.repository import init_db, asset_repo, mission_log_repo
@@ -27,14 +33,41 @@ logging.basicConfig(
 udp_listener = UDPTelemetryListener()
 ws_broadcaster = TelemetryBroadcaster()
 grpc_client = DroneGrpcClient()
+_adk_runner: Runner | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _adk_runner
+
     await init_db()
     await udp_listener.start(on_update=ws_broadcaster.broadcast)
+
+    # Inject gRPC client into tool layer
+    from backend.tools.drone_commands import set_client
+    set_client(grpc_client)
+
+    # Re-register gRPC connections for assets already in the DB (survive restarts)
+    for asset in await asset_repo.list_all():
+        grpc_client.register(asset.asset_id, asset.grpc_host, asset.grpc_port)
+        logging.getLogger(__name__).info(
+            "Restored gRPC connection: %s → %s:%s",
+            asset.asset_id, asset.grpc_host, asset.grpc_port,
+        )
+
+    # Build ADK runner (lazy import avoids circular deps at module load)
+    from backend.agents.commander import commander
+    _adk_runner = Runner(
+        agent=commander,
+        session_service=InMemorySessionService(),
+        app_name="beacon",
+    )
+    logging.getLogger(__name__).info("ADK commander agent ready")
+
     yield
+
     await udp_listener.stop()
+    grpc_client.close_all()
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -174,24 +207,166 @@ async def scan_frequencies() -> dict:
 @app.post("/command")
 async def send_command(req: CommandRequest) -> dict:
     """
-    Send a natural language command to a drone.
-    Phase 3: routes through ADK + LLM. For now, direct gRPC passthrough.
+    Send a natural language command through the ADK Commander Agent.
+    The agent routes to Navigation or Thermal sub-agents via LiteLLM → Ollama.
     """
+    if _adk_runner is None:
+        raise HTTPException(status_code=503, detail="ADK runner not initialised")
+
     asset = await asset_repo.get(req.asset_id)
     if not asset:
         raise HTTPException(status_code=404, detail=f"{req.asset_id} not uplinked")
 
-    # Phase 3 placeholder — direct move for now
-    result = await grpc_client.get_status(req.asset_id)
+    # Include asset context so the agent knows which drone to act on
+    prompt = f"Asset: {req.asset_id}. Command: {req.prompt}"
+    content = genai_types.Content(
+        role="user", parts=[genai_types.Part(text=prompt)]
+    )
+
+    session_id = str(uuid.uuid4())
+    await _adk_runner.session_service.create_session(
+        app_name="beacon",
+        user_id="gcs",
+        session_id=session_id,
+    )
+
+    response_text = ""
+    async for event in _adk_runner.run_async(
+        user_id="gcs",
+        session_id=session_id,
+        new_message=content,
+    ):
+        if event.is_final_response() and event.content and event.content.parts:
+            response_text = event.content.parts[0].text
 
     await mission_log_repo.create(MissionLog(
         asset_id=req.asset_id,
         command="natural_language",
         params=req.prompt,
-        result=str(result),
+        result=response_text,
     ))
 
-    return {"asset_id": req.asset_id, "result": result, "prompt": req.prompt}
+    return {"asset_id": req.asset_id, "response": response_text, "prompt": req.prompt}
+
+
+@app.post("/command/stream")
+async def send_command_stream(req: CommandRequest) -> StreamingResponse:
+    """
+    Stream ADK agent events via Server-Sent Events.
+    Emits tool_call, tool_result, text, and done events as they happen.
+    """
+    if _adk_runner is None:
+        raise HTTPException(status_code=503, detail="ADK runner not initialised")
+
+    asset = await asset_repo.get(req.asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail=f"{req.asset_id} not uplinked")
+
+    prompt = f"Asset: {req.asset_id}. Command: {req.prompt}"
+    content = genai_types.Content(
+        role="user", parts=[genai_types.Part(text=prompt)]
+    )
+
+    session_id = str(uuid.uuid4())
+    await _adk_runner.session_service.create_session(
+        app_name="beacon",
+        user_id="gcs",
+        session_id=session_id,
+    )
+
+    async def generate() -> AsyncGenerator[str, None]:
+        final_text = ""
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def adk_loop() -> None:
+            """Run ADK in a background task, pushing events to the queue."""
+            try:
+                async for event in _adk_runner.run_async(
+                    user_id="gcs",
+                    session_id=session_id,
+                    new_message=content,
+                ):
+                    await queue.put(("event", event))
+            except Exception as exc:
+                await queue.put(("error", exc))
+            finally:
+                await queue.put(("end", None))
+
+        async def heartbeat() -> None:
+            """Emit periodic keepalive so the frontend knows we're alive."""
+            elapsed = 0
+            while True:
+                await asyncio.sleep(3)
+                elapsed += 3
+                await queue.put(("heartbeat", elapsed))
+
+        adk_task = asyncio.create_task(adk_loop())
+        hb_task = asyncio.create_task(heartbeat())
+
+        try:
+            while True:
+                kind, data = await queue.get()
+
+                if kind == "heartbeat":
+                    yield f"data: {json.dumps({'type': 'heartbeat', 'elapsed': data})}\n\n"
+                    continue
+
+                if kind == "error":
+                    yield f"data: {json.dumps({'type': 'error', 'text': str(data)})}\n\n"
+                    break
+
+                if kind == "end":
+                    break
+
+                # kind == "event"
+                event = data
+                if not event.content or not event.content.parts:
+                    continue
+                for part in event.content.parts:
+                    if part.function_call:
+                        payload = {
+                            "type": "tool_call",
+                            "name": part.function_call.name,
+                            "args": dict(part.function_call.args or {}),
+                            "agent": event.author,
+                        }
+                        yield f"data: {json.dumps(payload)}\n\n"
+                    elif part.function_response:
+                        resp = dict(part.function_response.response or {})
+                        payload = {
+                            "type": "tool_result",
+                            "name": part.function_response.name,
+                            "success": resp.get("success", True),
+                            "result": resp.get("message", str(resp)),
+                        }
+                        yield f"data: {json.dumps(payload)}\n\n"
+                    elif part.text and part.text.strip():
+                        if event.is_final_response():
+                            final_text = part.text
+                            payload = {"type": "final", "text": part.text, "agent": event.author}
+                        else:
+                            payload = {"type": "text", "text": part.text, "agent": event.author}
+                        yield f"data: {json.dumps(payload)}\n\n"
+        finally:
+            hb_task.cancel()
+            await asyncio.gather(adk_task, return_exceptions=True)
+            await mission_log_repo.create(MissionLog(
+                asset_id=req.asset_id,
+                command="natural_language",
+                params=req.prompt,
+                result=final_text,
+            ))
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ── WebSocket telemetry stream ─────────────────────────────────────────────────
