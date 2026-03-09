@@ -1,0 +1,55 @@
+version: "3.9"
+
+# Simulated MANET — each service is an isolated drone node on the beacon-net bridge.
+# The host machine (commander node) reaches each drone via the exposed gRPC ports.
+# UDP telemetry is broadcast to 255.255.255.255; the host receives it via the bridge interface.
+
+networks:
+  beacon-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+services:
+  beacon-01:
+    build:
+      context: .
+      dockerfile: drone-sim/Dockerfile
+    environment:
+      - ASSET_ID=BEACON-01
+      - GRPC_PORT=50051
+      - PYTHONUNBUFFERED=1
+    networks:
+      beacon-net:
+        ipv4_address: 172.28.0.11
+    ports:
+      - "50051:50051"  # gRPC exposed to host
+
+  beacon-02:
+    build:
+      context: .
+      dockerfile: drone-sim/Dockerfile
+    environment:
+      - ASSET_ID=BEACON-02
+      - GRPC_PORT=50051
+      - PYTHONUNBUFFERED=1
+    networks:
+      beacon-net:
+        ipv4_address: 172.28.0.12
+    ports:
+      - "50052:50051"
+
+  beacon-03:
+    build:
+      context: .
+      dockerfile: drone-sim/Dockerfile
+    environment:
+      - ASSET_ID=BEACON-03
+      - GRPC_PORT=50051
+      - PYTHONUNBUFFERED=1
+    networks:
+      beacon-net:
+        ipv4_address: 172.28.0.13
+    ports:
+      - "50053:50051"

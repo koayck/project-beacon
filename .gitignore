@@ -1,0 +1,36 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+.claude/
+
+# Generated gRPC stubs (regenerate with scripts/gen_proto.sh)
+backend/grpc/beacon_pb2.py
+backend/grpc/beacon_pb2_grpc.py
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Tauri
+frontend/src-tauri/target/
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+
+# Logs
+*.log
+logs/
