@@ -52,8 +52,8 @@ class DroneSnapshot:
 
 class DroneSimulator:
     TICK_RATE = 0.1          # seconds per physics tick
-    DRAIN_MOVING = 0.01      # battery % per tick when mobile
-    DRAIN_IDLE = 0.005       # battery % per tick when idle
+    DRAIN_MOVING = 0.005     # battery % per tick when mobile
+    DRAIN_IDLE = 0.0         # no drain while idle (preserves battery for missions)
     ARRIVAL_THRESHOLD = 0.05 # units — close enough to count as arrived
     DEFAULT_SPEED = 5.0      # units/sec
 
@@ -126,7 +126,11 @@ class DroneSimulator:
             time.sleep(self.TICK_RATE)
 
     def _tick(self, s: DroneSnapshot) -> DroneSnapshot:
-        if s.battery <= 0.0:
+        if s.battery <= 0.0 and s.status in (
+            DroneStatus.MOVING, DroneStatus.SCANNING, DroneStatus.RETURNING,
+        ):
+            # Battery depleted while in motion — force-land, but allow new
+            # commands once battery is reset or if status is already IDLE.
             return DroneSnapshot(
                 asset_id=s.asset_id,
                 position=s.position,
