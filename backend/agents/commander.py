@@ -1,24 +1,37 @@
 """
-Commander Agent — Phase 3 (ADK + Ollama)
-
-Scaffold only. Full implementation requires:
-  - Ollama running locally: `ollama serve`
-  - Qwen model pulled: `ollama pull qwen2.5:4b`
-  - google-adk and litellm installed
-
-Wire into backend/app.py POST /command to replace the direct gRPC passthrough.
+Commander Agent — root agent that routes natural language commands
+to the Navigation or Thermal sub-agent.
 """
 from __future__ import annotations
 
-# Phase 3 TODO:
-# from google.adk.agents import Agent
-# from google.adk.tools import FunctionTool
-# from backend.tools.drone_commands import move_drone_to, return_to_base, scan_area
-# from backend.tools.swarm_ops import deploy_swarm, recall_swarm
-#
-# commander = Agent(
-#     name="commander",
-#     model="ollama/qwen2.5:4b",
-#     description="Routes drone swarm commands to the appropriate sub-agent.",
-#     tools=[move_drone_to, return_to_base, scan_area, deploy_swarm, recall_swarm],
-# )
+from google.adk.agents import Agent
+
+from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
+from backend.agents.navigation import navigation_agent
+from backend.agents.thermal import thermal_agent
+from backend.tools.swarm_ops import deploy_swarm, recall_swarm
+
+commander = Agent(
+    name="commander",
+    model=QWEN3_INSTRUCT,
+    description="Root agent. Routes drone swarm commands to the correct specialist sub-agent.",
+    generate_content_config=QWEN3_GEN_CONFIG,
+    instruction="""You are the Ground Control Station commander for an autonomous drone swarm.
+
+You receive natural language commands and route them to the correct specialist:
+- navigation_agent: movement, positioning, waypoints, returning to base, status checks
+- thermal_agent: scanning, thermal imaging, survivor detection, heat signatures
+
+For swarm-wide operations (deploy all drones, recall all drones), use deploy_swarm
+or recall_swarm directly.
+
+Guidelines:
+- Always extract the asset_id from the command (e.g. "BEACON-01", "beacon-01" → "BEACON-01")
+- If no specific drone is mentioned, ask the user to specify one or list available drones
+- Confirm every action taken with a clear status report
+- If an action fails, explain why and suggest alternatives
+- Keep responses concise and operational
+""",
+    sub_agents=[navigation_agent, thermal_agent],
+    tools=[deploy_swarm, recall_swarm],
+)
