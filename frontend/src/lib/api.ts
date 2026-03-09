@@ -1,0 +1,91 @@
+const BASE = 'http://localhost:8000'
+
+export interface CommandResponse {
+  asset_id: string
+  response: string
+  prompt: string
+}
+
+export type AgentStreamEvent =
+  | { type: 'tool_call'; name: string; args: Record<string, unknown>; agent: string }
+  | { type: 'tool_result'; name: string; success: boolean; result: string }
+  | { type: 'text'; text: string; agent: string }
+  | { type: 'final'; text: string; agent: string }
+  | { type: 'heartbeat'; elapsed: number }
+  | { type: 'error'; text: string }
+  | { type: 'done' }
+
+export interface UplinkResponse {
+  asset_id: string
+  grpc_host: string
+  grpc_port: number
+  message: string
+}
+
+export interface DiscoveredDrone {
+  asset_id: string
+  x: number
+  y: number
+  z: number
+  battery: number
+  status: string
+  signal_pct: number
+}
+
+export async function uplink(assetId: string): Promise<UplinkResponse> {
+  const res = await fetch(`${BASE}/uplink/${assetId}`, { method: 'POST' })
+  if (!res.ok) throw new Error(`Uplink failed: ${res.status}`)
+  return res.json()
+}
+
+export async function sendCommand(assetId: string, prompt: string): Promise<CommandResponse> {
+  const res = await fetch(`${BASE}/command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ asset_id: assetId, prompt }),
+  })
+  if (!res.ok) throw new Error(`Command failed: ${res.status}`)
+  return res.json()
+}
+
+export async function scan(): Promise<{ discovered: DiscoveredDrone[] }> {
+  const res = await fetch(`${BASE}/scan`)
+  if (!res.ok) throw new Error(`Scan failed: ${res.status}`)
+  return res.json()
+}
+
+export async function* streamCommand(
+  assetId: string,
+  prompt: string,
+): AsyncGenerator<AgentStreamEvent> {
+  const res = await fetch(`${BASE}/command/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ asset_id: assetId, prompt }),
+  })
+  if (!res.ok) throw new Error(`Command stream failed: ${res.status}`)
+  const reader = res.body!.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        try { yield JSON.parse(line.slice(6)) as AgentStreamEvent } catch { /* ignore */ }
+      }
+    }
+  }
+}
+
+export async function healthCheck(): Promise<boolean> {
+  try {
+    const res = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(2000) })
+    return res.ok
+  } catch {
+    return false
+  }
+}
