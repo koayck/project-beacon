@@ -8,6 +8,12 @@ export interface TelemetryPayload {
   battery: number
   status: string
   timestamp_ms: number
+  // environment awareness fields (enriched by drone-sim world sensor)
+  nearby_obstacles?: number
+  nearest_obstacle_dist?: number
+  survivors_in_range?: number
+  over_flood?: boolean
+  altitude_agl?: number
 }
 
 export type DroneMap = Record<string, TelemetryPayload>
