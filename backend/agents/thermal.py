@@ -5,13 +5,8 @@ from __future__ import annotations
 
 from google.adk.agents import Agent
 
+from backend.agents._mcp import THERMAL_TOOLS, make_toolset
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
-from backend.tools.drone_commands import (
-    get_drone_status,
-    get_drone_view,
-    scan_area,
-    sweep_scan_building,
-)
 
 _DESCRIPTION = (
     "Handles thermal imaging, area scanning, and survivor detection. "
@@ -61,6 +56,7 @@ def make_thermal_agent(name: str = "thermal_agent") -> Agent:
     """
     Factory — ADK requires each agent instance to have exactly one parent.
     Call this once per parent (scan_workflow, direct use) to get separate instances.
+    Each call creates a fresh McpToolset so ADK's single-parent rule is satisfied.
     """
     return Agent(
         name=name,
@@ -69,7 +65,7 @@ def make_thermal_agent(name: str = "thermal_agent") -> Agent:
         generate_content_config=QWEN3_GEN_CONFIG,
         output_key="thermal_result",
         instruction=_INSTRUCTION,
-        tools=[scan_area, sweep_scan_building, get_drone_status, get_drone_view],
+        tools=[make_toolset(THERMAL_TOOLS)],
     )
 
 

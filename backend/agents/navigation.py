@@ -5,15 +5,8 @@ from __future__ import annotations
 
 from google.adk.agents import Agent
 
+from backend.agents._mcp import NAV_TOOLS, make_toolset
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
-from backend.tools.drone_commands import (
-    get_drone_status,
-    move_drone_to,
-    plan_route,
-    plan_sweep_pattern,
-    resolve_scan_target,
-    return_to_base,
-)
 
 _INSTRUCTION = """You are a navigation specialist for autonomous drones.
 
@@ -66,14 +59,7 @@ _SCAN_MODE_PREFIX = """SCAN TARGET NORMALISATION (scan workflow only)
 
 """
 
-_TOOLS = [
-    plan_route,
-    move_drone_to,
-    return_to_base,
-    get_drone_status,
-    plan_sweep_pattern,
-    resolve_scan_target,
-]
+_TOOLS = NAV_TOOLS
 
 _DESCRIPTION = (
     "Handles all drone movement and flight path planning. "
@@ -86,6 +72,7 @@ def make_navigation_agent(name: str = "navigation_agent", scan_mode: bool = Fals
     """
     Factory — ADK requires each agent instance to have exactly one parent.
     Call this once per parent (commander, scan_workflow) to get separate instances.
+    Each call creates a fresh McpToolset so ADK's single-parent rule is satisfied.
     """
     return Agent(
         name=name,
@@ -94,7 +81,7 @@ def make_navigation_agent(name: str = "navigation_agent", scan_mode: bool = Fals
         generate_content_config=QWEN3_GEN_CONFIG,
         output_key="nav_result",
         instruction=f"{_SCAN_MODE_PREFIX}{_INSTRUCTION}" if scan_mode else _INSTRUCTION,
-        tools=_TOOLS,
+        tools=[make_toolset(_TOOLS)],
     )
 
 

@@ -1,29 +1,12 @@
-"""Commander agent backed by MCP tools for fleet discovery and control."""
+"""Commander agent — routes natural language commands to specialist sub-agents."""
 from __future__ import annotations
 
-import os
-
 from google.adk.agents import Agent
-from google.adk.tools.mcp_tool.mcp_session_manager import (
-    StreamableHTTPConnectionParams,
-)
-from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 
+from backend.agents._mcp import SWARM_TOOLS, make_toolset
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
 from backend.agents.navigation import navigation_agent
 from backend.agents.thermal import thermal_agent
-from backend.tools.swarm_ops import deploy_swarm, recall_swarm
-
-
-_MCP_URL = os.environ.get("BEACON_MCP_URL", "http://127.0.0.1:8000/mcp/")
-
-beacon_mcp_toolset = McpToolset(
-    connection_params=StreamableHTTPConnectionParams(
-        url=_MCP_URL,
-        timeout=10.0,
-        sse_read_timeout=60.0,
-    ),
-)
 
 commander = Agent(
     name="commander",
@@ -47,6 +30,5 @@ Guidelines:
 - Keep responses concise and operational
 """,
     sub_agents=[navigation_agent, thermal_agent],
-    tools=[deploy_swarm, recall_swarm],
-    # tools=[beacon_mcp_toolset],
+    tools=[make_toolset(SWARM_TOOLS)],
 )

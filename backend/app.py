@@ -63,6 +63,9 @@ async def app_lifespan(app: FastAPI):
     await udp_listener.start(on_update=ws_broadcaster.broadcast)
     await restore_registered_connections()
 
+    from backend.tools.drone_commands import set_client as _set_drone_cmd_client
+    _set_drone_cmd_client(grpc_client)
+
     for asset in await asset_repo.list_all():
         logging.getLogger(__name__).info(
             "Restored gRPC connection: %s -> %s:%s",

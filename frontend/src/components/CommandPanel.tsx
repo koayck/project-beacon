@@ -6,7 +6,6 @@ import type { AgentStreamEvent } from '@/lib/api'
 interface AgentMessage {
   role: 'user' | 'agent'
   lines: string[]
-  lines: string[]
   ts: number
 }
 
@@ -40,7 +39,7 @@ function messagesToText(messages: AgentMessage[]): string {
     .join('\n\n')
 }
 
-export default function CommandPanel({ assetId, connected, battery, onCommand, onStop }: Props) {
+export default function CommandPanel({ assetId, connected, uplinked, battery, onCommand, onStop }: Props) {
   const [input, setInput]       = useState('')
   const [busy, setBusy]         = useState(false)
   const [elapsed, setElapsed]   = useState(0)

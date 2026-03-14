@@ -7,7 +7,7 @@ import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import CommandPanel from './CommandPanel'
 import { useTelemetry, type DroneMap } from '@/lib/ws'
-import { uplink, streamCommand, healthCheck, type AgentStreamEvent } from '@/lib/api'
+import { uplink, streamCommand, healthCheck, getFleet, type AgentStreamEvent } from '@/lib/api'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -868,7 +868,7 @@ const WS_URL   = 'ws://localhost:8000/ws/telemetry'
 
 export default function SARScene() {
   const [log, setLog]       = useState<string[]>(['Connecting to backend...'])
-  const [connected, setConnected] = useState(false)
+  const [uplinked, setUplinked] = useState(false)
   const [hoverPt, setHoverPt]     = useState<THREE.Vector3 | null>(null)
   const [copied, setCopied]       = useState(false)
   const [followBeacon, setFollowBeacon] = useState(false)
@@ -890,7 +890,8 @@ export default function SARScene() {
     [telemetry?.x, telemetry?.y, telemetry?.z]
   )
   const droneStatus = telemetry?.status ?? 'IDLE'
-  const battery = telemetry?.battery ?? null
+  const battery   = telemetry?.battery ?? null
+  const connected = telemetry !== null
 
   const addLog = useCallback((msg: string) => {
     setLog(prev => [...prev.slice(-6), msg])

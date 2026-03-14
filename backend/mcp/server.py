@@ -13,6 +13,12 @@ from backend.services.drone_control import (
     thermal_scan,
 )
 from backend.services.fleet import discover_fleet, ensure_uplink
+from backend.tools.drone_commands import (
+    get_drone_view,
+    plan_route,
+    resolve_scan_target,
+    sweep_scan_building,
+)
 
 beacon_mcp = FastMCP(
     name="Project Beacon MCP",
@@ -105,3 +111,62 @@ def plan_sweep_pattern_tool(
 ) -> dict:
     """Generate a lawnmower sweep over a rectangular area."""
     return plan_sweep_pattern(min_x, min_y, max_x, max_y, altitude, spacing)
+
+
+@beacon_mcp.tool(name="plan_route")
+async def plan_route_tool(
+    asset_id: str,
+    target_x: float,
+    target_z: float,
+    target_y: float | None = None,
+    snap_to_building_center: bool = False,
+) -> dict:
+    """
+    Pre-compute a collision-free route from the drone's current position to target
+    (target_x, target_z). Returns ordered waypoints for the caller to execute via
+    move_drone_to. Altitude (target_y) is auto-calculated when omitted.
+    """
+    return await plan_route(asset_id, target_x, target_z, target_y, snap_to_building_center)
+
+
+@beacon_mcp.tool(name="resolve_scan_target")
+def resolve_scan_target_tool(
+    target_x: float,
+    target_z: float,
+    margin: float = 3.0,
+) -> dict:
+    """
+    Resolve a scan target to the nearest building footprint when the point is on or
+    near a building. Returns building bounds and recommended scan altitude.
+    """
+    return resolve_scan_target(target_x, target_z, margin)
+
+
+@beacon_mcp.tool(name="get_drone_view")
+async def get_drone_view_tool(
+    asset_id: str,
+    heading_deg: float = 0.0,
+    detection_range: float = 20.0,
+) -> dict:
+    """
+    Get what the drone can currently see from its position: nearby buildings,
+    visible survivors, terrain type, altitude above ground level, and obstacles ahead.
+    """
+    return await get_drone_view(asset_id, heading_deg, detection_range)
+
+
+@beacon_mcp.tool(name="sweep_scan_building")
+async def sweep_scan_building_tool(
+    asset_id: str,
+    target_x: float | None = None,
+    target_z: float | None = None,
+    scan_radius: float = 8.0,
+    level_step: float = 3.0,
+    standoff: float = 2.0,
+) -> dict:
+    """
+    Execute a full-height perimeter sweep scan around a building above water level.
+    Routes safely to each waypoint, runs scan_area at each point, and returns a
+    structured coverage report with survivor counts per level.
+    """
+    return await sweep_scan_building(asset_id, target_x, target_z, scan_radius, level_step, standoff)
