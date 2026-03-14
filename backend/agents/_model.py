@@ -20,7 +20,7 @@ from google.genai import types as genai_types
 litellm.drop_params = True
 
 QWEN3_INSTRUCT = LiteLlm(
-    model="ollama_chat/qwen3.5:4b",
+    model="ollama_chat/qwen3.5:9b",
     think=False,  # Ollama-native: disables Qwen3 extended thinking (80s → 7s)
 )
 
