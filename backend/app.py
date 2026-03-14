@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import subprocess
 import uuid
 from contextlib import asynccontextmanager
@@ -34,6 +35,10 @@ udp_listener = UDPTelemetryListener()
 ws_broadcaster = TelemetryBroadcaster()
 grpc_client = DroneGrpcClient()
 _adk_runner: Runner | None = None
+
+_ASSET_ID_PATTERN = re.compile(r"^BEACON-(\d+)$")
+_DOCKER_IMAGE = "project-beacon-drone-sim"
+_DOCKER_NETWORK = "beacon-net"
 
 
 @asynccontextmanager
@@ -102,6 +107,67 @@ class CommandRequest(BaseModel):
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+def _extract_asset_index(asset_id: str) -> int | None:
+    match = _ASSET_ID_PATTERN.fullmatch(asset_id.upper())
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _list_docker_asset_ids() -> set[str]:
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "-a", "--format", "{{.Names}}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return set()
+
+    if result.returncode != 0:
+        return set()
+
+    asset_ids: set[str] = set()
+    for raw_name in result.stdout.splitlines():
+        asset_id = raw_name.strip().upper()
+        if _extract_asset_index(asset_id) is not None:
+            asset_ids.add(asset_id)
+    return asset_ids
+
+
+async def _allocate_spawn_identity() -> tuple[str, int]:
+    registered = {asset.asset_id for asset in await asset_repo.list_all()}
+    discovered = set(udp_listener.get_known_assets())
+    docker_assets = _list_docker_asset_ids()
+
+    used_indices = {
+        idx
+        for asset_id in registered | discovered | docker_assets
+        if (idx := _extract_asset_index(asset_id)) is not None
+    }
+
+    next_idx = 1
+    while next_idx in used_indices:
+        next_idx += 1
+
+    return f"BEACON-{next_idx:02d}", 50050 + next_idx
+
+
+def _assert_container_running(container_name: str) -> None:
+    result = subprocess.run(
+        ["docker", "inspect", "--format", "{{.State.Running}}", container_name],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0 and result.stdout.strip().lower() == "true":
+        return
+
+    detail = result.stderr.strip() or result.stdout.strip() or "container exited immediately"
+    raise HTTPException(status_code=500, detail=f"Spawn failed for {container_name}: {detail}")
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -120,28 +186,32 @@ async def spawn_drone(req: SpawnRequest) -> dict:
     Spin up a new simulated drone Docker container.
     The container will start broadcasting UDP heartbeats immediately.
     """
-    # Count existing assets to assign the next ID
-    existing = await asset_repo.list_all()
-    idx = len(existing) + 1
-    asset_id = f"BEACON-{idx:02d}"
-    grpc_port = 50050 + idx
+    asset_id, grpc_port = await _allocate_spawn_identity()
+    container_name = asset_id.lower()
 
     try:
-        subprocess.Popen(
+        result = subprocess.run(
             [
                 "docker", "run", "-d", "--rm",
-                "--network", "beacon-net",
+                "--network", _DOCKER_NETWORK,
                 "-e", f"ASSET_ID={asset_id}",
                 "-e", f"GRPC_PORT=50051",
                 "-p", f"{grpc_port}:50051",
-                "--name", asset_id.lower(),
-                "project-beacon-drone-sim",
+                "--name", container_name,
+                _DOCKER_IMAGE,
             ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
         )
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail="Docker not available")
+
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "docker run failed"
+        raise HTTPException(status_code=500, detail=f"Failed to spawn {asset_id}: {detail}")
+
+    _assert_container_running(container_name)
 
     return {
         "asset_id": asset_id,
