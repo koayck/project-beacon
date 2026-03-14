@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 
-from backend.tools.drone_commands import _get_client
+from backend.tools.drone_commands import _get_client, return_to_base
 
 # Pre-defined formation offsets (x, y, z) relative to base
 _FORMATIONS: dict[str, list[tuple[float, float, float]]] = {
@@ -32,9 +32,15 @@ async def deploy_swarm(asset_ids: list[str], formation: str = "spread") -> dict:
 
 
 async def recall_swarm(asset_ids: list[str]) -> dict:
-    """Command all drones in the list to return to base immediately."""
-    client = _get_client()
-    results = await asyncio.gather(
-        *[client.return_to_base(aid) for aid in asset_ids]
+    """Command all drones in the list to return to base using safe routed return."""
+    results_raw = await asyncio.gather(
+        *[return_to_base(aid) for aid in asset_ids],
+        return_exceptions=True,
     )
+    results: list[dict] = []
+    for aid, result in zip(asset_ids, results_raw):
+        if isinstance(result, Exception):
+            results.append({"asset_id": aid, "error": str(result)})
+        else:
+            results.append(result)
     return {"recalled": asset_ids, "results": list(results)}

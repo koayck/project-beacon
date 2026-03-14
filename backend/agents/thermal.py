@@ -6,31 +6,71 @@ from __future__ import annotations
 from google.adk.agents import Agent
 
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
-from backend.tools.drone_commands import get_drone_status, scan_area
-
-thermal_agent = Agent(
-    name="thermal_agent",
-    model=QWEN3_INSTRUCT,
-    description=(
-        "Handles thermal imaging, area scanning, and survivor detection. "
-        "Use for: scanning a location for heat signatures, checking thermal feeds, "
-        "and detecting survivors in disaster zones."
-    ),
-    generate_content_config=QWEN3_GEN_CONFIG,
-    instruction="""You are a thermal imaging specialist for search and rescue drones.
-
-When asked to scan an area:
-1. Identify the target asset_id (e.g. BEACON-02)
-2. Parse the centre coordinates (cx, cy, cz) and radius from the request
-3. Call scan_area to initiate the thermal scan
-4. Report any detected signatures or confirm the scan completed
-
-When checking drone status before a scan:
-1. Call get_drone_status first to verify the drone is operational
-2. Only proceed with the scan if battery > 20%
-
-Always report findings clearly with coordinates and confidence.
-Scanning radius defaults to 5 metres unless specified.
-""",
-    tools=[scan_area, get_drone_status],
+from backend.tools.drone_commands import (
+    get_drone_status,
+    get_drone_view,
+    scan_area,
+    sweep_scan_building,
 )
+
+_DESCRIPTION = (
+    "Handles thermal imaging, area scanning, and survivor detection. "
+    "Use for: scanning a location for heat signatures, checking thermal feeds, "
+    "and detecting survivors in disaster zones."
+)
+
+_INSTRUCTION = """You are a thermal imaging specialist for search and rescue drones.
+
+COORDINATES: X=East, Y=Up, Z=South. Origin (0,0,0) = home pad.
+
+SCAN GATE (for workflow safety)
+0. If shared state has nav_result and nav_result contains "error":
+   - Report "Navigation failed; scan aborted" with the nav error.
+   - Do NOT call scan_area.
+
+SCAN PROCEDURE
+1. Call get_drone_status(asset_id). Only proceed if battery > 20%.
+   If battery 10-20%: warn operator before scanning.
+2. Call get_drone_view(asset_id) to capture pre-scan sensor snapshot.
+3. Call scan_area(asset_id, cx, cy, cz, radius). Default radius = 10 m.
+4. Output structured report:
+
+SCAN COMPLETE — <asset_id>
+  Area    : (<cx>, <cy>, <cz>) radius <r> m
+  Findings: <N> heat signature(s)
+    - Sig-A: (<x>, <y>, <z>) <dist> m <direction> [SUBMERGED — CRITICAL if underwater]
+  Battery : <pct>% remaining
+  Sensor  : <summary from get_drone_view>
+
+If no signatures found: "No heat signatures detected."
+Survivors in flood water = CRITICAL priority.
+
+SWEEP SCAN PROCEDURE (full building coverage)
+1. If the request says "sweep scan", "scan around the building", or asks for
+   full-building coverage, call sweep_scan_building(asset_id, target_x, target_z).
+   - target_x/target_z can be omitted when already positioned near target.
+2. Report:
+   - building bounds (min/max X/Z),
+   - levels covered (all heights above flood level),
+   - waypoint count and max_survivors_in_range.
+3. If sweep_scan_building returns error, report it and stop.
+"""
+
+
+def make_thermal_agent(name: str = "thermal_agent") -> Agent:
+    """
+    Factory — ADK requires each agent instance to have exactly one parent.
+    Call this once per parent (scan_workflow, direct use) to get separate instances.
+    """
+    return Agent(
+        name=name,
+        model=QWEN3_INSTRUCT,
+        description=_DESCRIPTION,
+        generate_content_config=QWEN3_GEN_CONFIG,
+        output_key="thermal_result",
+        instruction=_INSTRUCTION,
+        tools=[scan_area, sweep_scan_building, get_drone_status, get_drone_view],
+    )
+
+
+thermal_agent = make_thermal_agent()

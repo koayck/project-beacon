@@ -9,34 +9,94 @@ from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
 from backend.tools.drone_commands import (
     get_drone_status,
     move_drone_to,
+    plan_route,
     plan_sweep_pattern,
+    resolve_scan_target,
     return_to_base,
 )
 
-navigation_agent = Agent(
-    name="navigation_agent",
-    model=QWEN3_INSTRUCT,
-    description=(
-        "Handles all drone movement and flight path planning. "
-        "Use for: moving drones to specific coordinates, returning drones to base, "
-        "checking drone status, and planning sweep patterns over an area."
-    ),
-    generate_content_config=QWEN3_GEN_CONFIG,
-    instruction="""You are a navigation specialist for autonomous drones.
+_INSTRUCTION = """You are a navigation specialist for autonomous drones.
 
-When given a movement command:
-1. Identify the target asset_id (e.g. BEACON-01)
-2. Parse the target coordinates (x, y, z) from the request
-3. Call move_drone_to with the correct parameters
-4. Report the result clearly
+COORDINATES: X=East, Y=Up, Z=South. Origin (0,0,0) = home pad.
 
-When asked to plan a sweep:
-1. Parse the area bounds (min_x, min_y, max_x, max_y)
-2. Call plan_sweep_pattern to generate waypoints
-3. Then move the drone through each waypoint in sequence
+MOVE PROCEDURE
+1. Call plan_route(asset_id, target_x, target_z, target_y).
+   - Omit target_y unless the operator gave a specific altitude.
+2. If plan_route returns {"error": "No clear route found"}:
+   - Call get_drone_status(asset_id) and retry plan_route with target_y=max(current_y+5, 10).
+   - If it still returns error, retry once more with target_y=max(current_y+10, 15).
+   - If retry 2 also fails, report the route failure and stop. Do NOT call move_drone_to.
+3. Once plan_route succeeds, report the "summary" to the operator.
+4. For each waypoint in "waypoints", call move_drone_to(asset_id, wp.x, wp.y, wp.z).
+5. After the final move: "BEACON-XX arrived at (x, y, z)."
 
-Always confirm success or report errors clearly.
-Coordinates are in metres. Altitude (z) should be at least 5.0 unless specified.
-""",
-    tools=[move_drone_to, return_to_base, get_drone_status, plan_sweep_pattern],
+BLOCKED RECOVERY: if a move reports BLOCKED, call get_drone_status(asset_id) and
+recompute using plan_route from the live position before continuing.
+
+RETURN PROCEDURE
+1. For return-home commands, call return_to_base(asset_id).
+2. return_to_base already performs obstacle-aware routing before final landing.
+3. If it returns an "error", report it and stop.
+
+EXAMPLE — scan building (Y auto-calculated)
+  "Navigate BEACON-01 to building at (-15, -20)"
+  → plan_route("BEACON-01", -15.0, -20.0)
+  → 3 waypoints: climb to 15m, cruise, descend to 17m (building top 12m + 5m)
+  → move_drone_to for each waypoint
+  → "BEACON-01 arrived at (-15.0, 17.0, -20.0). Route: 3 waypoints, over strategy."
+
+EXAMPLE — explicit altitude
+  "Move BEACON-01 to (10, 20, -5)"
+  → plan_route("BEACON-01", 10.0, -5.0, 20.0)
+  → 1 waypoint: direct path clear
+  → move_drone_to("BEACON-01", 10.0, 20.0, -5.0)
+  → "BEACON-01 moving to (10.0, 20.0, -5.0)."
+
+SWEEP PROCEDURE (unchanged)
+1. Call plan_sweep_pattern to get waypoints.
+2. Move through waypoints in sequence.
+"""
+
+_SCAN_MODE_PREFIX = """SCAN TARGET NORMALISATION (scan workflow only)
+1. Call resolve_scan_target(target_x, target_z) first.
+2. If matched_building=true, use resolved_target.x/z (building center) and
+   recommended_scan_y when calling plan_route.
+3. Call plan_route(asset_id, resolved_x, resolved_z, resolved_y, snap_to_building_center=true).
+4. Include building bounds (min/max X/Z) from tool output in your operator update.
+
+"""
+
+_TOOLS = [
+    plan_route,
+    move_drone_to,
+    return_to_base,
+    get_drone_status,
+    plan_sweep_pattern,
+    resolve_scan_target,
+]
+
+_DESCRIPTION = (
+    "Handles all drone movement and flight path planning. "
+    "Use for: moving drones to specific coordinates, returning drones to base, "
+    "checking drone status, and planning sweep patterns over an area."
 )
+
+
+def make_navigation_agent(name: str = "navigation_agent", scan_mode: bool = False) -> Agent:
+    """
+    Factory — ADK requires each agent instance to have exactly one parent.
+    Call this once per parent (commander, scan_workflow) to get separate instances.
+    """
+    return Agent(
+        name=name,
+        model=QWEN3_INSTRUCT,
+        description=_DESCRIPTION,
+        generate_content_config=QWEN3_GEN_CONFIG,
+        output_key="nav_result",
+        instruction=f"{_SCAN_MODE_PREFIX}{_INSTRUCTION}" if scan_mode else _INSTRUCTION,
+        tools=_TOOLS,
+    )
+
+
+# Default singleton — used directly by commander for movement-only tasks
+navigation_agent = make_navigation_agent()

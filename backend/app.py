@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
@@ -18,6 +19,11 @@ from pydantic import BaseModel
 from backend.db.repository import init_db, asset_repo, mission_log_repo
 from backend.db.models import Asset, MissionLog
 from backend.grpc.client import DroneGrpcClient
+from backend.output_format import (
+    is_structured_sweep_report,
+    is_sweep_scan_prompt,
+    prefer_structured_sweep_report,
+)
 from backend.telemetry.udp_listener import UDPTelemetryListener
 from backend.telemetry.ws_bridge import TelemetryBroadcaster
 from backend.licensing.routes import router as license_router
@@ -231,13 +237,32 @@ async def send_command(req: CommandRequest) -> dict:
     )
 
     response_text = ""
+    text_candidates: list[str] = []
+    sweep_prompt = is_sweep_scan_prompt(req.prompt)
     async for event in _adk_runner.run_async(
         user_id="gcs",
         session_id=session_id,
         new_message=content,
     ):
-        if event.is_final_response() and event.content and event.content.parts:
-            response_text = event.content.parts[0].text
+        if not event.content or not event.content.parts:
+            continue
+
+        for part in event.content.parts:
+            if part.text and part.text.strip():
+                text_candidates.append(part.text)
+
+        if event.is_final_response():
+            for part in event.content.parts:
+                if part.text and part.text.strip():
+                    response_text = part.text
+                    break
+
+    if sweep_prompt:
+        response_text = prefer_structured_sweep_report(
+            prompt=req.prompt,
+            text_candidates=text_candidates,
+            fallback_text=response_text,
+        )
 
     await mission_log_repo.create(MissionLog(
         asset_id=req.asset_id,
@@ -277,6 +302,11 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
     async def generate() -> AsyncGenerator[str, None]:
         final_text = ""
         queue: asyncio.Queue = asyncio.Queue()
+        stream_start = time.perf_counter()
+        first_token_time: float | None = None
+        total_chars = 0
+        sweep_prompt = is_sweep_scan_prompt(req.prompt)
+        preferred_sweep_report: str | None = None
 
         async def adk_loop() -> None:
             """Run ADK in a background task, pushing events to the queue."""
@@ -341,6 +371,26 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                         }
                         yield f"data: {json.dumps(payload)}\n\n"
                     elif part.text and part.text.strip():
+                        if sweep_prompt and is_structured_sweep_report(part.text):
+                            if preferred_sweep_report is None:
+                                preferred_sweep_report = part.text
+                                if first_token_time is None:
+                                    first_token_time = time.perf_counter()
+                                total_chars += len(part.text)
+                                payload = {"type": "text", "text": part.text, "agent": event.author}
+                                yield f"data: {json.dumps(payload)}\n\n"
+                            final_text = preferred_sweep_report
+                            continue
+
+                        if sweep_prompt and preferred_sweep_report is not None:
+                            # Suppress follow-on paraphrase text after structured sweep report.
+                            if event.is_final_response():
+                                final_text = preferred_sweep_report
+                            continue
+
+                        if first_token_time is None:
+                            first_token_time = time.perf_counter()
+                        total_chars += len(part.text)
                         if event.is_final_response():
                             final_text = part.text
                             payload = {"type": "final", "text": part.text, "agent": event.author}
@@ -349,14 +399,19 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                         yield f"data: {json.dumps(payload)}\n\n"
         finally:
             hb_task.cancel()
-            await asyncio.gather(adk_task, return_exceptions=True)
+            adk_task.cancel()
+            await asyncio.gather(adk_task, hb_task, return_exceptions=True)
             await mission_log_repo.create(MissionLog(
                 asset_id=req.asset_id,
                 command="natural_language",
                 params=req.prompt,
                 result=final_text,
             ))
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            now = time.perf_counter()
+            ttft_ms = round((first_token_time - stream_start) * 1000, 1) if first_token_time else None
+            gen_secs = (now - first_token_time) if first_token_time else None
+            tps = round((total_chars / 4) / gen_secs, 1) if gen_secs and gen_secs > 0 else None
+            yield f"data: {json.dumps({'type': 'done', 'ttft_ms': ttft_ms, 'tps': tps})}\n\n"
 
     return StreamingResponse(
         generate(),
