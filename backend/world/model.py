@@ -153,10 +153,15 @@ class WorldModel:
         fx: float, fy: float, fz: float,
         tx: float, ty: float, tz: float,
         samples: int = 20,
+        margin: float = 0.0,
     ) -> list[Building]:
         """
         Return any buildings whose AABB is intersected by the line segment
         from (fx,fy,fz) → (tx,ty,tz), sampled at `samples` points.
+
+        When *margin* > 0 each building's AABB is inflated by that amount
+        on all sides (XZ) and top (Y) before the containment check, catching
+        paths that graze within *margin* metres of a building surface.
         """
         blocked: list[Building] = []
         blocked_set: set[Building] = set()
@@ -166,7 +171,17 @@ class WorldModel:
             sy = fy + (ty - fy) * t
             sz = fz + (tz - fz) * t
             for b in self.buildings:
-                if b not in blocked_set and b.contains_point(sx, sy, sz):
+                if b in blocked_set:
+                    continue
+                if margin > 0.0:
+                    inside = (
+                        b.min_x - margin <= sx <= b.max_x + margin
+                        and b.min_y <= sy <= b.max_y + margin
+                        and b.min_z - margin <= sz <= b.max_z + margin
+                    )
+                else:
+                    inside = b.contains_point(sx, sy, sz)
+                if inside:
                     blocked_set.add(b)
                     blocked.append(b)
         return blocked

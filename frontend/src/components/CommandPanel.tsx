@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import type { AgentStreamEvent } from '@/lib/api'
+import { setDroneSpeed, resetDroneToBase } from '@/lib/api'
 
 interface AgentMessage {
   role: 'user' | 'agent'
@@ -48,6 +49,8 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
   const [tps, setTps]           = useState<number | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied]     = useState(false)
+  const [fastMode, setFastMode] = useState(false)
+  const [resetting, setResetting] = useState(false)
   const copiedTimer             = useRef<ReturnType<typeof setTimeout> | null>(null)
   const bottomRef               = useRef<HTMLDivElement>(null)
 
@@ -79,6 +82,27 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
     if (copiedTimer.current) clearTimeout(copiedTimer.current)
     copiedTimer.current = setTimeout(() => setCopied(false), 1800)
   }, [messages])
+
+  const toggleSpeed = useCallback(async () => {
+    if (!connected) return
+    const next = !fastMode
+    setFastMode(next)
+    try {
+      await setDroneSpeed(assetId, next ? 20.0 : 5.0)
+    } catch {
+      setFastMode(!next) // revert on failure
+    }
+  }, [assetId, connected, fastMode])
+
+  const handleReset = useCallback(async () => {
+    if (!connected || resetting) return
+    setResetting(true)
+    try {
+      await resetDroneToBase(assetId)
+    } finally {
+      setResetting(false)
+    }
+  }, [assetId, connected, resetting])
 
   const submit = async () => {
     const text = input.trim()
@@ -265,6 +289,55 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
           </div>
         ))}
         <div ref={bottomRef} />
+      </div>
+
+      {/* Quick-action bar */}
+      <div style={{
+        display: 'flex',
+        gap: 6,
+        padding: '5px 10px',
+        borderTop: '1px solid rgba(80, 120, 200, 0.15)',
+        alignItems: 'center',
+      }}>
+        <span style={{ color: '#334', fontSize: 10, letterSpacing: 1, marginRight: 2 }}>DIRECT</span>
+        <button
+          onClick={toggleSpeed}
+          disabled={!connected}
+          title={fastMode ? 'Switch to normal speed (5 m/s)' : 'Switch to fast speed (20 m/s)'}
+          style={{
+            background: fastMode ? 'rgba(255, 180, 0, 0.15)' : 'transparent',
+            border: `1px solid ${fastMode ? 'rgba(255,180,0,0.45)' : 'rgba(80,120,200,0.25)'}`,
+            borderRadius: 4,
+            color: !connected ? '#334' : fastMode ? '#ffcc44' : '#5af',
+            padding: '2px 10px',
+            cursor: !connected ? 'default' : 'pointer',
+            fontFamily: 'Courier New, monospace',
+            fontSize: 11,
+            letterSpacing: 0.5,
+            transition: 'all 0.15s',
+          }}
+        >
+          {fastMode ? '⚡ FAST' : '⚡ NORMAL'}
+        </button>
+        <button
+          onClick={handleReset}
+          disabled={!connected || resetting}
+          title="Immediately return drone to base (bypasses ADK)"
+          style={{
+            background: resetting ? 'rgba(0,200,255,0.10)' : 'transparent',
+            border: `1px solid ${resetting ? 'rgba(0,200,255,0.4)' : 'rgba(80,120,200,0.25)'}`,
+            borderRadius: 4,
+            color: (!connected || resetting) ? '#334' : '#4cf',
+            padding: '2px 10px',
+            cursor: (!connected || resetting) ? 'default' : 'pointer',
+            fontFamily: 'Courier New, monospace',
+            fontSize: 11,
+            letterSpacing: 0.5,
+            transition: 'all 0.15s',
+          }}
+        >
+          {resetting ? '↩ RETURNING...' : '↩ RESET TO BASE'}
+        </button>
       </div>
 
       {/* Input row */}

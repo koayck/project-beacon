@@ -4,19 +4,18 @@ from fastmcp import FastMCP
 
 from backend.services.drone_control import (
     deploy_swarm,
-    get_drone_status,
-    move_drone_to,
     plan_sweep_pattern,
-    recall_swarm,
-    return_to_base,
-    scan_area,
-    thermal_scan,
 )
+from backend.tools.swarm_ops import recall_swarm
 from backend.services.fleet import discover_fleet, ensure_uplink
 from backend.tools.drone_commands import (
+    get_drone_status,
     get_drone_view,
+    move_drone_to,
     plan_route,
     resolve_scan_target,
+    return_to_base,
+    scan_area,
     sweep_scan_building,
 )
 
@@ -54,7 +53,7 @@ async def establish_uplink(asset_id: str) -> dict:
 
 @beacon_mcp.tool(name="move_drone_to")
 async def move_drone_to_tool(
-    asset_id: str, x: float, y: float, z: float, speed: float = 5.0
+    asset_id: str, x: float, y: float, z: float, speed: float | None = None
 ) -> dict:
     """Move a specific drone to the provided coordinates."""
     return await move_drone_to(asset_id, x, y, z, speed)
@@ -71,7 +70,7 @@ async def thermal_scan_tool(
     asset_id: str, cx: float, cy: float, cz: float, radius: float = 5.0
 ) -> dict:
     """Perform a thermal scan around a point in the disaster zone."""
-    return await thermal_scan(asset_id, cx, cy, cz, radius)
+    return await scan_area(asset_id, cx, cy, cz, radius)
 
 
 @beacon_mcp.tool(name="scan_area")

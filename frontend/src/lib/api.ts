@@ -106,6 +106,20 @@ export async function* streamCommand(
   }
 }
 
+export async function setDroneSpeed(assetId: string, speed: number): Promise<void> {
+  const res = await fetch(`${BASE}/drone/${assetId}/speed`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ speed }),
+  })
+  if (!res.ok) throw new Error(`Set speed failed: ${res.status}`)
+}
+
+export async function resetDroneToBase(assetId: string): Promise<void> {
+  const res = await fetch(`${BASE}/drone/${assetId}/reset`, { method: 'POST' })
+  if (!res.ok) throw new Error(`Reset failed: ${res.status}`)
+}
+
 export async function healthCheck(): Promise<boolean> {
   try {
     const res = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(2000) })

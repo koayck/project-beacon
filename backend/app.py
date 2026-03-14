@@ -108,6 +108,10 @@ class SpawnRequest(BaseModel):
     asset_class: str = "scout_quadcopter"
 
 
+class SpeedRequest(BaseModel):
+    speed: float
+
+
 class UplinkResponse(BaseModel):
     asset_id: str
     grpc_host: str
@@ -195,6 +199,21 @@ def _build_agent_prompt(req: CommandRequest) -> str:
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.post("/drone/{asset_id}/speed")
+async def set_speed(asset_id: str, req: SpeedRequest) -> dict:
+    """Set the movement speed for all future commands issued to this drone."""
+    from backend.tools.drone_commands import set_drone_speed
+    set_drone_speed(asset_id, req.speed)
+    return {"asset_id": asset_id, "speed": req.speed}
+
+
+@app.post("/drone/{asset_id}/reset")
+async def reset_drone_to_base(asset_id: str) -> dict:
+    """Immediately command a drone to return to base, bypassing the ADK agent."""
+    result = await grpc_client.return_to_base(asset_id)
+    return {"asset_id": asset_id, **result}
 
 
 @app.get("/assets")

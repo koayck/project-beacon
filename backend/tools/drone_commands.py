@@ -20,6 +20,18 @@ if TYPE_CHECKING:
 
 _client: DroneGrpcClient | None = None
 
+_NORMAL_SPEED = 5.0
+_FAST_SPEED = 20.0
+_drone_speeds: dict[str, float] = {}
+
+
+def set_drone_speed(asset_id: str, speed: float) -> None:
+    _drone_speeds[asset_id] = speed
+
+
+def get_drone_speed(asset_id: str) -> float:
+    return _drone_speeds.get(asset_id, _NORMAL_SPEED)
+
 
 def set_client(client: DroneGrpcClient) -> None:
     global _client
@@ -59,10 +71,10 @@ async def list_all_drones() -> dict:
 
 
 async def move_drone_to(
-    asset_id: str, x: float, y: float, z: float, speed: float = 5.0
+    asset_id: str, x: float, y: float, z: float, speed: float | None = None
 ) -> dict:
     """Move a drone to the given X/Y/Z coordinates at the specified speed."""
-    return await _get_client().move_to(asset_id, x, y, z, speed)
+    return await _get_client().move_to(asset_id, x, y, z, speed if speed is not None else get_drone_speed(asset_id))
 
 
 async def _wait_until_waypoint_reached(
@@ -73,14 +85,46 @@ async def _wait_until_waypoint_reached(
     tolerance: float = 0.6,
     timeout_s: float = 60.0,
     poll_s: float = 0.2,
+    blocked_retries: int = 2,
 ) -> dict:
     """
     Poll drone status until it reaches a waypoint, is blocked, or times out.
+
+    On BLOCKED, re-plans from the drone's current position to the target
+    waypoint up to *blocked_retries* times.  Retries use ``blocked_retries=0``
+    to prevent infinite recursion.
     """
     client = _get_client()
     elapsed = 0.0
     while elapsed <= timeout_s:
         status = await client.get_status(asset_id)
+
+        if status.get("status") == "BLOCKED" and blocked_retries > 0:
+            # Re-plan from the drone's current (blocked) position to target
+            route = await plan_route(asset_id, x, z, y)
+            if "error" not in route:
+                for wp in route["waypoints"]:
+                    await client.move_to(asset_id, wp["x"], wp["y"], wp["z"], get_drone_speed(asset_id))
+                    sub = await _wait_until_waypoint_reached(
+                        asset_id,
+                        wp["x"],
+                        wp["y"],
+                        wp["z"],
+                        tolerance=tolerance,
+                        timeout_s=timeout_s,
+                        poll_s=poll_s,
+                        blocked_retries=0,  # prevent infinite recursion
+                    )
+                    if not sub["ok"]:
+                        return sub
+                return {"ok": True, "status": await client.get_status(asset_id)}
+            # Re-plan failed — fall through to error
+            return {
+                "ok": False,
+                "error": "Drone blocked and re-plan failed",
+                "status": status,
+            }
+
         if status.get("status") == "BLOCKED":
             return {
                 "ok": False,
@@ -134,7 +178,7 @@ async def return_to_base(asset_id: str) -> dict:
 
     waypoints = route.get("waypoints", [])
     for wp in waypoints:
-        move_result = await client.move_to(asset_id, wp["x"], wp["y"], wp["z"], 5.0)
+        move_result = await client.move_to(asset_id, wp["x"], wp["y"], wp["z"], get_drone_speed(asset_id))
         if not move_result.get("success", True):
             return {
                 "asset_id": asset_id,
@@ -152,7 +196,7 @@ async def return_to_base(asset_id: str) -> dict:
             }
 
     final_wp = {"x": 0.0, "y": 0.0, "z": 0.0, "reason": "final landing at home pad"}
-    final_move_result = await client.move_to(asset_id, final_wp["x"], final_wp["y"], final_wp["z"], 5.0)
+    final_move_result = await client.move_to(asset_id, final_wp["x"], final_wp["y"], final_wp["z"], get_drone_speed(asset_id))
     if not final_move_result.get("success", True):
         return {
             "asset_id": asset_id,
@@ -427,7 +471,7 @@ async def sweep_scan_building(
                 route_wp["x"],
                 route_wp["y"],
                 route_wp["z"],
-                5.0,
+                get_drone_speed(asset_id),
             )
             if not move_result.get("success", True):
                 return {
@@ -605,7 +649,7 @@ async def plan_route(
         }
 
     # ── Check direct path ─────────────────────────────────────────────────
-    obstacles = WORLD.obstacles_in_path(cx, cy, cz, target_x, target_y, target_z, samples=40)
+    obstacles = WORLD.obstacles_in_path(cx, cy, cz, target_x, target_y, target_z, samples=40, margin=1.0)
     if not obstacles:
         return {
             "asset_id": asset_id,
@@ -624,12 +668,12 @@ async def plan_route(
     max_obstacle_h = max(b.max_y for b in obstacles)
     clearance_y = max_obstacle_h + 5.0
 
-    seg_climb = WORLD.obstacles_in_path(cx, cy, cz, cx, clearance_y, cz, samples=20)
+    seg_climb = WORLD.obstacles_in_path(cx, cy, cz, cx, clearance_y, cz, samples=20, margin=1.0)
     seg_cruise = WORLD.obstacles_in_path(
-        cx, clearance_y, cz, target_x, clearance_y, target_z, samples=40,
+        cx, clearance_y, cz, target_x, clearance_y, target_z, samples=40, margin=1.0,
     )
     seg_descend = WORLD.obstacles_in_path(
-        target_x, clearance_y, target_z, target_x, target_y, target_z, samples=20,
+        target_x, clearance_y, target_z, target_x, target_y, target_z, samples=20, margin=1.0,
     )
 
     if not seg_climb and not seg_cruise and not seg_descend:
@@ -686,9 +730,9 @@ async def plan_route(
         wp_x = mid_x + sign * perp_x * offset_dist
         wp_z = mid_z + sign * perp_z * offset_dist
 
-        seg1 = WORLD.obstacles_in_path(cx, cy, cz, wp_x, fly_y, wp_z, samples=40)
+        seg1 = WORLD.obstacles_in_path(cx, cy, cz, wp_x, fly_y, wp_z, samples=40, margin=1.0)
         seg2 = WORLD.obstacles_in_path(
-            wp_x, fly_y, wp_z, target_x, target_y, target_z, samples=40,
+            wp_x, fly_y, wp_z, target_x, target_y, target_z, samples=40, margin=1.0,
         )
         if not seg1 and not seg2:
             waypoints = [
