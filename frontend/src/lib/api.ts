@@ -32,6 +32,19 @@ export interface DiscoveredDrone {
   signal_pct: number
 }
 
+export interface FleetDrone {
+  asset_id: string
+  active: boolean
+  uplinked: boolean
+  battery: number | null
+  status: string
+  x: number | null
+  y: number | null
+  z: number | null
+  grpc_host: string | null
+  grpc_port: number | null
+}
+
 export async function uplink(assetId: string): Promise<UplinkResponse> {
   const res = await fetch(`${BASE}/uplink/${assetId}`, { method: 'POST' })
   if (!res.ok) throw new Error(`Uplink failed: ${res.status}`)
@@ -51,6 +64,12 @@ export async function sendCommand(assetId: string, prompt: string): Promise<Comm
 export async function scan(): Promise<{ discovered: DiscoveredDrone[] }> {
   const res = await fetch(`${BASE}/scan`)
   if (!res.ok) throw new Error(`Scan failed: ${res.status}`)
+  return res.json()
+}
+
+export async function getFleet(): Promise<{ fleet: FleetDrone[]; count: number; active_count: number }> {
+  const res = await fetch(`${BASE}/fleet`)
+  if (!res.ok) throw new Error(`Fleet lookup failed: ${res.status}`)
   return res.json()
 }
 

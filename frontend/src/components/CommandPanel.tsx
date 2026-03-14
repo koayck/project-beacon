@@ -5,13 +5,14 @@ import type { AgentStreamEvent } from '@/lib/api'
 
 interface AgentMessage {
   role: 'user' | 'agent'
-  lines: string[]   // rendered lines (supports live append)
+  lines: string[]
   ts: number
 }
 
 interface Props {
   assetId: string
   connected: boolean
+  uplinked: boolean
   battery: number | null
   onCommand: (prompt: string, onEvent: (e: AgentStreamEvent) => void) => Promise<void>
 }
@@ -20,14 +21,14 @@ function formatToolCall(name: string, args: Record<string, unknown>, agent: stri
   const argStr = Object.entries(args)
     .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
     .join(', ')
-  return `[${agent}] → ${name}(${argStr})`
+  return `[${agent}] -> ${name}(${argStr})`
 }
 
 function formatToolResult(name: string, success: boolean, result: string): string {
   return `  ${success ? '✓' : '✗'} ${name}: ${result}`
 }
 
-export default function CommandPanel({ assetId, connected, battery, onCommand }: Props) {
+export default function CommandPanel({ assetId, connected, uplinked, battery, onCommand }: Props) {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [elapsed, setElapsed] = useState(0)
@@ -55,7 +56,6 @@ export default function CommandPanel({ assetId, connected, battery, onCommand }:
     setInput('')
     setElapsed(0)
     setMessages(prev => [...prev, { role: 'user', lines: [text], ts: Date.now() }])
-    // Seed an empty agent message that we'll fill progressively
     setMessages(prev => [...prev, { role: 'agent', lines: [], ts: Date.now() }])
     setBusy(true)
 
@@ -102,7 +102,6 @@ export default function CommandPanel({ assetId, connected, battery, onCommand }:
       backdropFilter: 'blur(6px)',
       boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
     }}>
-      {/* Header bar */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -112,15 +111,15 @@ export default function CommandPanel({ assetId, connected, battery, onCommand }:
       }}>
         <span style={{
           width: 8, height: 8, borderRadius: '50%',
-          background: connected ? '#33ff88' : '#ff4444',
-          boxShadow: connected ? '0 0 6px #33ff88' : '0 0 6px #ff4444',
+          background: connected ? '#33ff88' : uplinked ? '#ffcc66' : '#ff4444',
+          boxShadow: connected ? '0 0 6px #33ff88' : uplinked ? '0 0 6px #ffcc66' : '0 0 6px #ff4444',
           flexShrink: 0,
         }} />
-        <span style={{ color: connected ? '#33ff88' : '#ff6666', fontWeight: 'bold', letterSpacing: 1 }}>
+        <span style={{ color: connected ? '#33ff88' : uplinked ? '#ffcc66' : '#ff6666', fontWeight: 'bold', letterSpacing: 1 }}>
           {assetId}
         </span>
         <span style={{ color: '#445', marginLeft: 4 }}>
-          {connected ? 'UPLINKED' : 'OFFLINE'}
+          {connected ? 'LIVE' : uplinked ? 'REGISTERED / OFFLINE' : 'OFFLINE'}
         </span>
         {battery !== null && (
           <span style={{
@@ -135,7 +134,6 @@ export default function CommandPanel({ assetId, connected, battery, onCommand }:
         </span>
       </div>
 
-      {/* Message log */}
       <div style={{
         height: 200,
         overflowY: 'auto',
@@ -148,6 +146,8 @@ export default function CommandPanel({ assetId, connected, battery, onCommand }:
           <div style={{ color: '#334', fontStyle: 'italic', marginTop: 4 }}>
             {connected
               ? 'Type a natural language command...'
+              : uplinked
+              ? 'Drone is registered, but no live telemetry is arriving.'
               : 'Waiting for backend connection...'}
           </div>
         )}
@@ -167,7 +167,7 @@ export default function CommandPanel({ assetId, connected, battery, onCommand }:
                 )}
                 {m.lines.map((line, i) => (
                   <div key={i} style={{
-                    color: line.startsWith('[') && line.includes('→')
+                    color: line.startsWith('[') && line.includes('->')
                       ? '#7af'        // tool call
                       : line.startsWith('  ✓')
                       ? '#4c8'        // tool success
@@ -186,7 +186,6 @@ export default function CommandPanel({ assetId, connected, battery, onCommand }:
         <div ref={bottomRef} />
       </div>
 
-      {/* Input row */}
       <div style={{
         display: 'flex',
         gap: 0,
@@ -197,7 +196,7 @@ export default function CommandPanel({ assetId, connected, battery, onCommand }:
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKey}
           disabled={busy || !connected}
-          placeholder={connected ? 'e.g. "move BEACON-01 to floor 2"' : 'backend offline'}
+          placeholder={connected ? 'e.g. "scan the south-east quadrant for survivors"' : 'live telemetry required'}
           style={{
             flex: 1,
             background: 'transparent',

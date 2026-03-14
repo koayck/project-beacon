@@ -6,7 +6,7 @@ import { useRef, useState, useEffect, useMemo, useCallback } from 'react'
 import * as THREE from 'three'
 import CommandPanel from './CommandPanel'
 import { useTelemetry } from '@/lib/ws'
-import { uplink, streamCommand, healthCheck, type AgentStreamEvent } from '@/lib/api'
+import { getFleet, uplink, streamCommand, healthCheck, type AgentStreamEvent } from '@/lib/api'
 
 // ── Constants (1:1 from test.py) ──────────────────────────────────────────────
 
@@ -352,6 +352,7 @@ const WS_URL   = 'ws://localhost:8000/ws/telemetry'
 export default function SARScene() {
   const [log, setLog] = useState<string[]>(['Connecting to backend...'])
   const [connected, setConnected] = useState(false)
+  const [uplinked, setUplinked] = useState(false)
   const drones = useTelemetry(WS_URL)
 
   const telemetry = drones[ASSET_ID] ?? null
@@ -366,6 +367,10 @@ export default function SARScene() {
     setLog(prev => [...prev.slice(-6), msg])
   }, [])
 
+  useEffect(() => {
+    setConnected(!!telemetry)
+  }, [telemetry])
+
   // Auto-uplink on mount
   useEffect(() => {
     let mounted = true
@@ -378,14 +383,23 @@ export default function SARScene() {
       try {
         await uplink(ASSET_ID)
         if (mounted) {
-          setConnected(true)
+          setUplinked(true)
           addLog(`✓ ${ASSET_ID} uplinked — agent ready`)
         }
       } catch {
-        // Already uplinked or scan needed — still mark connected
         if (mounted) {
-          setConnected(true)
-          addLog(`✓ ${ASSET_ID} online`)
+          try {
+            const fleet = await getFleet()
+            const asset = fleet.fleet.find(item => item.asset_id === ASSET_ID)
+            if (asset?.uplinked) {
+              setUplinked(true)
+              addLog(`✓ ${ASSET_ID} registered with commander`)
+            } else {
+              addLog(`⚠ ${ASSET_ID} not discoverable yet — start the drone container first`)
+            }
+          } catch {
+            addLog(`⚠ Failed to verify ${ASSET_ID} status`)
+          }
         }
       }
     }
@@ -447,6 +461,7 @@ export default function SARScene() {
       <CommandPanel
         assetId={ASSET_ID}
         connected={connected}
+        uplinked={uplinked}
         battery={battery}
         onCommand={handleCommand}
       />
