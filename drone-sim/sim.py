@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import NamedTuple
 
+from world import next_position_blocked
+
 
 class DroneStatus(str, Enum):
     IDLE = "IDLE"
@@ -14,6 +16,7 @@ class DroneStatus(str, Enum):
     SCANNING = "SCANNING"
     RETURNING = "RETURNING"
     ERROR = "ERROR"
+    BLOCKED = "BLOCKED"
 
 
 class Vec3(NamedTuple):
@@ -158,6 +161,22 @@ class DroneSimulator:
                     speed=s.speed,
                 )
             new_pos = s.position.step_toward(s.target, s.speed * self.TICK_RATE)
+
+            # ── Collision check — stop before entering a building ─────────
+            blocker = next_position_blocked(
+                s.position.x, s.position.y, s.position.z,
+                new_pos.x, new_pos.y, new_pos.z,
+            )
+            if blocker is not None:
+                return DroneSnapshot(
+                    asset_id=s.asset_id,
+                    position=s.position,  # stay put
+                    battery=max(0.0, s.battery - self.DRAIN_MOVING),
+                    status=DroneStatus.BLOCKED,
+                    target=s.target,
+                    speed=s.speed,
+                )
+
             return DroneSnapshot(
                 asset_id=s.asset_id,
                 position=new_pos,

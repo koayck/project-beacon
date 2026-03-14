@@ -8,6 +8,7 @@ service DroneControl {
   rpc GetStatus     (StatusRequest)    returns (DroneStatus);
   rpc ReturnToBase  (ReturnRequest)    returns (CommandResponse);
   rpc ScanArea      (ScanAreaRequest)  returns (CommandResponse);
+  rpc GetView       (ViewRequest)      returns (ViewResponse);
 }
 
 // ── Requests ──────────────────────────────────────────────
@@ -36,6 +37,12 @@ message ScanAreaRequest {
   float  radius   = 5;
 }
 
+message ViewRequest {
+  string asset_id    = 1;
+  float  heading_deg = 2;  // 0 = North, 90 = East; 0 = use last heading
+  float  range       = 3;  // detection radius in metres; 0 = use default (20m)
+}
+
 // ── Responses ─────────────────────────────────────────────
 
 message CommandResponse {
@@ -44,11 +51,42 @@ message CommandResponse {
 }
 
 message DroneStatus {
-  string asset_id     = 1;
-  float  x            = 2;
-  float  y            = 3;
-  float  z            = 4;
-  float  battery      = 5;  // 0.0 – 100.0
-  string status       = 6;  // IDLE | MOVING | SCANNING | RETURNING | ERROR
-  int64  timestamp_ms = 7;
+  string asset_id              = 1;
+  float  x                     = 2;
+  float  y                     = 3;
+  float  z                     = 4;
+  float  battery               = 5;  // 0.0 – 100.0
+  string status                = 6;  // IDLE | MOVING | SCANNING | RETURNING | ERROR
+  int64  timestamp_ms          = 7;
+  // Lightweight awareness fields (populated from world model)
+  int32  nearby_obstacles      = 8;
+  float  nearest_obstacle_dist = 9;
+  int32  survivors_in_range    = 10;
+  bool   over_flood            = 11;
+  float  altitude_agl          = 12;
 }
+
+message VisibleObject {
+  string object_type = 1;   // "building" | "survivor"
+  int32  object_id   = 2;
+  float  x           = 3;
+  float  y           = 4;
+  float  z           = 5;
+  float  distance    = 6;
+  string direction   = 7;   // compass label N/NE/E/…
+  string detail      = 8;   // JSON: height, submerged, etc.
+}
+
+message ViewResponse {
+  string               asset_id              = 1;
+  repeated VisibleObject objects             = 2;
+  string               terrain              = 3;  // ground | flooded | building_roof | in_building | airspace
+  float                altitude_agl         = 4;
+  bool                 obstacle_ahead       = 5;
+  float                nearest_obstacle_dist = 6;
+  int32                nearby_obstacles     = 7;
+  int32                survivors_in_range   = 8;
+  bool                 over_flood           = 9;
+  string               summary             = 10;  // human-readable one-liner for LLM
+}
+

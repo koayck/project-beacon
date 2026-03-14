@@ -83,6 +83,48 @@ class DroneGrpcClient:
         )
         return {"success": resp.success, "message": resp.message}
 
+    async def get_view(
+        self,
+        asset_id: str,
+        heading_deg: float = 0.0,
+        detection_range: float = 0.0,
+    ) -> dict:
+        stub = self._stub(asset_id)
+        resp = stub.GetView(
+            beacon_pb2.ViewRequest(
+                asset_id=asset_id,
+                heading_deg=heading_deg,
+                range=detection_range,
+            )
+        )
+        objects = [
+            {
+                "object_type": o.object_type,
+                "object_id": o.object_id,
+                "x": o.x, "y": o.y, "z": o.z,
+                "distance": o.distance,
+                "direction": o.direction,
+                "detail": o.detail,
+            }
+            for o in resp.objects
+        ]
+        return {
+            "asset_id": resp.asset_id,
+            "objects": objects,
+            "terrain": resp.terrain,
+            "altitude_agl": resp.altitude_agl,
+            "obstacle_ahead": resp.obstacle_ahead,
+            "nearest_obstacle_dist": resp.nearest_obstacle_dist,
+            "nearby_obstacles": resp.nearby_obstacles,
+            "survivors_in_range": resp.survivors_in_range,
+            "over_flood": resp.over_flood,
+            "summary": resp.summary,
+        }
+
+    def registered_asset_ids(self) -> list[str]:
+        """Return all asset IDs that have an active gRPC connection."""
+        return list(self._connections.keys())
+
     def close_all(self) -> None:
         for conn in self._connections.values():
             conn.channel.close()

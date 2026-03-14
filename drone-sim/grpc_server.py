@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -20,6 +21,7 @@ except ImportError as exc:
     ) from exc
 
 from sim import DroneSimulator
+from world import get_view
 
 GRPC_PORT = int(os.environ.get("GRPC_PORT", "50051"))
 
@@ -37,6 +39,7 @@ class _DroneControlServicer(beacon_pb2_grpc.DroneControlServicer):
 
     def GetStatus(self, request, context):
         s = self._sim.get_snapshot()
+        view = get_view(s.position.x, s.position.y, s.position.z)
         return beacon_pb2.DroneStatus(
             asset_id=s.asset_id,
             x=s.position.x,
@@ -45,6 +48,11 @@ class _DroneControlServicer(beacon_pb2_grpc.DroneControlServicer):
             battery=s.battery,
             status=s.status.value,
             timestamp_ms=int(time.time() * 1000),
+            nearby_obstacles=view["nearby_obstacles"],
+            nearest_obstacle_dist=view["nearest_obstacle_dist"],
+            survivors_in_range=view["survivors_in_range"],
+            over_flood=view["over_flood"],
+            altitude_agl=view["altitude_agl"],
         )
 
     def ReturnToBase(self, request, context):
@@ -58,6 +66,38 @@ class _DroneControlServicer(beacon_pb2_grpc.DroneControlServicer):
             message=f"Scanning area at ({request.cx:.1f}, {request.cy:.1f}, {request.cz:.1f}) r={request.radius:.1f}",
         )
 
+    def GetView(self, request, context):
+        s = self._sim.get_snapshot()
+        detection_range = request.range if request.range > 0 else 20.0
+        heading = request.heading_deg
+        view = get_view(s.position.x, s.position.y, s.position.z,
+                        heading_deg=heading, detection_range=detection_range)
+
+        objects = [
+            beacon_pb2.VisibleObject(
+                object_type=o["object_type"],
+                object_id=o["object_id"],
+                x=o["x"], y=o["y"], z=o["z"],
+                distance=o["distance"],
+                direction=o["direction"],
+                detail=o["detail"],
+            )
+            for o in view["objects"]
+        ]
+
+        return beacon_pb2.ViewResponse(
+            asset_id=s.asset_id,
+            objects=objects,
+            terrain=view["terrain"],
+            altitude_agl=view["altitude_agl"],
+            obstacle_ahead=view["obstacle_ahead"],
+            nearest_obstacle_dist=view["nearest_obstacle_dist"],
+            nearby_obstacles=view["nearby_obstacles"],
+            survivors_in_range=view["survivors_in_range"],
+            over_flood=view["over_flood"],
+            summary=view["summary"],
+        )
+
 
 def serve(simulator: DroneSimulator, port: int = GRPC_PORT) -> grpc.Server:
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
@@ -67,3 +107,4 @@ def serve(simulator: DroneSimulator, port: int = GRPC_PORT) -> grpc.Server:
     server.add_insecure_port(f"[::]:{port}")
     server.start()
     return server
+

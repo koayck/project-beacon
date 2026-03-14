@@ -7,6 +7,7 @@ import threading
 import time
 
 from sim import DroneSimulator
+from world import get_view
 
 UDP_PORT = int(os.environ.get("TELEMETRY_PORT", "5005"))
 BROADCAST_HOST = os.environ.get("BROADCAST_HOST", "255.255.255.255")
@@ -19,6 +20,7 @@ def _broadcast_loop(simulator: DroneSimulator) -> None:
 
     while True:
         s = simulator.get_snapshot()
+        view = get_view(s.position.x, s.position.y, s.position.z)
         payload = json.dumps({
             "asset_id": s.asset_id,
             "x": round(s.position.x, 3),
@@ -27,6 +29,12 @@ def _broadcast_loop(simulator: DroneSimulator) -> None:
             "battery": round(s.battery, 2),
             "status": s.status.value,
             "timestamp_ms": int(time.time() * 1000),
+            # Lightweight awareness fields
+            "nearby_obstacles": view["nearby_obstacles"],
+            "nearest_obstacle_dist": view["nearest_obstacle_dist"],
+            "survivors_in_range": view["survivors_in_range"],
+            "over_flood": view["over_flood"],
+            "altitude_agl": view["altitude_agl"],
         }).encode()
 
         try:
