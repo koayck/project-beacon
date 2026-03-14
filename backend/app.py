@@ -6,34 +6,36 @@ import re
 import subprocess
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator
+from typing import AsyncGenerator
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastmcp.utilities.lifespan import combine_lifespans
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
 from pydantic import BaseModel
 
-from backend.db.repository import init_db, asset_repo, mission_log_repo
-from backend.db.models import Asset, MissionLog
-from backend.grpc.client import DroneGrpcClient
-from backend.telemetry.udp_listener import UDPTelemetryListener
-from backend.telemetry.ws_bridge import TelemetryBroadcaster
+from backend.db.models import MissionLog
+from backend.db.repository import asset_repo, init_db, mission_log_repo
 from backend.licensing.routes import router as license_router
+from backend.mcp.server import beacon_mcp
+from backend.runtime import grpc_client, udp_listener, ws_broadcaster
+from backend.services.fleet import (
+    discover_fleet,
+    ensure_uplink,
+    restore_registered_connections,
+    scan_frequencies as scan_unlinked_frequencies,
+)
 
 import logging
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
 
-# ── Shared state ──────────────────────────────────────────────────────────────
-
-udp_listener = UDPTelemetryListener()
-ws_broadcaster = TelemetryBroadcaster()
-grpc_client = DroneGrpcClient()
 _adk_runner: Runner | None = None
 
 _ASSET_ID_PATTERN = re.compile(r"^BEACON-(\d+)$")
@@ -41,27 +43,25 @@ _DOCKER_IMAGE = "project-beacon-drone-sim"
 _DOCKER_NETWORK = "beacon-net"
 
 
+_mcp_http_app = beacon_mcp.http_app(path="/", transport="streamable-http")
+
+
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def app_lifespan(app: FastAPI):
     global _adk_runner
 
     await init_db()
     await udp_listener.start(on_update=ws_broadcaster.broadcast)
+    await restore_registered_connections()
 
-    # Inject gRPC client into tool layer
-    from backend.tools.drone_commands import set_client
-    set_client(grpc_client)
-
-    # Re-register gRPC connections for assets already in the DB (survive restarts)
     for asset in await asset_repo.list_all():
-        grpc_client.register(asset.asset_id, asset.grpc_host, asset.grpc_port)
         logging.getLogger(__name__).info(
-            "Restored gRPC connection: %s → %s:%s",
+            "Restored gRPC connection: %s -> %s:%s",
             asset.asset_id, asset.grpc_host, asset.grpc_port,
         )
 
-    # Build ADK runner (lazy import avoids circular deps at module load)
     from backend.agents.commander import commander
+
     _adk_runner = Runner(
         agent=commander,
         session_service=InMemorySessionService(),
@@ -75,9 +75,11 @@ async def lifespan(app: FastAPI):
     grpc_client.close_all()
 
 
-# ── App ───────────────────────────────────────────────────────────────────────
-
-app = FastAPI(title="Project Beacon", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="Project Beacon",
+    version="0.1.0",
+    lifespan=combine_lifespans(app_lifespan, _mcp_http_app.lifespan),
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -86,13 +88,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.mount("/mcp", _mcp_http_app)
 app.include_router(license_router, prefix="/license", tags=["license"])
 
 
-# ── Request / Response schemas ────────────────────────────────────────────────
-
 class SpawnRequest(BaseModel):
     asset_class: str = "scout_quadcopter"
+
 
 class UplinkResponse(BaseModel):
     asset_id: str
@@ -100,12 +102,11 @@ class UplinkResponse(BaseModel):
     grpc_port: int
     message: str
 
+
 class CommandRequest(BaseModel):
-    asset_id: str
-    prompt: str  # natural language — routed through ADK (Phase 3)
+    asset_id: str | None = None
+    prompt: str
 
-
-# ── Routes ────────────────────────────────────────────────────────────────────
 
 def _extract_asset_index(asset_id: str) -> int | None:
     match = _ASSET_ID_PATTERN.fullmatch(asset_id.upper())
@@ -168,6 +169,17 @@ def _assert_container_running(container_name: str) -> None:
     raise HTTPException(status_code=500, detail=f"Spawn failed for {container_name}: {detail}")
 
 
+def _build_agent_prompt(req: CommandRequest) -> str:
+    prompt_parts: list[str] = []
+    if req.asset_id:
+        prompt_parts.append(
+            f"Preferred asset: {req.asset_id}. Use it if it is active and suitable, "
+            "but discover the fleet first before committing to it."
+        )
+    prompt_parts.append(f"Mission: {req.prompt}")
+    return " ".join(prompt_parts)
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -178,6 +190,12 @@ async def list_assets() -> list[dict]:
     """Return all registered drone assets."""
     assets = await asset_repo.list_all()
     return [a.model_dump() for a in assets]
+
+
+@app.get("/fleet")
+async def list_fleet() -> dict:
+    """Return the active fleet state the MCP agent reasons over."""
+    return await discover_fleet(auto_uplink=False, include_registered=True)
 
 
 @app.post("/spawn")
@@ -195,7 +213,8 @@ async def spawn_drone(req: SpawnRequest) -> dict:
                 "docker", "run", "-d", "--rm",
                 "--network", _DOCKER_NETWORK,
                 "-e", f"ASSET_ID={asset_id}",
-                "-e", f"GRPC_PORT=50051",
+                "-e", "GRPC_PORT=50051",
+                "-e", "TELEMETRY_HOST=host.docker.internal",
                 "-p", f"{grpc_port}:50051",
                 "--name", container_name,
                 _DOCKER_IMAGE,
@@ -204,8 +223,8 @@ async def spawn_drone(req: SpawnRequest) -> dict:
             text=True,
             check=False,
         )
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="Docker not available")
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail="Docker not available") from exc
 
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or "docker run failed"
@@ -225,70 +244,32 @@ async def spawn_drone(req: SpawnRequest) -> dict:
 async def establish_uplink(asset_id: str) -> UplinkResponse:
     """
     Lock gRPC channel to a discovered drone and register it in the database.
-    The drone must already be broadcasting heartbeats (detected via UDP scan).
+    The drone must already be broadcasting heartbeats.
     """
-    # Check the drone is broadcasting telemetry
-    known = udp_listener.get_known_assets()
-    if asset_id not in known:
-        raise HTTPException(
-            status_code=404,
-            detail=f"{asset_id} not found. Run /scan first.",
-        )
+    try:
+        result = await ensure_uplink(asset_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=exc.args[0]) from exc
 
-    # Determine gRPC address from asset_id index
-    idx = int(asset_id.split("-")[1])
-    grpc_host = "localhost"
-    grpc_port = 50050 + idx
-
-    # Register in DB
-    asset = Asset(
-        asset_id=asset_id,
-        asset_class="scout_quadcopter",
-        grpc_host=grpc_host,
-        grpc_port=grpc_port,
-    )
-    await asset_repo.upsert(asset)
-
-    # Open gRPC channel
-    grpc_client.register(asset_id, grpc_host, grpc_port)
-
-    return UplinkResponse(
-        asset_id=asset_id,
-        grpc_host=grpc_host,
-        grpc_port=grpc_port,
-        message=f"Uplink established with {asset_id}",
-    )
+    return UplinkResponse(**result)
 
 
 @app.get("/scan")
 async def scan_frequencies() -> dict:
-    """Return drones currently broadcasting heartbeats (not yet uplinked)."""
-    known = udp_listener.get_known_assets()
-    registered = {a.asset_id for a in await asset_repo.list_all()}
-    unlinked = [k for k in known if k not in registered]
-    return {
-        "discovered": [
-            {**known[k], "signal_pct": 98}
-            for k in unlinked
-        ]
-    }
+    """Return drones currently broadcasting heartbeats and not yet uplinked."""
+    return {"discovered": await scan_unlinked_frequencies()}
 
 
 @app.post("/command")
 async def send_command(req: CommandRequest) -> dict:
     """
-    Send a natural language command through the ADK Commander Agent.
-    The agent routes to Navigation or Thermal sub-agents via LiteLLM → Ollama.
+    Send a natural language mission through the ADK commander, which calls MCP
+    tools for fleet discovery and drone control.
     """
     if _adk_runner is None:
         raise HTTPException(status_code=503, detail="ADK runner not initialised")
 
-    asset = await asset_repo.get(req.asset_id)
-    if not asset:
-        raise HTTPException(status_code=404, detail=f"{req.asset_id} not uplinked")
-
-    # Include asset context so the agent knows which drone to act on
-    prompt = f"Asset: {req.asset_id}. Command: {req.prompt}"
+    prompt = _build_agent_prompt(req)
     content = genai_types.Content(
         role="user", parts=[genai_types.Part(text=prompt)]
     )
@@ -310,13 +291,17 @@ async def send_command(req: CommandRequest) -> dict:
             response_text = event.content.parts[0].text
 
     await mission_log_repo.create(MissionLog(
-        asset_id=req.asset_id,
+        asset_id=req.asset_id or "FLEET",
         command="natural_language",
         params=req.prompt,
         result=response_text,
     ))
 
-    return {"asset_id": req.asset_id, "response": response_text, "prompt": req.prompt}
+    return {
+        "asset_id": req.asset_id or "FLEET",
+        "response": response_text,
+        "prompt": req.prompt,
+    }
 
 
 @app.post("/command/stream")
@@ -328,11 +313,7 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
     if _adk_runner is None:
         raise HTTPException(status_code=503, detail="ADK runner not initialised")
 
-    asset = await asset_repo.get(req.asset_id)
-    if not asset:
-        raise HTTPException(status_code=404, detail=f"{req.asset_id} not uplinked")
-
-    prompt = f"Asset: {req.asset_id}. Command: {req.prompt}"
+    prompt = _build_agent_prompt(req)
     content = genai_types.Content(
         role="user", parts=[genai_types.Part(text=prompt)]
     )
@@ -349,7 +330,6 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
         queue: asyncio.Queue = asyncio.Queue()
 
         async def adk_loop() -> None:
-            """Run ADK in a background task, pushing events to the queue."""
             try:
                 async for event in _adk_runner.run_async(
                     user_id="gcs",
@@ -363,7 +343,6 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                 await queue.put(("end", None))
 
         async def heartbeat() -> None:
-            """Emit periodic keepalive so the frontend knows we're alive."""
             elapsed = 0
             while True:
                 await asyncio.sleep(3)
@@ -388,7 +367,6 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                 if kind == "end":
                     break
 
-                # kind == "event"
                 event = data
                 if not event.content or not event.content.parts:
                     continue
@@ -421,7 +399,7 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
             hb_task.cancel()
             await asyncio.gather(adk_task, return_exceptions=True)
             await mission_log_repo.create(MissionLog(
-                asset_id=req.asset_id,
+                asset_id=req.asset_id or "FLEET",
                 command="natural_language",
                 params=req.prompt,
                 result=final_text,
@@ -439,18 +417,18 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
     )
 
 
-# ── WebSocket telemetry stream ─────────────────────────────────────────────────
-
 @app.websocket("/ws/telemetry")
 async def telemetry_ws(websocket: WebSocket):
     await websocket.accept()
     ws_broadcaster.connect(websocket)
     try:
         while True:
-            await asyncio.sleep(30)  # keep-alive; data pushed by broadcaster
+            await asyncio.sleep(30)
     except WebSocketDisconnect:
         ws_broadcaster.disconnect(websocket)
 
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("backend.app:app", host="0.0.0.0", port=8000, reload=True)

@@ -1,37 +1,51 @@
-"""
-Commander Agent — root agent that routes natural language commands
-to the Navigation or Thermal sub-agent.
-"""
+"""Commander agent backed by MCP tools for fleet discovery and control."""
 from __future__ import annotations
 
+import os
+
 from google.adk.agents import Agent
+from google.adk.tools.mcp_tool.mcp_session_manager import (
+    StreamableHTTPConnectionParams,
+)
+from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
-from backend.agents.navigation import navigation_agent
-from backend.agents.thermal import thermal_agent
-from backend.tools.swarm_ops import deploy_swarm, recall_swarm
+
+_MCP_URL = os.environ.get("BEACON_MCP_URL", "http://127.0.0.1:8000/mcp/")
+
+beacon_mcp_toolset = McpToolset(
+    connection_params=StreamableHTTPConnectionParams(
+        url=_MCP_URL,
+        timeout=10.0,
+        sse_read_timeout=60.0,
+    ),
+)
 
 commander = Agent(
     name="commander",
     model=QWEN3_INSTRUCT,
-    description="Root agent. Routes drone swarm commands to the correct specialist sub-agent.",
+    description="Ground control commander that discovers and directs the rescue fleet through MCP.",
     generate_content_config=QWEN3_GEN_CONFIG,
-    instruction="""You are the Ground Control Station commander for an autonomous drone swarm.
+    instruction="""You are the Ground Control Station commander for an autonomous rescue swarm.
 
-You receive natural language commands and route them to the correct specialist:
-- navigation_agent: movement, positioning, waypoints, returning to base, status checks
-- thermal_agent: scanning, thermal imaging, survivor detection, heat signatures
+For every new mission:
+1. Call discover_fleet first to identify active drones, battery levels, and current positions.
+2. Explain your operational reasoning in brief, visible steps before executing tools.
+3. Prefer the closest healthy drone for scans and movement.
+4. If a preferred drone is unavailable, choose another active drone and say why.
+5. If battery is low, return or avoid assigning that drone to distant work.
 
-For swarm-wide operations (deploy all drones, recall all drones), use deploy_swarm
-or recall_swarm directly.
+Tool use rules:
+- Do not assume drone IDs exist until discover_fleet confirms them.
+- Use establish_uplink if a discovered drone is not yet uplinked.
+- Use get_drone_status before risky or long-distance actions when battery is relevant.
+- Use thermal_scan or scan_area for survivor and heat-signature missions.
+- Use deploy_swarm and recall_swarm for multi-drone operations.
 
-Guidelines:
-- Always extract the asset_id from the command (e.g. "BEACON-01", "beacon-01" → "BEACON-01")
-- If no specific drone is mentioned, ask the user to specify one or list available drones
-- Confirm every action taken with a clear status report
-- If an action fails, explain why and suggest alternatives
-- Keep responses concise and operational
+Response style:
+- Start with a short plan summary.
+- Then execute the required tools.
+- End with a concise operational status report.
 """,
-    sub_agents=[navigation_agent, thermal_agent],
-    tools=[deploy_swarm, recall_swarm],
+    tools=[beacon_mcp_toolset],
 )
