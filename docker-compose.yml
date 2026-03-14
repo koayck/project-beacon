@@ -19,6 +19,7 @@ services:
     environment:
       - ASSET_ID=BEACON-01
       - GRPC_PORT=50051
+      - TELEMETRY_HOST=host.docker.internal
       - PYTHONUNBUFFERED=1
     networks:
       beacon-net:
@@ -33,6 +34,7 @@ services:
     environment:
       - ASSET_ID=BEACON-02
       - GRPC_PORT=50051
+      - TELEMETRY_HOST=host.docker.internal
       - PYTHONUNBUFFERED=1
     networks:
       beacon-net:
@@ -47,6 +49,7 @@ services:
     environment:
       - ASSET_ID=BEACON-03
       - GRPC_PORT=50051
+      - TELEMETRY_HOST=host.docker.internal
       - PYTHONUNBUFFERED=1
     networks:
       beacon-net:

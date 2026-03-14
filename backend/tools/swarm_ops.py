@@ -1,11 +1,14 @@
-"""
-Swarm-level operations — coordinate multiple drones simultaneously.
-"""
+"""Compatibility wrappers over the shared drone control service layer."""
 from __future__ import annotations
 
 import asyncio
 
 from backend.tools.drone_commands import _get_client, return_to_base
+
+from backend.services.drone_control import (
+    deploy_swarm as service_deploy_swarm,
+    recall_swarm as service_recall_swarm,
+)
 
 # Pre-defined formation offsets (x, y, z) relative to base
 _FORMATIONS: dict[str, list[tuple[float, float, float]]] = {
@@ -20,15 +23,7 @@ async def deploy_swarm(asset_ids: list[str], formation: str = "spread") -> dict:
     Deploy multiple drones in a named formation.
     Supported formations: 'spread', 'line', 'triangle'.
     """
-    client = _get_client()
-    positions = _FORMATIONS.get(formation, _FORMATIONS["spread"])
-    results = await asyncio.gather(
-        *[
-            client.move_to(aid, *positions[i % len(positions)])
-            for i, aid in enumerate(asset_ids)
-        ]
-    )
-    return {"deployed": asset_ids, "formation": formation, "results": list(results)}
+    return await service_deploy_swarm(asset_ids, formation)
 
 
 async def recall_swarm(asset_ids: list[str]) -> dict:

@@ -6,12 +6,14 @@ import type { AgentStreamEvent } from '@/lib/api'
 interface AgentMessage {
   role: 'user' | 'agent'
   lines: string[]
+  lines: string[]
   ts: number
 }
 
 interface Props {
   assetId: string
   connected: boolean
+  uplinked: boolean
   battery: number | null
   onCommand: (prompt: string, onEvent: (e: AgentStreamEvent) => void) => Promise<void>
   onStop?: () => void
@@ -21,7 +23,7 @@ function formatToolCall(name: string, args: Record<string, unknown>, agent: stri
   const argStr = Object.entries(args)
     .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
     .join(', ')
-  return `[${agent}] → ${name}(${argStr})`
+  return `[${agent}] -> ${name}(${argStr})`
 }
 
 function formatToolResult(name: string, success: boolean, result: string): string {
@@ -141,7 +143,6 @@ export default function CommandPanel({ assetId, connected, battery, onCommand, o
       backdropFilter: 'blur(6px)',
       boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
     }}>
-      {/* Header bar */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -152,15 +153,15 @@ export default function CommandPanel({ assetId, connected, battery, onCommand, o
         {/* Status dot */}
         <span style={{
           width: 8, height: 8, borderRadius: '50%',
-          background: connected ? '#33ff88' : '#ff4444',
-          boxShadow: connected ? '0 0 6px #33ff88' : '0 0 6px #ff4444',
+          background: connected ? '#33ff88' : uplinked ? '#ffcc66' : '#ff4444',
+          boxShadow: connected ? '0 0 6px #33ff88' : uplinked ? '0 0 6px #ffcc66' : '0 0 6px #ff4444',
           flexShrink: 0,
         }} />
-        <span style={{ color: connected ? '#33ff88' : '#ff6666', fontWeight: 'bold', letterSpacing: 1 }}>
+        <span style={{ color: connected ? '#33ff88' : uplinked ? '#ffcc66' : '#ff6666', fontWeight: 'bold', letterSpacing: 1 }}>
           {assetId}
         </span>
         <span style={{ color: '#445', marginLeft: 4 }}>
-          {connected ? 'UPLINKED' : 'OFFLINE'}
+          {connected ? 'LIVE' : uplinked ? 'REGISTERED / OFFLINE' : 'OFFLINE'}
         </span>
 
         {battery !== null && (
@@ -218,7 +219,6 @@ export default function CommandPanel({ assetId, connected, battery, onCommand, o
         </div>
       </div>
 
-      {/* Message log */}
       <div style={{
         height: logHeight,
         transition: 'height 0.2s ease',

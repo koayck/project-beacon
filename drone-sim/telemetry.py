@@ -10,13 +10,19 @@ from sim import DroneSimulator
 from world import get_view
 
 UDP_PORT = int(os.environ.get("TELEMETRY_PORT", "5005"))
-BROADCAST_HOST = os.environ.get("BROADCAST_HOST", "255.255.255.255")
+# Docker Desktop on Windows/macOS is unreliable for UDP broadcast from
+# containers to the host. Prefer an explicit host target when available.
+TELEMETRY_HOST = os.environ.get(
+    "TELEMETRY_HOST",
+    os.environ.get("BROADCAST_HOST", "255.255.255.255"),
+)
 INTERVAL = 1.0  # seconds between heartbeats
 
 
 def _broadcast_loop(simulator: DroneSimulator) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    if TELEMETRY_HOST.endswith(".255") or TELEMETRY_HOST == "255.255.255.255":
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
     while True:
         s = simulator.get_snapshot()
@@ -38,7 +44,7 @@ def _broadcast_loop(simulator: DroneSimulator) -> None:
         }).encode()
 
         try:
-            sock.sendto(payload, (BROADCAST_HOST, UDP_PORT))
+            sock.sendto(payload, (TELEMETRY_HOST, UDP_PORT))
         except OSError as exc:
             print(f"[telemetry] broadcast error: {exc}")
 
@@ -48,5 +54,5 @@ def _broadcast_loop(simulator: DroneSimulator) -> None:
 def start_telemetry(simulator: DroneSimulator) -> threading.Thread:
     t = threading.Thread(target=_broadcast_loop, args=(simulator,), daemon=True)
     t.start()
-    print(f"[telemetry] broadcasting to {BROADCAST_HOST}:{UDP_PORT}")
+    print(f"[telemetry] broadcasting to {TELEMETRY_HOST}:{UDP_PORT}")
     return t

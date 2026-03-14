@@ -1,13 +1,17 @@
-"""
-Drone command tools — called by ADK agents.
-Each function maps 1:1 to a gRPC operation via DroneGrpcClient.
-Injected with the client at startup via set_client().
-"""
+"""Compatibility wrappers over the shared drone control service layer."""
 from __future__ import annotations
 
 import asyncio
 import math
 from typing import TYPE_CHECKING
+
+from backend.services.drone_control import (
+    get_drone_status as service_get_drone_status,
+    move_drone_to as service_move_drone_to,
+    plan_sweep_pattern as service_plan_sweep_pattern,
+    return_to_base as service_return_to_base,
+    scan_area as service_scan_area,
+)
 
 from backend.world.model import BUILDING_PROXIMITY_MARGIN_M, FLOOD_LEVEL, WORLD
 
@@ -184,7 +188,7 @@ async def return_to_base(asset_id: str) -> dict:
 
 async def get_drone_status(asset_id: str) -> dict:
     """Get the current position, battery level, and status of a drone."""
-    return await _get_client().get_status(asset_id)
+    return await service_get_drone_status(asset_id)
 
 
 async def scan_area(
@@ -731,15 +735,4 @@ def plan_sweep_pattern(
     Compute a lawnmower sweep pattern over a rectangular area.
     Returns a list of (x, y, z) waypoints for systematic coverage.
     """
-    waypoints: list[dict] = []
-    x = min_x
-    direction = 1
-    while x <= max_x:
-        row = [
-            {"x": x, "y": min_y, "z": altitude},
-            {"x": x, "y": max_y, "z": altitude},
-        ]
-        waypoints.extend(row if direction == 1 else list(reversed(row)))
-        x += spacing
-        direction *= -1
-    return {"waypoints": waypoints, "count": len(waypoints)}
+    return service_plan_sweep_pattern(min_x, min_y, max_x, max_y, altitude, spacing)

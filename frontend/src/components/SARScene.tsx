@@ -916,13 +916,23 @@ export default function SARScene() {
       try {
         await uplink(ASSET_ID)
         if (mounted) {
-          setConnected(true)
+          setUplinked(true)
           addLog(`✓ ${ASSET_ID} uplinked — agent ready`)
         }
       } catch {
         if (mounted) {
-          setConnected(true)
-          addLog(`✓ ${ASSET_ID} online`)
+          try {
+            const fleet = await getFleet()
+            const asset = fleet.fleet.find(item => item.asset_id === ASSET_ID)
+            if (asset?.uplinked) {
+              setUplinked(true)
+              addLog(`✓ ${ASSET_ID} registered with commander`)
+            } else {
+              addLog(`⚠ ${ASSET_ID} not discoverable yet — start the drone container first`)
+            }
+          } catch {
+            addLog(`⚠ Failed to verify ${ASSET_ID} status`)
+          }
         }
       }
     }
@@ -1026,6 +1036,7 @@ export default function SARScene() {
       <CommandPanel
         assetId={ASSET_ID}
         connected={connected}
+        uplinked={uplinked}
         battery={battery}
         onCommand={handleCommand}
         onStop={handleStop}
