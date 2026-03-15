@@ -22,14 +22,19 @@ FLOOR_SLAB_THICKNESS: float = 0.2
 _RAW_BUILDINGS = [
     (-15, -20, 8, 8, 12),   # target building
     ( -7, -10, 6, 5, 10),   # obstacle on direct route (0,0,0) → (-15,0,-20)
+    ( 20, -20, 6, 6,  9),   # balcony building (3 floors, exterior balcony on south face)
+    ( 12, -27, 10, 8, 9),   # twin shophouse block (3 floors, windows on south face)
 ]
 
 # (x, y, z) — inside the target building, one per floor (floors 2, 3, 4)
 # survY(n) = (n-1)*3.0 + 0.65  →  3.65, 6.65, 9.65
 _RAW_SURVIVORS = [
-    (-16.5, 3.65, -19.0),   # floor 2
-    (-14.5, 6.65, -20.5),   # floor 3
-    (-13.5, 9.65, -21.0),   # floor 4
+    (-16.5, 3.65, -19.0),   # floor 2 — target building
+    (-14.5, 6.65, -20.5),   # floor 3 — target building
+    (-13.5, 9.65, -21.0),   # floor 4 — target building
+    ( 20.0, 6.65, -16.0),   # floor 3 — balcony building, on exterior balcony (outside AABB)
+    (  9.5, 3.65, -27.0),   # floor 2 — shophouse A, visible through south window
+    ( 14.5, 6.65, -27.0),   # floor 3 — shophouse B, visible through south window
 ]
 
 
@@ -206,8 +211,38 @@ def _target_windows(cx: float, cz: float) -> tuple[SimWindowAperture, ...]:
     return tuple(windows)
 
 
+def _shophouse_windows(cx: float, cz: float) -> tuple[SimWindowAperture, ...]:
+    windows: list[SimWindowAperture] = []
+    layout: tuple[tuple[int, WindowFace, float], ...] = (
+        (2, "south", -2.5),
+        (2, "south",  2.5),
+        (3, "south", -2.5),
+        (3, "south",  2.5),
+    )
+    window_width = 1.6
+    window_height = 1.4
+    for floor, face, offset in layout:
+        sill_y = (floor - 1) * 3.0 + 0.5
+        axis_center = cx + offset if face in ("north", "south") else cz + offset
+        windows.append(
+            SimWindowAperture(
+                face=face,
+                axis_center=axis_center,
+                sill_y=sill_y,
+                width=window_width,
+                height=window_height,
+            )
+        )
+    return tuple(windows)
+
+
 BUILDINGS = [
-    SimBuilding(i, cx, cz, w, d, h, _target_windows(cx, cz) if i == 0 else ())
+    SimBuilding(
+        i, cx, cz, w, d, h,
+        _target_windows(cx, cz) if i == 0
+        else _shophouse_windows(cx, cz) if i == 3
+        else ()
+    )
     for i, (cx, cz, w, d, h) in enumerate(_RAW_BUILDINGS)
 ]
 SURVIVORS = [SimSurvivor(i, *r) for i, r in enumerate(_RAW_SURVIVORS)]
@@ -358,10 +393,51 @@ def get_view(x: float, y: float, z: float,
     }
 
 
+def _segment_intersects_building(
+    x: float, y: float, z: float,
+    nx: float, ny: float, nz: float,
+    b: SimBuilding,
+) -> bool:
+    """Return True if the line segment (x,y,z)→(nx,ny,nz) intersects building *b*.
+
+    Uses the slab method for ray-AABB intersection, clamped to t ∈ [0, 1].
+    """
+    dx = nx - x
+    dy = ny - y
+    dz = nz - z
+
+    tmin = 0.0
+    tmax = 1.0
+
+    for lo, hi, orig, d in (
+        (b.min_x, b.max_x, x, dx),
+        (0.0,     b.h,     y, dy),
+        (b.min_z, b.max_z, z, dz),
+    ):
+        if abs(d) < 1e-12:
+            # Segment is parallel to this slab — miss if origin is outside.
+            if orig < lo or orig > hi:
+                return False
+        else:
+            t1 = (lo - orig) / d
+            t2 = (hi - orig) / d
+            if t1 > t2:
+                t1, t2 = t2, t1
+            tmin = max(tmin, t1)
+            tmax = min(tmax, t2)
+            if tmin > tmax:
+                return False
+
+    return True
+
+
 def next_position_blocked(x: float, y: float, z: float,
                            nx: float, ny: float, nz: float) -> SimBuilding | None:
-    """Return the first building that would be entered when moving from current to next pos."""
+    """Return the first building whose AABB is crossed by the movement segment."""
     for b in BUILDINGS:
-        if b.contains(nx, ny, nz):
+        # Skip buildings the drone is currently inside to avoid trapping it.
+        if b.contains(x, y, z):
+            continue
+        if _segment_intersects_building(x, y, z, nx, ny, nz, b):
             return b
     return None
