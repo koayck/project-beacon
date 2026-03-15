@@ -2,10 +2,6 @@ from __future__ import annotations
 
 from fastmcp import FastMCP
 
-from backend.services.drone_control import (
-    deploy_swarm,
-    plan_sweep_pattern,
-)
 from backend.services.fleet import discover_fleet, ensure_uplink
 from backend.services.drone_control import (
     get_drone_status,
@@ -16,7 +12,9 @@ from backend.services.drone_control import (
     return_to_base,
     scan_area,
     sweep_scan_building,
-    recall_swarm
+    recall_swarm,
+    deploy_swarm,
+    plan_sweep_pattern,
 )
 
 beacon_mcp = FastMCP(
