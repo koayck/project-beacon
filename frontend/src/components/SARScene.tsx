@@ -1,7 +1,7 @@
 'use client'
 
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls, PerspectiveCamera } from '@react-three/drei'
+import { Line, OrbitControls, PerspectiveCamera } from '@react-three/drei'
 import { useRef, useState, useEffect, useMemo, useCallback, type RefObject } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
@@ -32,6 +32,15 @@ const FLOOD_LEVEL = 1.4
 // Target building position (not at origin — base/home pad is at 0,0,0)
 const TARGET_BX = -15
 const TARGET_BZ = -20
+const TARGET_WINDOW_LAYOUT = [
+  { floor: 1, face: 'west', offset: 0.0 },
+  { floor: 2, face: 'north', offset: -1.5 },
+  { floor: 3, face: 'east', offset: -0.5 },
+  { floor: 4, face: 'south', offset: 1.5 },
+] as const
+const TARGET_WINDOW_WIDTH = 2.0
+const TARGET_WINDOW_HEIGHT = 1.6
+const TARGET_WINDOW_SILL = 0.4
 
 // Obstacle building — sits on the direct line from base to target building
 // Direct route (0,0,0) → (-15,0,-20): midpoint ≈ (-7.5, 0, -10)
@@ -198,6 +207,212 @@ const SURVIVOR_POSITIONS = [
   // { x: -38,  y: 11.0,  z:  -14 },
 ]
 
+const SURVIVOR_SENSOR_RANGE = 12.0
+const LOS_SAMPLE_COUNT = 30
+
+type WindowFace = 'north' | 'south' | 'west' | 'east'
+
+interface SimWindowAperture {
+  face: WindowFace
+  axisCenter: number
+  sillY: number
+  width: number
+  height: number
+}
+
+interface SimBuilding {
+  id: number
+  cx: number
+  cz: number
+  w: number
+  d: number
+  h: number
+  windows: SimWindowAperture[]
+}
+
+interface SurvivorPoint {
+  x: number
+  y: number
+  z: number
+}
+
+const TARGET_BUILDING_WINDOWS: SimWindowAperture[] = TARGET_WINDOW_LAYOUT.map(({ floor, face, offset }) => ({
+  face,
+  axisCenter: face === 'north' || face === 'south' ? TARGET_BX + offset : TARGET_BZ + offset,
+  sillY: (floor - 1) * FLOOR_H + TARGET_WINDOW_SILL,
+  width: TARGET_WINDOW_WIDTH,
+  height: TARGET_WINDOW_HEIGHT,
+}))
+
+const SIM_BUILDINGS: SimBuilding[] = [
+  { id: 0, cx: TARGET_BX, cz: TARGET_BZ, w: FLOOR_W, d: FLOOR_D, h: total_h, windows: TARGET_BUILDING_WINDOWS },
+  { id: 1, cx: OBS_X, cz: OBS_Z, w: OBS_W, d: OBS_D, h: OBS_H, windows: [] },
+]
+
+function buildingBounds(b: SimBuilding) {
+  return {
+    minX: b.cx - b.w / 2,
+    maxX: b.cx + b.w / 2,
+    minZ: b.cz - b.d / 2,
+    maxZ: b.cz + b.d / 2,
+  }
+}
+
+function containsPoint(b: SimBuilding, x: number, y: number, z: number): boolean {
+  const { minX, maxX, minZ, maxZ } = buildingBounds(b)
+  return minX <= x && x <= maxX && 0 <= y && y <= b.h && minZ <= z && z <= maxZ
+}
+
+function containsFloorSlabPoint(b: SimBuilding, x: number, y: number, z: number): boolean {
+  if (!containsPoint(b, x, y, z)) return false
+  const epsilon = 1e-6
+  const half = FLOOR_T / 2
+
+  let level = 0.0
+  while (level <= b.h + epsilon) {
+    if (level - half - epsilon <= y && y <= level + half + epsilon) return true
+    level += FLOOR_H
+  }
+  return b.h - half - epsilon <= y && y <= b.h + half + epsilon
+}
+
+function findBuildingAt(x: number, y: number, z: number): SimBuilding | null {
+  for (const b of SIM_BUILDINGS) {
+    if (containsPoint(b, x, y, z)) return b
+  }
+  return null
+}
+
+function segmentIntersectsWindow(
+  building: SimBuilding,
+  window: SimWindowAperture,
+  fromX: number,
+  fromY: number,
+  fromZ: number,
+  toX: number,
+  toY: number,
+  toZ: number,
+): boolean {
+  const { minX, maxX, minZ, maxZ } = buildingBounds(building)
+  const dx = toX - fromX
+  const dy = toY - fromY
+  const dz = toZ - fromZ
+  const epsilon = 1e-6
+  const minAxis = window.axisCenter - window.width / 2
+  const maxAxis = window.axisCenter + window.width / 2
+  const minY = window.sillY
+  const maxY = window.sillY + window.height
+
+  if (window.face === 'north' || window.face === 'south') {
+    if (Math.abs(dz) <= epsilon) return false
+    const planeZ = window.face === 'north' ? minZ : maxZ
+    const t = (planeZ - fromZ) / dz
+    if (t <= epsilon || t >= 1.0 - epsilon) return false
+    const hitX = fromX + dx * t
+    const hitY = fromY + dy * t
+    return (
+      minAxis - epsilon <= hitX && hitX <= maxAxis + epsilon &&
+      minY - epsilon <= hitY && hitY <= maxY + epsilon
+    )
+  }
+
+  if (Math.abs(dx) <= epsilon) return false
+  const planeX = window.face === 'west' ? minX : maxX
+  const t = (planeX - fromX) / dx
+  if (t <= epsilon || t >= 1.0 - epsilon) return false
+  const hitZ = fromZ + dz * t
+  const hitY = fromY + dy * t
+  return (
+    minAxis - epsilon <= hitZ && hitZ <= maxAxis + epsilon &&
+    minY - epsilon <= hitY && hitY <= maxY + epsilon
+  )
+}
+
+function hasWindowLineOfSight(
+  building: SimBuilding,
+  fromX: number,
+  fromY: number,
+  fromZ: number,
+  toX: number,
+  toY: number,
+  toZ: number,
+): boolean {
+  return building.windows.some(window => (
+    segmentIntersectsWindow(building, window, fromX, fromY, fromZ, toX, toY, toZ)
+  ))
+}
+
+function lineOfSightClear(
+  fromX: number,
+  fromY: number,
+  fromZ: number,
+  toX: number,
+  toY: number,
+  toZ: number,
+  ignoreBuildingIds?: Set<number>,
+): boolean {
+  const ignored = ignoreBuildingIds ?? new Set<number>()
+  for (let i = 1; i <= LOS_SAMPLE_COUNT; i += 1) {
+    const t = i / LOS_SAMPLE_COUNT
+    const sx = fromX + (toX - fromX) * t
+    const sy = fromY + (toY - fromY) * t
+    const sz = fromZ + (toZ - fromZ) * t
+
+    for (const b of SIM_BUILDINGS) {
+      if (!containsPoint(b, sx, sy, sz)) continue
+      if (ignored.has(b.id)) {
+        if (containsFloorSlabPoint(b, sx, sy, sz)) return false
+        continue
+      }
+      return false
+    }
+  }
+  return true
+}
+
+function survivorDistance(from: THREE.Vector3, target: SurvivorPoint): number {
+  const dx = target.x - from.x
+  const dy = target.y - from.y
+  const dz = target.z - from.z
+  return Math.sqrt(dx * dx + dy * dy + dz * dz)
+}
+
+function survivorVisibleFromDrone(dronePos: THREE.Vector3, survivor: SurvivorPoint): boolean {
+  const survivorBuilding = findBuildingAt(survivor.x, survivor.y, survivor.z)
+  if (!survivorBuilding) {
+    return lineOfSightClear(dronePos.x, dronePos.y, dronePos.z, survivor.x, survivor.y, survivor.z)
+  }
+
+  if (!hasWindowLineOfSight(
+    survivorBuilding,
+    dronePos.x,
+    dronePos.y,
+    dronePos.z,
+    survivor.x,
+    survivor.y,
+    survivor.z,
+  )) {
+    return false
+  }
+
+  return lineOfSightClear(
+    dronePos.x,
+    dronePos.y,
+    dronePos.z,
+    survivor.x,
+    survivor.y,
+    survivor.z,
+    new Set([survivorBuilding.id]),
+  )
+}
+
+function scannedSurvivorsFromDrone(dronePos: THREE.Vector3): SurvivorPoint[] {
+  return SURVIVOR_POSITIONS.filter((survivor) => {
+    if (survivorDistance(dronePos, survivor) > SURVIVOR_SENSOR_RANGE) return false
+    return survivorVisibleFromDrone(dronePos, survivor)
+  })
+}
+
 // ── Scene components ──────────────────────────────────────────────────────────
 
 function Ground() {
@@ -337,9 +552,48 @@ function CityBuildings() {
   )
 }
 
-function TargetBuilding() {
+function TargetBuilding({ transparentWalls }: { transparentWalls: boolean }) {
   const hw = FLOOR_W / 2
   const hd = FLOOR_D / 2
+  const windowYCenter = (floor: number) =>
+    (floor - 1) * FLOOR_H + TARGET_WINDOW_SILL + TARGET_WINDOW_HEIGHT / 2
+
+  const wallPanels = [
+    { pos: [TARGET_BX,      total_h / 2, TARGET_BZ - hd] as [number, number, number], size: [FLOOR_W, total_h, 0.14] as [number, number, number] },
+    { pos: [TARGET_BX,      total_h / 2, TARGET_BZ + hd] as [number, number, number], size: [FLOOR_W, total_h, 0.14] as [number, number, number] },
+    { pos: [TARGET_BX - hw, total_h / 2, TARGET_BZ]      as [number, number, number], size: [0.14, total_h, FLOOR_D] as [number, number, number] },
+    { pos: [TARGET_BX + hw, total_h / 2, TARGET_BZ]      as [number, number, number], size: [0.14, total_h, FLOOR_D] as [number, number, number] },
+  ]
+
+  const windowPanels = TARGET_WINDOW_LAYOUT.map(({ floor, face, offset }) => {
+    const y = windowYCenter(floor)
+    if (face === 'north') {
+      return {
+        key: `${face}-${floor}`,
+        pos: [TARGET_BX + offset, y, TARGET_BZ - hd - 0.07] as [number, number, number],
+        size: [TARGET_WINDOW_WIDTH, TARGET_WINDOW_HEIGHT, 0.10] as [number, number, number],
+      }
+    }
+    if (face === 'south') {
+      return {
+        key: `${face}-${floor}`,
+        pos: [TARGET_BX + offset, y, TARGET_BZ + hd + 0.07] as [number, number, number],
+        size: [TARGET_WINDOW_WIDTH, TARGET_WINDOW_HEIGHT, 0.10] as [number, number, number],
+      }
+    }
+    if (face === 'west') {
+      return {
+        key: `${face}-${floor}`,
+        pos: [TARGET_BX - hw - 0.07, y, TARGET_BZ + offset] as [number, number, number],
+        size: [0.10, TARGET_WINDOW_HEIGHT, TARGET_WINDOW_WIDTH] as [number, number, number],
+      }
+    }
+    return {
+      key: `${face}-${floor}`,
+      pos: [TARGET_BX + hw + 0.07, y, TARGET_BZ + offset] as [number, number, number],
+      size: [0.10, TARGET_WINDOW_HEIGHT, TARGET_WINDOW_WIDTH] as [number, number, number],
+    }
+  })
 
   return (
     <>
@@ -349,15 +603,22 @@ function TargetBuilding() {
           <meshStandardMaterial color={C_SLAB} />
         </mesh>
       ))}
-      {[
-        { pos: [TARGET_BX,      total_h / 2, TARGET_BZ - hd] as [number,number,number], size: [FLOOR_W, total_h, 0.12] as [number,number,number] },
-        { pos: [TARGET_BX,      total_h / 2, TARGET_BZ + hd] as [number,number,number], size: [FLOOR_W, total_h, 0.12] as [number,number,number] },
-        { pos: [TARGET_BX - hw, total_h / 2, TARGET_BZ]      as [number,number,number], size: [0.12, total_h, FLOOR_D] as [number,number,number] },
-        { pos: [TARGET_BX + hw, total_h / 2, TARGET_BZ]      as [number,number,number], size: [0.12, total_h, FLOOR_D] as [number,number,number] },
-      ].map(({ pos, size }, i) => (
+      {wallPanels.map(({ pos, size }, i) => (
         <mesh key={i} position={pos}>
           <boxGeometry args={size} />
-          <meshStandardMaterial color={C_GLASS} transparent opacity={0.25} depthWrite={false} side={THREE.DoubleSide} />
+          <meshStandardMaterial
+            color={transparentWalls ? '#7d9ab1' : '#5f6b77'}
+            transparent={transparentWalls}
+            opacity={transparentWalls ? 0.22 : 1}
+            depthWrite={!transparentWalls}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      ))}
+      {windowPanels.map(({ key, pos, size }) => (
+        <mesh key={key} position={pos}>
+          <boxGeometry args={size} />
+          <meshStandardMaterial color={C_GLASS} transparent opacity={0.2} depthWrite={false} side={THREE.DoubleSide} />
         </mesh>
       ))}
     </>
@@ -410,6 +671,37 @@ function Survivors({ floodY }: { floodY: number }) {
           <sphereGeometry args={[0.32, 10, 7]} />
           <meshStandardMaterial color="#ff2222" emissive="#ff0000" emissiveIntensity={0.45} />
         </mesh>
+      ))}
+    </>
+  )
+}
+
+function SurvivorScanRays({
+  enabled,
+  dronePos,
+  survivors,
+}: {
+  enabled: boolean
+  dronePos: THREE.Vector3
+  survivors: SurvivorPoint[]
+}) {
+  if (!enabled || survivors.length === 0) return null
+  return (
+    <>
+      {survivors.map((survivor, index) => (
+        <Line
+          key={`scan-ray-${index}-${survivor.x}-${survivor.y}-${survivor.z}`}
+          points={[
+            [dronePos.x, dronePos.y, dronePos.z],
+            [survivor.x, survivor.y, survivor.z],
+          ]}
+          color="#ff4466"
+          lineWidth={1.2}
+          transparent
+          opacity={0.9}
+          depthTest={false}
+          depthWrite={false}
+        />
       ))}
     </>
   )
@@ -594,11 +886,6 @@ function DroneStatusPanel({ drones }: { drones: DroneMap }) {
                     </span>
                   )}
                 </div>
-                {(d.survivors_in_range ?? 0) > 0 && (
-                  <div style={{ color: '#f44' }}>
-                    ◉ {d.survivors_in_range} SURVIVOR{(d.survivors_in_range ?? 0) > 1 ? 'S' : ''} IN RANGE
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -806,9 +1093,20 @@ function MissionLog({ lines }: { lines: string[] }) {
 interface ControlsProps {
   followBeacon: boolean
   onToggleFollow: () => void
+  transparentWalls: boolean
+  onToggleWalls: () => void
+  scanRaysEnabled: boolean
+  onToggleScanRays: () => void
 }
 
-function Controls({ followBeacon, onToggleFollow }: ControlsProps) {
+function Controls({
+  followBeacon,
+  onToggleFollow,
+  transparentWalls,
+  onToggleWalls,
+  scanRaysEnabled,
+  onToggleScanRays,
+}: ControlsProps) {
   const submerged = SURVIVOR_POSITIONS.filter(p => p.y < FLOOD_LEVEL - 0.2).length
 
   return (
@@ -851,6 +1149,42 @@ function Controls({ followBeacon, onToggleFollow }: ControlsProps) {
       >
         {followBeacon ? 'FOLLOW MODE: ON' : 'FOLLOW MODE: OFF'}
       </button>
+      <button
+        onClick={onToggleWalls}
+        style={{
+          marginTop: 6,
+          width: '100%',
+          border: '1px solid rgba(120,190,255,0.35)',
+          borderRadius: 4,
+          background: transparentWalls ? 'rgba(60,170,255,0.24)' : 'rgba(30,40,60,0.6)',
+          color: transparentWalls ? '#b5e6ff' : '#7f8fa8',
+          padding: '5px 8px',
+          cursor: 'pointer',
+          fontSize: 11,
+          fontFamily: 'Courier New, monospace',
+          textAlign: 'left',
+        }}
+      >
+        {transparentWalls ? 'WALLS: TRANSPARENT' : 'WALLS: SOLID'}
+      </button>
+      <button
+        onClick={onToggleScanRays}
+        style={{
+          marginTop: 6,
+          width: '100%',
+          border: '1px solid rgba(255,120,150,0.45)',
+          borderRadius: 4,
+          background: scanRaysEnabled ? 'rgba(255,70,110,0.20)' : 'rgba(30,40,60,0.6)',
+          color: scanRaysEnabled ? '#ff9fb3' : '#7f8fa8',
+          padding: '5px 8px',
+          cursor: 'pointer',
+          fontSize: 11,
+          fontFamily: 'Courier New, monospace',
+          textAlign: 'left',
+        }}
+      >
+        {scanRaysEnabled ? 'SCAN RAYS: ON' : 'SCAN RAYS: OFF'}
+      </button>
       <div style={{ marginTop: 8, borderTop: '1px solid #334', paddingTop: 6 }}>
         <div style={{ color: '#f84' }}>FLOOD: +{FLOOD_LEVEL.toFixed(1)}m above ground</div>
         <div style={{ color: '#f44', marginTop: 3 }}>
@@ -872,6 +1206,8 @@ export default function SARScene() {
   const [hoverPt, setHoverPt]     = useState<THREE.Vector3 | null>(null)
   const [copied, setCopied]       = useState(false)
   const [followBeacon, setFollowBeacon] = useState(false)
+  const [transparentWalls, setTransparentWalls] = useState(false)
+  const [scanRaysEnabled, setScanRaysEnabled] = useState(true)
   const copiedTimer               = useRef<ReturnType<typeof setTimeout> | null>(null)
   const orbitRef                  = useRef<OrbitControlsImpl | null>(null)
 
@@ -901,6 +1237,22 @@ export default function SARScene() {
     setFollowBeacon(prev => {
       const next = !prev
       addLog(next ? `👁 Following ${ASSET_ID}` : '👁 Follow mode disabled')
+      return next
+    })
+  }, [addLog])
+
+  const toggleWallTransparency = useCallback(() => {
+    setTransparentWalls(prev => {
+      const next = !prev
+      addLog(next ? '🧱 Target walls set to transparent' : '🧱 Target walls set to solid')
+      return next
+    })
+  }, [addLog])
+
+  const toggleScanRays = useCallback(() => {
+    setScanRaysEnabled(prev => {
+      const next = !prev
+      addLog(next ? '📡 Survivor scan rays enabled' : '📡 Survivor scan rays disabled')
       return next
     })
   }, [addLog])
@@ -991,6 +1343,11 @@ export default function SARScene() {
     abortRef.current?.abort()
   }, [])
 
+  const scannedSurvivors = useMemo(
+    () => scannedSurvivorsFromDrone(dronePos),
+    [dronePos.x, dronePos.y, dronePos.z],
+  )
+
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative', background: '#0d0d17' }}>
       <Canvas shadows>
@@ -1016,7 +1373,7 @@ export default function SARScene() {
         <Ground />
         <GridOverlay />
         <ObstacleBuilding />
-        <TargetBuilding />
+        <TargetBuilding transparentWalls={transparentWalls} />
         <Survivors floodY={FLOOD_LEVEL} />
         <GroundProbe onMove={setHoverPt} onDoubleClick={handleGroundClick} />
         <GroundCursor point={hoverPt} />
@@ -1027,13 +1384,25 @@ export default function SARScene() {
           nearestObstacleDist={telemetry?.nearest_obstacle_dist}
           survivorsInRange={telemetry?.survivors_in_range}
         />
+        <SurvivorScanRays
+          enabled={scanRaysEnabled}
+          dronePos={dronePos}
+          survivors={scannedSurvivors}
+        />
       </Canvas>
 
       <DroneStatusPanel drones={drones} />
       <CoordOverlay point={hoverPt} copied={copied} />
       <CompassLabels />
       <MissionLog lines={log} />
-      <Controls followBeacon={followBeacon} onToggleFollow={toggleFollowBeacon} />
+      <Controls
+        followBeacon={followBeacon}
+        onToggleFollow={toggleFollowBeacon}
+        transparentWalls={transparentWalls}
+        onToggleWalls={toggleWallTransparency}
+        scanRaysEnabled={scanRaysEnabled}
+        onToggleScanRays={toggleScanRays}
+      />
       <CommandPanel
         assetId={ASSET_ID}
         connected={connected}

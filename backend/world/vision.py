@@ -151,6 +151,80 @@ def _terrain_at(x: float, y: float, z: float) -> tuple[TerrainType, float]:
     return terrain, max(agl, 0.0)
 
 
+def _line_of_sight_clear(
+    from_x: float,
+    from_y: float,
+    from_z: float,
+    to_x: float,
+    to_y: float,
+    to_z: float,
+    ignore_building_ids: set[int] | None = None,
+) -> bool:
+    """
+    True if no geometry blocks the segment from source to target.
+
+    Buildings listed in `ignore_building_ids` are excluded from blockage checks
+    except for their floor slabs, which remain blocking.
+    """
+    ignored = ignore_building_ids or set()
+    samples = 30
+    for i in range(1, samples + 1):
+        t = i / samples
+        sx = from_x + (to_x - from_x) * t
+        sy = from_y + (to_y - from_y) * t
+        sz = from_z + (to_z - from_z) * t
+
+        for b in WORLD.buildings:
+            if not b.contains_point(sx, sy, sz):
+                continue
+            if b.id in ignored:
+                if b.contains_floor_slab_point(sx, sy, sz):
+                    return False
+                continue
+            return False
+    return True
+
+
+def _survivor_visible(
+    drone_x: float,
+    drone_y: float,
+    drone_z: float,
+    survivor: Survivor,
+) -> bool:
+    """
+    Thermal visibility policy:
+    - Outdoor survivors require direct line of sight.
+    - Indoor survivors require a valid window aperture intersection
+      plus unobstructed line of sight.
+    """
+    survivor_building = WORLD.building_at(survivor.x, survivor.y, survivor.z)
+
+    if survivor_building is None:
+        return _line_of_sight_clear(
+            drone_x, drone_y, drone_z, survivor.x, survivor.y, survivor.z
+        )
+
+    if not survivor_building.has_window_line_of_sight(
+        drone_x,
+        drone_y,
+        drone_z,
+        survivor.x,
+        survivor.y,
+        survivor.z,
+    ):
+        return False
+
+    return _line_of_sight_clear(
+        drone_x,
+        drone_y,
+        drone_z,
+        survivor.x,
+        survivor.y,
+        survivor.z,
+        ignore_building_ids={survivor_building.id},
+    )
+
+
 def get_view(
     x: float,
     y: float,
@@ -201,10 +275,13 @@ def get_view(
     obstacle_ahead = len(obstacles_ahead) > 0
 
     # ── Survivors ─────────────────────────────────────────────────────────
-    nearby_survs = WORLD.survivors_near(x, y, z, SURVIVOR_RANGE)
     visible_survivors: list[VisibleSurvivor] = []
-    for s in nearby_survs:
+    for s in WORLD.survivors:
+        if not _survivor_visible(x, y, z, s):
+            continue
         dist = s.distance_to(x, y, z)
+        if dist > SURVIVOR_RANGE:
+            continue
         dx = s.x - x
         dz = s.z - z
         visible_survivors.append(VisibleSurvivor(

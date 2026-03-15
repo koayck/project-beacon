@@ -27,6 +27,37 @@ uv run python tests/test_adk_cli.py
 
 ---
 
+## Observability (Langfuse)
+
+Langfuse tracing is integrated through LiteLLM and is **optional**.
+Project Beacon stays offline-first by default; traces are only sent when Langfuse env vars are provided.
+The backend uses `langfuse>=4,<5` and applies a startup compatibility shim for LiteLLM's
+`sdk_integration` callback argument mismatch.
+
+### 1) Configure environment
+
+Copy `.env.example` to `.env` and set:
+
+- `LANGFUSE_PUBLIC_KEY`
+- `LANGFUSE_SECRET_KEY`
+- `LANGFUSE_HOST` (optional, defaults to Langfuse cloud; set your local/self-hosted URL for offline deployments)
+
+### 2) Start backend
+
+```bash
+uv run python -m backend.app
+```
+
+When both keys are present, backend logs include:
+
+```text
+Langfuse observability enabled
+```
+
+All ADK agent model calls routed via LiteLLM are then traceable in Langfuse for easier debugging.
+
+---
+
 ## Sample Prompts
 
 Send these via `POST /command` or the ADK web UI.

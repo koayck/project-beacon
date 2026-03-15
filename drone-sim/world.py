@@ -2,14 +2,19 @@
 Minimal world model for the drone sim container.
 Mirrors backend/world/model.py — kept in sync via the shared proto/world_data.
 Only building AABBs are needed for collision avoidance and vision.
-Survivor positions are also included so the drone can report detections.
+Survivor positions and facade windows are included so thermal detections can
+respect wall occlusion.
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Literal
 
 FLOOD_LEVEL: float = 1.4
+SURVIVOR_RANGE: float = 12.0
+FLOOR_HEIGHT: float = 3.0
+FLOOR_SLAB_THICKNESS: float = 0.2
 
 # (cx, cz, w, d, h)
 # Target building at (-15, -20) — 4 floors, 12 m tall
@@ -33,6 +38,7 @@ class SimBuilding:
     id: int
     cx: float; cz: float
     w: float;  d: float; h: float
+    windows: tuple["SimWindowAperture", ...] = ()
 
     @property
     def min_x(self): return self.cx - self.w/2
@@ -57,6 +63,111 @@ class SimBuilding:
         dz = max(self.min_z - z, 0.0, z - self.max_z)
         return math.sqrt(dx*dx + dy*dy + dz*dz)
 
+    def _segment_intersects_window(
+        self,
+        window: "SimWindowAperture",
+        from_x: float,
+        from_y: float,
+        from_z: float,
+        to_x: float,
+        to_y: float,
+        to_z: float,
+        epsilon: float = 1e-6,
+    ) -> bool:
+        dx = to_x - from_x
+        dy = to_y - from_y
+        dz = to_z - from_z
+
+        if window.face in ("north", "south"):
+            if abs(dz) <= epsilon:
+                return False
+            plane_z = self.min_z if window.face == "north" else self.max_z
+            t = (plane_z - from_z) / dz
+            if t <= epsilon or t >= 1.0 - epsilon:
+                return False
+            hit_x = from_x + dx * t
+            hit_y = from_y + dy * t
+            return (
+                window.min_axis - epsilon <= hit_x <= window.max_axis + epsilon
+                and window.min_y - epsilon <= hit_y <= window.max_y + epsilon
+            )
+
+        if abs(dx) <= epsilon:
+            return False
+        plane_x = self.min_x if window.face == "west" else self.max_x
+        t = (plane_x - from_x) / dx
+        if t <= epsilon or t >= 1.0 - epsilon:
+            return False
+        hit_z = from_z + dz * t
+        hit_y = from_y + dy * t
+        return (
+            window.min_axis - epsilon <= hit_z <= window.max_axis + epsilon
+            and window.min_y - epsilon <= hit_y <= window.max_y + epsilon
+        )
+
+    def has_window_line_of_sight(
+        self,
+        from_x: float,
+        from_y: float,
+        from_z: float,
+        to_x: float,
+        to_y: float,
+        to_z: float,
+    ) -> bool:
+        return any(
+            self._segment_intersects_window(window, from_x, from_y, from_z, to_x, to_y, to_z)
+            for window in self.windows
+        )
+
+    def contains_floor_slab_point(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        floor_height: float = FLOOR_HEIGHT,
+        slab_thickness: float = FLOOR_SLAB_THICKNESS,
+        epsilon: float = 1e-6,
+    ) -> bool:
+        if not self.contains(x, y, z):
+            return False
+
+        half = slab_thickness / 2
+        level = 0.0
+        while level <= self.h + epsilon:
+            if level - half - epsilon <= y <= level + half + epsilon:
+                return True
+            level += floor_height
+
+        return self.h - half - epsilon <= y <= self.h + half + epsilon
+
+
+WindowFace = Literal["north", "south", "west", "east"]
+
+
+@dataclass(frozen=True)
+class SimWindowAperture:
+    face: WindowFace
+    axis_center: float
+    sill_y: float
+    width: float
+    height: float
+
+    @property
+    def min_y(self) -> float:
+        return self.sill_y
+
+    @property
+    def max_y(self) -> float:
+        return self.sill_y + self.height
+
+    @property
+    def min_axis(self) -> float:
+        return self.axis_center - self.width / 2
+
+    @property
+    def max_axis(self) -> float:
+        return self.axis_center + self.width / 2
+
 
 @dataclass(frozen=True)
 class SimSurvivor:
@@ -70,7 +181,35 @@ class SimSurvivor:
         return math.sqrt((self.x-x)**2+(self.y-y)**2+(self.z-z)**2)
 
 
-BUILDINGS = [SimBuilding(i, *r) for i, r in enumerate(_RAW_BUILDINGS)]
+def _target_windows(cx: float, cz: float) -> tuple[SimWindowAperture, ...]:
+    windows: list[SimWindowAperture] = []
+    layout: tuple[tuple[int, WindowFace, float], ...] = (
+        (1, "west", 0.0),
+        (2, "north", -1.5),
+        (3, "east", -0.5),
+        (4, "south", 1.5),
+    )
+    window_width = 2.0
+    window_height = 1.6
+    for floor, face, offset in layout:
+        sill_y = (floor - 1) * 3.0 + 0.4
+        axis_center = cx + offset if face in ("north", "south") else cz + offset
+        windows.append(
+            SimWindowAperture(
+                face=face,
+                axis_center=axis_center,
+                sill_y=sill_y,
+                width=window_width,
+                height=window_height,
+            )
+        )
+    return tuple(windows)
+
+
+BUILDINGS = [
+    SimBuilding(i, cx, cz, w, d, h, _target_windows(cx, cz) if i == 0 else ())
+    for i, (cx, cz, w, d, h) in enumerate(_RAW_BUILDINGS)
+]
 SURVIVORS = [SimSurvivor(i, *r) for i, r in enumerate(_RAW_SURVIVORS)]
 
 
@@ -86,7 +225,55 @@ def get_view(x: float, y: float, z: float,
     import json
 
     nearby_b = [b for b in BUILDINGS if b.dist_xz(x, z) <= detection_range]
-    nearby_s = [s for s in SURVIVORS if s.dist(x, y, z) <= 12.0]
+
+    def _building_at(px: float, py: float, pz: float) -> SimBuilding | None:
+        for b in BUILDINGS:
+            if b.contains(px, py, pz):
+                return b
+        return None
+
+    def _line_of_sight_clear(
+        to_x: float,
+        to_y: float,
+        to_z: float,
+        ignore_building_ids: set[int] | None = None,
+    ) -> bool:
+        ignored = ignore_building_ids or set()
+        samples = 30
+        for i in range(1, samples + 1):
+            t = i / samples
+            sx = x + (to_x - x) * t
+            sy = y + (to_y - y) * t
+            sz = z + (to_z - z) * t
+            for b in BUILDINGS:
+                if not b.contains(sx, sy, sz):
+                    continue
+                if b.id in ignored:
+                    if b.contains_floor_slab_point(sx, sy, sz):
+                        return False
+                    continue
+                return False
+        return True
+
+    def _survivor_visible(s: SimSurvivor) -> bool:
+        survivor_building = _building_at(s.x, s.y, s.z)
+        if survivor_building is None:
+            return _line_of_sight_clear(s.x, s.y, s.z)
+        if not survivor_building.has_window_line_of_sight(x, y, z, s.x, s.y, s.z):
+            return False
+        return _line_of_sight_clear(
+            s.x,
+            s.y,
+            s.z,
+            ignore_building_ids={survivor_building.id},
+        )
+
+    nearby_s: list[SimSurvivor] = []
+    for s in SURVIVORS:
+        if not _survivor_visible(s):
+            continue
+        if s.dist(x, y, z) <= SURVIVOR_RANGE:
+            nearby_s.append(s)
 
     nearest_b_dist = min((b.dist_xz(x, z) for b in nearby_b), default=float("inf"))
 
