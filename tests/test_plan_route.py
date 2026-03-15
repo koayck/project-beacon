@@ -86,20 +86,27 @@ class TestScanTargetResolution:
         assert result["building"]["max_x"] == -11.0
         assert result["building"]["min_z"] == -24.0
         assert result["building"]["max_z"] == -16.0
+        assert len(result["window_waypoints"]) == 4
+        assert result["recommended_window_waypoint"] is not None
+        assert result["recommended_scan_y"] == result["recommended_window_waypoint"]["y"]
 
     @pytest.mark.asyncio
-    async def test_plan_route_snaps_to_building_center_for_scan(self):
-        # Input point is near building edge; snapped route target should be center.
+    async def test_plan_route_snaps_to_window_waypoint_for_scan(self):
+        # Input point is near building edge; scan-mode route should use a
+        # facade waypoint in front of a window instead of the building center.
         result = await plan_route(
             "BEACON-01",
             -18.0,
             -22.0,
             snap_to_building_center=True,
         )
-        assert result["to"]["x"] == -15.0
-        assert result["to"]["z"] == -20.0
+        selected = result["target_resolution"]["selected_window_waypoint"]
+        assert result["to"]["x"] == selected["x"]
+        assert result["to"]["z"] == selected["z"]
+        assert result["to"]["y"] == max(selected["y"], 5.0)
         assert result["target_resolution"]["bounds"]["min_x"] == -19.0
         assert result["target_resolution"]["bounds"]["max_x"] == -11.0
+        assert "window_waypoints" in result["target_resolution"]
 
 
 class TestGoOverStrategy:

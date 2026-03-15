@@ -63,8 +63,8 @@ async def app_lifespan(app: FastAPI):
     await udp_listener.start(on_update=ws_broadcaster.broadcast)
     await restore_registered_connections()
 
-    from backend.tools.drone_commands import set_client as _set_drone_cmd_client
-    _set_drone_cmd_client(grpc_client)
+    # from backend.tools.drone_commands import set_client as _set_drone_cmd_client
+    # _set_drone_cmd_client(grpc_client)
 
     for asset in await asset_repo.list_all():
         logging.getLogger(__name__).info(
@@ -81,16 +81,20 @@ async def app_lifespan(app: FastAPI):
     )
     logging.getLogger(__name__).info("ADK commander agent ready")
 
-    yield
-
-    await udp_listener.stop()
-    grpc_client.close_all()
+    try:
+        yield
+    finally:
+        if _adk_runner is not None:
+            await _adk_runner.close()
+            _adk_runner = None
+        await udp_listener.stop()
+        grpc_client.close_all()
 
 
 app = FastAPI(
     title="Project Beacon",
     version="0.1.0",
-    lifespan=combine_lifespans(app_lifespan, _mcp_http_app.lifespan),
+    lifespan=combine_lifespans(_mcp_http_app.lifespan, app_lifespan),
 )
 
 app.add_middleware(
@@ -204,7 +208,7 @@ async def health():
 @app.post("/drone/{asset_id}/speed")
 async def set_speed(asset_id: str, req: SpeedRequest) -> dict:
     """Set the movement speed for all future commands issued to this drone."""
-    from backend.tools.drone_commands import set_drone_speed
+    from backend.services.drone_control import set_drone_speed
     set_drone_speed(asset_id, req.speed)
     return {"asset_id": asset_id, "speed": req.speed}
 
@@ -326,6 +330,11 @@ async def send_command(req: CommandRequest) -> dict:
         for part in event.content.parts:
             if part.text and part.text.strip():
                 text_candidates.append(part.text)
+            elif part.function_response:
+                resp = dict(part.function_response.response or {})
+                message = resp.get("message")
+                if isinstance(message, str) and message.strip():
+                    text_candidates.append(message)
 
         if event.is_final_response():
             for part in event.content.parts:
@@ -436,6 +445,20 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                         yield f"data: {json.dumps(payload)}\n\n"
                     elif part.function_response:
                         resp = dict(part.function_response.response or {})
+                        message = resp.get("message")
+                        if (
+                            sweep_prompt
+                            and isinstance(message, str)
+                            and is_structured_sweep_report(message)
+                        ):
+                            preferred_sweep_report = message
+                            final_text = message
+                            if first_token_time is None:
+                                first_token_time = time.perf_counter()
+                            total_chars += len(message)
+                            payload = {"type": "text", "text": message, "agent": event.author}
+                            yield f"data: {json.dumps(payload)}\n\n"
+                            continue
                         payload = {
                             "type": "tool_result",
                             "name": part.function_response.name,
@@ -512,4 +535,3 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("backend.app:app", host="0.0.0.0", port=8000, reload=True)
-

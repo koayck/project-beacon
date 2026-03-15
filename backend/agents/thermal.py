@@ -48,7 +48,8 @@ SWEEP SCAN PROCEDURE (full building coverage)
 2. Report:
    - building bounds (min/max X/Z),
    - levels covered (all heights above flood level),
-   - waypoint count and max_survivors_in_range.
+   - waypoint count and max_survivors_in_range (within scan_radius).
+   - if unique_survivor_count > 0, include each survivor from unique_survivors_detected with id, coordinates, and [SUBMERGED] tag.
 3. If sweep_scan_building returns error, report it and stop.
 """
 

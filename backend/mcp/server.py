@@ -159,13 +159,13 @@ async def sweep_scan_building_tool(
     asset_id: str,
     target_x: float | None = None,
     target_z: float | None = None,
-    scan_radius: float = 8.0,
+    scan_radius: float = 12.0,
     level_step: float = 3.0,
     standoff: float = 2.0,
 ) -> dict:
     """
     Execute a full-height perimeter sweep scan around a building above water level.
     Routes safely to each waypoint, runs scan_area at each point, and returns a
-    structured coverage report with survivor counts per level.
+    structured coverage report with survivor counts per level (filtered by scan_radius).
     """
     return await sweep_scan_building(asset_id, target_x, target_z, scan_radius, level_step, standoff)
