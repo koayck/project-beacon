@@ -16,7 +16,7 @@ TELEMETRY_HOST = os.environ.get(
     "TELEMETRY_HOST",
     os.environ.get("BROADCAST_HOST", "255.255.255.255"),
 )
-INTERVAL = 1.0  # seconds between heartbeats
+INTERVAL = 0.1  # seconds between heartbeats (match sim tick rate)
 
 
 def _broadcast_loop(simulator: DroneSimulator) -> None:
