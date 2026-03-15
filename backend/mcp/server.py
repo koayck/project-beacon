@@ -6,9 +6,8 @@ from backend.services.drone_control import (
     deploy_swarm,
     plan_sweep_pattern,
 )
-from backend.tools.swarm_ops import recall_swarm
 from backend.services.fleet import discover_fleet, ensure_uplink
-from backend.tools.drone_commands import (
+from backend.services.drone_control import (
     get_drone_status,
     get_drone_view,
     move_drone_to,
@@ -17,6 +16,7 @@ from backend.tools.drone_commands import (
     return_to_base,
     scan_area,
     sweep_scan_building,
+    recall_swarm
 )
 
 beacon_mcp = FastMCP(
