@@ -40,7 +40,7 @@ def make_toolset(tool_filter: list[str] | None = None) -> McpToolset:
         connection_params=StreamableHTTPConnectionParams(
             url=_MCP_URL,
             timeout=10.0,
-            sse_read_timeout=60.0,
+            sse_read_timeout=100.0,
         ),
         tool_filter=tool_filter,
     )
