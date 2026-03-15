@@ -6,7 +6,7 @@ from __future__ import annotations
 from google.adk.agents import Agent
 
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
-from backend.tools.drone_commands import get_drone_status, scan_area
+from backend.services.drone_control import get_drone_status, scan_area
 
 thermal_agent = Agent(
     name="thermal_agent",

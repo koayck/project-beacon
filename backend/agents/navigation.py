@@ -6,7 +6,7 @@ from __future__ import annotations
 from google.adk.agents import Agent
 
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
-from backend.tools.drone_commands import (
+from backend.services.drone_control import (
     get_drone_status,
     move_drone_to,
     plan_sweep_pattern,
