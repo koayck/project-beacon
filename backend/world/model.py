@@ -27,6 +27,7 @@ _RAW_BUILDINGS: list[tuple[float, float, float, float, float]] = [
     ( -7, -10, 6, 5, 10),   # obstacle on direct route (0,0,0) → (-15,0,-20)
     ( 20, -20, 6, 6,  9),   # balcony building (3 floors, exterior balcony on south face)
     ( 12, -27, 10, 8, 9),   # twin shophouse block (3 floors, windows on south face)
+    (-23, -28, 10, 10, 21), # NW tower (7 floors), SE corner overlaps NW corner of target
 ]
 
 # Survivor positions: (x, y, z) — inside target building, floors 2/3/4
@@ -38,6 +39,8 @@ _RAW_SURVIVORS: list[tuple[float, float, float]] = [
     ( 20.0, 6.65, -16.0),   # floor 3 — balcony building, on exterior balcony (outside AABB)
     (  9.5, 3.65, -27.0),   # floor 2 — shophouse A, visible through south window
     ( 14.5, 6.65, -27.0),   # floor 3 — shophouse B, visible through south window
+    (-19.0,  3.65, -27.5),  # floor 2 — NW tower, inside near east window  (cx+5-1, survY(2), cz+0.5)
+    (-23.0, 12.65, -22.0),  # floor 5 — NW tower, on south balcony         (cx, survY(5), cz+5)
 ]
 
 _RAW_TREES: list[tuple[float, float]] = []
@@ -394,6 +397,30 @@ def _build_world() -> WorldModel:
             )
         return tuple(windows)
 
+    def _nw_tower_windows(cx: float, cz: float) -> tuple[WindowAperture, ...]:
+        windows: list[WindowAperture] = []
+        layout: tuple[tuple[int, WindowFace, float], ...] = (
+            (2, "east",  0.5),
+            (4, "south", -1.5),
+            (6, "north",  2.0),
+            (7, "west",  -1.0),
+        )
+        window_width = 1.8
+        window_height = 1.6
+        for floor, face, offset in layout:
+            sill_y = (floor - 1) * 3.0 + 0.4
+            axis_center = cx + offset if face in ("north", "south") else cz + offset
+            windows.append(
+                WindowAperture(
+                    face=face,
+                    axis_center=axis_center,
+                    sill_y=sill_y,
+                    width=window_width,
+                    height=window_height,
+                )
+            )
+        return tuple(windows)
+
     buildings = [
         Building(
             id=i,
@@ -405,6 +432,7 @@ def _build_world() -> WorldModel:
             windows=(
                 _target_windows(cx, cz) if i == 0
                 else _shophouse_windows(cx, cz) if i == 3
+                else _nw_tower_windows(cx, cz) if i == 4
                 else ()
             ),
         )
