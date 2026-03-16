@@ -757,10 +757,9 @@ function FloodWater() {
 // ── Ground coordinate probe & cursor ─────────────────────────────────────────
 
 // Invisible plane that emits world-space intersection points on hover
-function GroundProbe({ onMove, onDoubleClick, onClick }: {
+function GroundProbe({ onMove, onDoubleClick }: {
   onMove: (v: THREE.Vector3 | null) => void
   onDoubleClick: (v: THREE.Vector3) => void
-  onClick?: (v: THREE.Vector3) => void
 }) {
   return (
     <mesh
@@ -769,7 +768,6 @@ function GroundProbe({ onMove, onDoubleClick, onClick }: {
       onPointerMove={e => { e.stopPropagation(); onMove(e.point) }}
       onPointerLeave={() => onMove(null)}
       onDoubleClick={e => { e.stopPropagation(); onDoubleClick(e.point) }}
-      onClick={onClick ? (e => { e.stopPropagation(); onClick(e.point) }) : undefined}
     >
       <planeGeometry args={[span, span]} />
       <meshBasicMaterial transparent opacity={0} depthWrite={false} />
@@ -778,68 +776,25 @@ function GroundProbe({ onMove, onDoubleClick, onClick }: {
 }
 
 // Yellow crosshair that follows the cursor on the ground plane
-function GroundCursor({ point, color = '#ffe060' }: { point: THREE.Vector3 | null; color?: string }) {
+function GroundCursor({ point }: { point: THREE.Vector3 | null }) {
   if (!point) return null
   return (
     <group position={[point.x, 0.07, point.z]}>
       {/* E-W arm */}
       <mesh>
         <boxGeometry args={[4, 0.05, 0.09]} />
-        <meshBasicMaterial color={color} />
+        <meshBasicMaterial color="#ffe060" />
       </mesh>
       {/* N-S arm */}
       <mesh>
         <boxGeometry args={[0.09, 0.05, 4]} />
-        <meshBasicMaterial color={color} />
+        <meshBasicMaterial color="#ffe060" />
       </mesh>
       {/* Centre pip */}
       <mesh>
         <cylinderGeometry args={[0.28, 0.28, 0.05, 8]} />
-        <meshBasicMaterial color={color} />
+        <meshBasicMaterial color="#ffe060" />
       </mesh>
-    </group>
-  )
-}
-
-// ── Area selection rectangle (rendered on ground plane) ──────────────────────
-
-function AreaSelectionRect({ corner1, corner2 }: {
-  corner1: THREE.Vector3
-  corner2: THREE.Vector3
-}) {
-  const cx = (corner1.x + corner2.x) / 2
-  const cz = (corner1.z + corner2.z) / 2
-  const w = Math.abs(corner2.x - corner1.x)
-  const d = Math.abs(corner2.z - corner1.z)
-
-  if (w < 0.1 || d < 0.1) return null
-
-  return (
-    <group position={[cx, 0.1, cz]}>
-      {/* Filled rectangle */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[w, d]} />
-        <meshBasicMaterial color="#ff6088" transparent opacity={0.08} side={THREE.DoubleSide} depthWrite={false} />
-      </mesh>
-      {/* Border */}
-      <Line
-        points={[
-          [corner1.x - cx, 0, corner1.z - cz],
-          [corner2.x - cx, 0, corner1.z - cz],
-          [corner2.x - cx, 0, corner2.z - cz],
-          [corner1.x - cx, 0, corner2.z - cz],
-          [corner1.x - cx, 0, corner1.z - cz],
-        ]}
-        color="#ff6088"
-        lineWidth={1.5}
-      />
-      {/* Corner markers */}
-      {[corner1, corner2, new THREE.Vector3(corner1.x, 0, corner2.z), new THREE.Vector3(corner2.x, 0, corner1.z)].map((c, i) => (
-        <mesh key={i} position={[c.x - cx, 0.05, c.z - cz]}>
-          <cylinderGeometry args={[0.3, 0.3, 0.06, 8]} />
-          <meshBasicMaterial color="#ff6088" />
-        </mesh>
-      ))}
     </group>
   )
 }
@@ -1253,40 +1208,16 @@ export default function SARScene() {
   const [followBeacon, setFollowBeacon] = useState(false)
   const [transparentWalls, setTransparentWalls] = useState(false)
   const [scanRaysEnabled, setScanRaysEnabled] = useState(true)
-  const [areaSelectMode, setAreaSelectMode] = useState(false)
-  const [areaCorner1, setAreaCorner1] = useState<THREE.Vector3 | null>(null)
-  const [areaCorner2, setAreaCorner2] = useState<THREE.Vector3 | null>(null)
   const copiedTimer               = useRef<ReturnType<typeof setTimeout> | null>(null)
   const orbitRef                  = useRef<OrbitControlsImpl | null>(null)
 
-  const handleGroundDoubleClick = useCallback((pt: THREE.Vector3) => {
-    if (areaSelectMode) return
+  const handleGroundClick = useCallback((pt: THREE.Vector3) => {
     const text = `${pt.x.toFixed(1)}, ${pt.y.toFixed(1)}, ${pt.z.toFixed(1)}`
     navigator.clipboard.writeText(text).catch(() => {})
     setCopied(true)
     if (copiedTimer.current) clearTimeout(copiedTimer.current)
     copiedTimer.current = setTimeout(() => setCopied(false), 1500)
-  }, [areaSelectMode])
-
-  const handleGroundClick = useCallback((pt: THREE.Vector3) => {
-    if (!areaSelectMode) return
-    if (!areaCorner1) {
-      setAreaCorner1(pt.clone())
-    } else {
-      setAreaCorner2(pt.clone())
-      setAreaSelectMode(false)
-    }
-  }, [areaSelectMode, areaCorner1])
-
-  const areaSelection = useMemo(() => {
-    if (!areaCorner1 || !areaCorner2) return null
-    return {
-      x1: Math.min(areaCorner1.x, areaCorner2.x),
-      z1: Math.min(areaCorner1.z, areaCorner2.z),
-      x2: Math.max(areaCorner1.x, areaCorner2.x),
-      z2: Math.max(areaCorner1.z, areaCorner2.z),
-    }
-  }, [areaCorner1, areaCorner2])
+  }, [])
   const drones = useTelemetry(WS_URL)
 
   const telemetry = drones[ASSET_ID] ?? null
@@ -1300,27 +1231,6 @@ export default function SARScene() {
 
   const addLog = useCallback((msg: string) => {
     setLog(prev => [...prev.slice(-6), msg])
-  }, [])
-
-  const toggleAreaSelect = useCallback(() => {
-    setAreaSelectMode(prev => {
-      if (prev) {
-        setAreaCorner1(null)
-        setAreaCorner2(null)
-        addLog('⬚ Area selection cancelled')
-        return false
-      }
-      setAreaCorner1(null)
-      setAreaCorner2(null)
-      addLog('⬚ Area selection — click two corners on the map')
-      return true
-    })
-  }, [addLog])
-
-  const cancelArea = useCallback(() => {
-    setAreaSelectMode(false)
-    setAreaCorner1(null)
-    setAreaCorner2(null)
   }, [])
 
   const toggleFollowBeacon = useCallback(() => {
@@ -1406,18 +1316,6 @@ export default function SARScene() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [toggleFollowBeacon])
 
-  // Escape cancels area selection
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && (areaSelectMode || areaCorner1 || areaCorner2)) {
-        cancelArea()
-        addLog('⬚ Area selection cancelled')
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [areaSelectMode, areaCorner1, areaCorner2, cancelArea, addLog])
-
   const abortRef = useRef<AbortController | null>(null)
 
   const handleCommand = useCallback(async (
@@ -1451,13 +1349,13 @@ export default function SARScene() {
   )
 
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative', background: '#0d0d17', cursor: areaSelectMode ? 'crosshair' : 'default' }}>
+    <div style={{ width: '100%', height: '100%', position: 'relative', background: '#0d0d17' }}>
       <Canvas shadows>
         <fog attach="fog" args={['#0d0d1f', 90, 260]} />
         <PerspectiveCamera makeDefault position={CAM_POS} fov={60} near={0.1} far={1000} />
         <OrbitControls
           ref={orbitRef}
-          enabled={!followBeacon && !areaSelectMode}
+          enabled={!followBeacon}
           enableDamping
           dampingFactor={0.08}
           minDistance={5}
@@ -1477,16 +1375,8 @@ export default function SARScene() {
         <ObstacleBuilding />
         <TargetBuilding transparentWalls={transparentWalls} />
         <Survivors floodY={FLOOD_LEVEL} />
-        <GroundProbe onMove={setHoverPt} onDoubleClick={handleGroundDoubleClick} onClick={areaSelectMode ? handleGroundClick : undefined} />
-        <GroundCursor point={hoverPt} color={areaSelectMode ? '#ff6088' : '#ffe060'} />
-        {/* Area selection preview (first corner placed, hovering for second) */}
-        {areaSelectMode && areaCorner1 && hoverPt && (
-          <AreaSelectionRect corner1={areaCorner1} corner2={hoverPt} />
-        )}
-        {/* Confirmed area selection */}
-        {areaCorner1 && areaCorner2 && (
-          <AreaSelectionRect corner1={areaCorner1} corner2={areaCorner2} />
-        )}
+        <GroundProbe onMove={setHoverPt} onDoubleClick={handleGroundClick} />
+        <GroundCursor point={hoverPt} />
         <DroneMesh
           targetPos={dronePos}
           status={droneStatus}
@@ -1520,11 +1410,6 @@ export default function SARScene() {
         battery={battery}
         onCommand={handleCommand}
         onStop={handleStop}
-        areaSelectMode={areaSelectMode}
-        onToggleAreaSelect={toggleAreaSelect}
-        areaSelection={areaSelection}
-        onScanArea={cancelArea}
-        onCancelArea={cancelArea}
       />
     </div>
   )
