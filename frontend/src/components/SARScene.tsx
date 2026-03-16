@@ -1,7 +1,7 @@
 'use client'
 
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { Line, OrbitControls, PerspectiveCamera } from '@react-three/drei'
+import { Line, OrbitControls, PerspectiveCamera, Html } from '@react-three/drei'
 import { useRef, useState, useEffect, useMemo, useCallback, type RefObject, type MutableRefObject } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
@@ -75,6 +75,27 @@ const SHOP_WINDOW_LAYOUT = [
 const SHOP_WINDOW_WIDTH = 1.6
 const SHOP_WINDOW_HEIGHT = 1.4
 const SHOP_WINDOW_SILL = 0.5
+
+// NW Tower — 7-floor building whose SE corner overlaps the NW corner of the
+// target building (building 0). Overlap: 1 m each axis.
+// Building 0 NW corner: (-19, -24). NW Tower SE corner: (-18, -23).
+const NW_X = -23
+const NW_Z = -28
+const NW_W = 10
+const NW_D = 10
+const NW_H = 21   // 7 floors × 3m
+const NW_BALCONY_FLOOR = 5
+const NW_BALCONY_DEPTH = 2.0
+const NW_BALCONY_WIDTH = 4.0
+const NW_WINDOW_LAYOUT = [
+  { floor: 2, face: 'east'  as const, offset:  0.5 },  // east face  → toward building 0
+  { floor: 4, face: 'south' as const, offset: -1.5 },  // south face → toward target area
+  { floor: 6, face: 'north' as const, offset:  2.0 },  // north face → rear
+  { floor: 7, face: 'west'  as const, offset: -1.0 },  // west face  → open side
+] as const
+const NW_WINDOW_WIDTH  = 1.8
+const NW_WINDOW_HEIGHT = 1.6
+const NW_WINDOW_SILL   = 0.4
 
 // Drone start position
 const DRONE_START = new THREE.Vector3(13, 1, 13)
@@ -212,6 +233,9 @@ const SURVIVOR_POSITIONS = [
   // Twin shophouse — Shop A floor 2, Shop B floor 3 (inside, visible through south windows)
   { x: SHOP_X - 2.5, y: survY(2), z: SHOP_Z },
   { x: SHOP_X + 2.5, y: survY(3), z: SHOP_Z },
+  // NW Tower — floor 2 inside near east window; floor 5 on south balcony (outside AABB)
+  { x: NW_X + NW_W / 2 - 1.0, y: survY(2), z: NW_Z + 0.5 },
+  { x: NW_X, y: survY(NW_BALCONY_FLOOR), z: NW_Z + NW_D / 2 + NW_BALCONY_DEPTH / 2 },
   // building rooftops
   // { x: -10,  y: 31.0,  z:  -8  },  // ultra-slim skyscraper
   // { x:  16,  y: 25.0,  z:   14 },  // charcoal tower
@@ -286,11 +310,20 @@ const SHOPHOUSE_WINDOWS: SimWindowAperture[] = SHOP_WINDOW_LAYOUT.map(({ floor, 
   }
 })
 
+const NW_BUILDING_WINDOWS: SimWindowAperture[] = NW_WINDOW_LAYOUT.map(({ floor, face, offset }) => ({
+  face,
+  axisCenter: face === 'north' || face === 'south' ? NW_X + offset : NW_Z + offset,
+  sillY: (floor - 1) * FLOOR_H + NW_WINDOW_SILL,
+  width: NW_WINDOW_WIDTH,
+  height: NW_WINDOW_HEIGHT,
+}))
+
 const SIM_BUILDINGS: SimBuilding[] = [
   { id: 0, cx: TARGET_BX, cz: TARGET_BZ, w: FLOOR_W, d: FLOOR_D, h: total_h, windows: TARGET_BUILDING_WINDOWS },
   { id: 1, cx: OBS_X, cz: OBS_Z, w: OBS_W, d: OBS_D, h: OBS_H, windows: [] },
   { id: 2, cx: BAL_X, cz: BAL_Z, w: BAL_W, d: BAL_D, h: BAL_H, windows: [] },
   { id: 3, cx: SHOP_X, cz: SHOP_Z, w: SHOP_W, d: SHOP_D, h: SHOP_H, windows: SHOPHOUSE_WINDOWS },
+  { id: 4, cx: NW_X, cz: NW_Z, w: NW_W, d: NW_D, h: NW_H, windows: NW_BUILDING_WINDOWS },
 ]
 
 function buildingBounds(b: SimBuilding) {
@@ -795,43 +828,146 @@ function ShophouseBlock({ transparentWalls }: { transparentWalls: boolean }) {
   )
 }
 
-// Survivors pulse faster and turn orange when submerged by the flood
-function Survivors({ floodY }: { floodY: number }) {
-  const refs = useRef<(THREE.Mesh | null)[]>(SURVIVOR_POSITIONS.map(() => null))
+// ── NW Tower ─────────────────────────────────────────────────────────────────
+// 7-floor building whose SE corner overlaps the NW corner of the target
+// building by ~1 m. Has windows on floors 2, 4, 6, 7 and a balcony on floor 5.
+function NWTowerBuilding({ transparentWalls }: { transparentWalls: boolean }) {
+  const hw = NW_W / 2
+  const hd = NW_D / 2
+  const windowYCenter = (floor: number) =>
+    (floor - 1) * FLOOR_H + FLOOR_T + NW_WINDOW_SILL + NW_WINDOW_HEIGHT / 2
+  const balconyY = (NW_BALCONY_FLOOR - 1) * FLOOR_H + 0.06
+  const balconyZ = NW_Z + hd + NW_BALCONY_DEPTH / 2
+
+  // Four thin wall panels (same pattern as TargetBuilding)
+  const wallPanels = [
+    { pos: [NW_X,      NW_H / 2, NW_Z - hd] as [number,number,number], size: [NW_W, NW_H, 0.14] as [number,number,number] }, // north
+    { pos: [NW_X,      NW_H / 2, NW_Z + hd] as [number,number,number], size: [NW_W, NW_H, 0.14] as [number,number,number] }, // south
+    { pos: [NW_X - hw, NW_H / 2, NW_Z]      as [number,number,number], size: [0.14, NW_H, NW_D] as [number,number,number] }, // west
+    { pos: [NW_X + hw, NW_H / 2, NW_Z]      as [number,number,number], size: [0.14, NW_H, NW_D] as [number,number,number] }, // east
+  ]
+
+  return (
+    <>
+      {/* Floor slabs */}
+      {Array.from({ length: 8 }, (_, i) => (
+        <mesh key={`slab-${i}`} position={[NW_X, i * FLOOR_H + FLOOR_T / 2, NW_Z]}>
+          <boxGeometry args={[NW_W, FLOOR_T, NW_D]} />
+          <meshStandardMaterial color="#b0b8c8" />
+        </mesh>
+      ))}
+      {/* Wall panels */}
+      {wallPanels.map(({ pos, size }, i) => (
+        <mesh key={`wall-${i}`} position={pos}>
+          <boxGeometry args={size} />
+          <meshStandardMaterial
+            color={transparentWalls ? '#8899bb' : '#8899aa'}
+            transparent={transparentWalls}
+            opacity={transparentWalls ? 0.22 : 1}
+            depthWrite={!transparentWalls}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      ))}
+      {/* Windows */}
+      {NW_WINDOW_LAYOUT.map(({ floor, face, offset }, i) => {
+        const cx = face === 'north' || face === 'south' ? NW_X + offset : NW_X
+        const cz = face === 'east'  || face === 'west'  ? NW_Z + offset : NW_Z
+        const x  = face === 'east'  ? NW_X + hw + 0.07 : face === 'west' ? NW_X - hw - 0.07 : cx
+        const z  = face === 'south' ? NW_Z + hd + 0.07 : face === 'north' ? NW_Z - hd - 0.07 : cz
+        const ry = face === 'east' || face === 'west' ? Math.PI / 2 : 0
+        return (
+          <mesh key={i} position={[x, windowYCenter(floor), z]} rotation={[0, ry, 0]}>
+            <boxGeometry args={[NW_WINDOW_WIDTH, NW_WINDOW_HEIGHT, 0.10]} />
+            <meshStandardMaterial
+              color={C_GLASS} transparent opacity={0.2}
+              depthWrite={false} side={THREE.DoubleSide}
+            />
+          </mesh>
+        )
+      })}
+      {/* South balcony slab (floor 5) */}
+      <mesh position={[NW_X, balconyY, balconyZ]}>
+        <boxGeometry args={[NW_BALCONY_WIDTH, FLOOR_T, NW_BALCONY_DEPTH]} />
+        <meshStandardMaterial color="#99aabb" />
+      </mesh>
+      {/* Balcony railing */}
+      <mesh position={[NW_X, balconyY + 0.55, balconyZ + NW_BALCONY_DEPTH / 2]}>
+        <boxGeometry args={[NW_BALCONY_WIDTH, 1.1, 0.06]} />
+        <meshStandardMaterial color="#aabbcc" transparent opacity={0.6} />
+      </mesh>
+    </>
+  )
+}
+function SurvivorHuman({ pos, floodY, index }: { pos: SurvivorPoint; floodY: number; index: number }) {
+  const groupRef = useRef<THREE.Group>(null)
 
   useFrame(({ clock }) => {
+    if (!groupRef.current) return
     const t = clock.elapsedTime
-    refs.current.forEach((mesh, i) => {
-      if (!mesh) return
-      const pos = SURVIVOR_POSITIONS[i]
-      const submerged = pos.y < floodY - 0.2
-      const speed = submerged ? 6 : 3
-      const pulse = 1 + Math.sin(t * speed + i * 0.9) * 0.18
-      mesh.scale.setScalar(pulse)
-      const mat = mesh.material as THREE.MeshStandardMaterial
-      if (submerged) {
-        mat.color.setHex(0xff8800)
-        mat.emissive.setHex(0xcc4400)
-        mat.emissiveIntensity = 0.7
-      } else {
-        mat.color.setHex(0xff2222)
-        mat.emissive.setHex(0xff0000)
-        mat.emissiveIntensity = 0.45
+    const submerged = pos.y < floodY - 0.2
+    const speed = submerged ? 6 : 3
+    const pulse = 1 + Math.sin(t * speed + index * 0.9) * 0.18
+    groupRef.current.scale.setScalar(pulse)
+
+    const bodyColor = submerged ? 0xff8800 : 0xff2222
+    const emissiveColor = submerged ? 0xcc4400 : 0xff0000
+    const emissiveIntensity = submerged ? 0.7 : 0.45
+    groupRef.current.traverse(child => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial
+        mat.color.setHex(bodyColor)
+        mat.emissive.setHex(emissiveColor)
+        mat.emissiveIntensity = emissiveIntensity
       }
     })
   })
 
+  const submerged = pos.y < floodY - 0.2
+  const color = submerged ? '#ff8800' : '#ff2222'
+  const emissive = submerged ? '#cc4400' : '#ff0000'
+
+  return (
+    <group ref={groupRef} position={[pos.x, pos.y, pos.z]}>
+      {/* Head */}
+      <mesh position={[0, 0.33, 0]}>
+        <sphereGeometry args={[0.11, 8, 6]} />
+        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.45} />
+      </mesh>
+      {/* Torso */}
+      <mesh position={[0, 0.10, 0]}>
+        <boxGeometry args={[0.18, 0.26, 0.10]} />
+        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.45} />
+      </mesh>
+      {/* Left arm */}
+      <mesh position={[-0.14, 0.08, 0]} rotation={[0, 0, 0.35]}>
+        <boxGeometry args={[0.07, 0.22, 0.07]} />
+        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.45} />
+      </mesh>
+      {/* Right arm */}
+      <mesh position={[0.14, 0.08, 0]} rotation={[0, 0, -0.35]}>
+        <boxGeometry args={[0.07, 0.22, 0.07]} />
+        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.45} />
+      </mesh>
+      {/* Left leg */}
+      <mesh position={[-0.06, -0.17, 0]}>
+        <boxGeometry args={[0.07, 0.22, 0.08]} />
+        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.45} />
+      </mesh>
+      {/* Right leg */}
+      <mesh position={[0.06, -0.17, 0]}>
+        <boxGeometry args={[0.07, 0.22, 0.08]} />
+        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.45} />
+      </mesh>
+    </group>
+  )
+}
+
+function Survivors({ floodY }: { floodY: number }) {
   return (
     <>
       {SURVIVOR_POSITIONS.map((pos, i) => (
-        <mesh
-          key={i}
-          ref={el => { refs.current[i] = el }}
-          position={[pos.x, pos.y, pos.z]}
-        >
-          <sphereGeometry args={[0.32, 10, 7]} />
-          <meshStandardMaterial color="#ff2222" emissive="#ff0000" emissiveIntensity={0.45} />
-        </mesh>
+        <SurvivorHuman key={i} pos={pos} floodY={floodY} index={i} />
       ))}
     </>
   )
@@ -1385,10 +1521,11 @@ interface DroneProps {
   nearbyObstacles?: number
   nearestObstacleDist?: number
   survivorsInRange?: number
+  assetId?: string
 }
 
-function DroneMesh({ targetPos, status, nearbyObstacles = 0, nearestObstacleDist = 999, survivorsInRange = 0 }: DroneProps) {
-  const meshRef = useRef<THREE.Mesh>(null)
+function DroneMesh({ targetPos, status, nearbyObstacles = 0, nearestObstacleDist = 999, survivorsInRange = 0, assetId = '' }: DroneProps) {
+  const groupRef = useRef<THREE.Group>(null)
   const coneRef = useRef<THREE.Mesh>(null)
   const lerpPos = useRef(DRONE_START.clone())
 
@@ -1402,40 +1539,89 @@ function DroneMesh({ targetPos, status, nearbyObstacles = 0, nearestObstacleDist
   }, [status, nearbyObstacles, nearestObstacleDist, survivorsInRange])
 
   useFrame((_, delta) => {
-    if (!meshRef.current) return
+    if (!groupRef.current) return
     lerpPos.current.lerp(targetPos, Math.min(delta * 4, 1))
-    meshRef.current.position.copy(lerpPos.current)
+    groupRef.current.position.copy(lerpPos.current)
 
     if (coneRef.current) {
       coneRef.current.position.copy(lerpPos.current)
-      // cone hangs below drone
       coneRef.current.position.y -= 0.3
       const mat = coneRef.current.material as THREE.MeshStandardMaterial
       mat.color.setHex(coneColor)
     }
 
-    const mat = meshRef.current.material as THREE.MeshStandardMaterial
-    if (status === 'BLOCKED') {
-      mat.color.setHex(0xff2200)
-      mat.emissive.setHex(0x880000)
-    } else if (status === 'MOVING') {
-      mat.color.setHex(0x00ff88)
-      mat.emissive.setHex(0x00aa44)
-    } else if (status === 'SCANNING') {
-      mat.color.setHex(0xffaa00)
-      mat.emissive.setHex(0xaa6600)
-    } else {
-      mat.color.setHex(0x00ffff)
-      mat.emissive.setHex(0x00aaaa)
-    }
+    const bodyColor =
+      status === 'BLOCKED' ? 0xff2200 :
+      status === 'MOVING'  ? 0x00ff88 :
+      status === 'SCANNING'? 0xffaa00 :
+      0x00ffff
+    const emissiveColor =
+      status === 'BLOCKED' ? 0x880000 :
+      status === 'MOVING'  ? 0x00aa44 :
+      status === 'SCANNING'? 0xaa6600 :
+      0x00aaaa
+
+    groupRef.current.traverse(child => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial
+        mat.color.setHex(bodyColor)
+        mat.emissive.setHex(emissiveColor)
+      }
+    })
   })
+
+  // Rotor positions at the 4 arm tips
+  const rotorPositions: [number, number, number][] = [
+    [0.48, 0.06, 0], [-0.48, 0.06, 0],
+    [0, 0.06, 0.48], [0, 0.06, -0.48],
+  ]
 
   return (
     <>
-      <mesh ref={meshRef} position={DRONE_START.toArray()}>
-        <boxGeometry args={[0.6, 0.6, 0.6]} />
-        <meshStandardMaterial color="#00ffff" emissive="#00aaaa" emissiveIntensity={0.3} />
-      </mesh>
+      <group ref={groupRef} position={DRONE_START.toArray()}>
+        {/* Central body */}
+        <mesh>
+          <boxGeometry args={[0.38, 0.10, 0.38]} />
+          <meshStandardMaterial color="#00ffff" emissive="#00aaaa" emissiveIntensity={0.3} />
+        </mesh>
+        {/* X-axis arm */}
+        <mesh>
+          <boxGeometry args={[0.96, 0.05, 0.07]} />
+          <meshStandardMaterial color="#00ffff" emissive="#00aaaa" emissiveIntensity={0.3} />
+        </mesh>
+        {/* Z-axis arm */}
+        <mesh>
+          <boxGeometry args={[0.07, 0.05, 0.96]} />
+          <meshStandardMaterial color="#00ffff" emissive="#00aaaa" emissiveIntensity={0.3} />
+        </mesh>
+        {/* Rotor discs */}
+        {rotorPositions.map((pos, i) => (
+          <mesh key={i} position={pos} rotation={[Math.PI / 2, 0, 0]}>
+            <cylinderGeometry args={[0.19, 0.19, 0.025, 12]} />
+            <meshStandardMaterial color="#00ffff" emissive="#00aaaa" emissiveIntensity={0.3} transparent opacity={0.75} />
+          </mesh>
+        ))}
+        {/* Drone name label */}
+        {assetId && (
+          <Html position={[0, 0.9, 0]} center distanceFactor={14} zIndexRange={[0, 0]}>
+            <div style={{
+              color: '#00ffff',
+              fontFamily: 'Courier New, monospace',
+              fontSize: '11px',
+              fontWeight: 'bold',
+              whiteSpace: 'nowrap',
+              background: 'rgba(0, 16, 24, 0.82)',
+              padding: '2px 7px',
+              borderRadius: 3,
+              border: '1px solid rgba(0, 255, 255, 0.4)',
+              letterSpacing: '0.05em',
+              pointerEvents: 'none',
+            }}>
+              {assetId}
+            </div>
+          </Html>
+        )}
+      </group>
       {/* Downward-facing FOV cone */}
       <mesh ref={coneRef} position={DRONE_START.toArray()} rotation={[Math.PI, 0, 0]}>
         <coneGeometry args={[8, 12, 16, 1, true]} />
@@ -1702,7 +1888,7 @@ export default function SARScene() {
     })
   }, [addLog])
 
-  // Auto-uplink on mount
+  // Auto-uplink all active drones on mount
   useEffect(() => {
     let mounted = true
     const init = async () => {
@@ -1711,28 +1897,36 @@ export default function SARScene() {
         addLog('⚠ Backend offline — start FastAPI sidecar')
         return
       }
+      let fleet: Awaited<ReturnType<typeof getFleet>>
       try {
-        await uplink(ASSET_ID)
-        if (mounted) {
-          setUplinked(true)
-          addLog(`✓ ${ASSET_ID} uplinked — agent ready`)
-        }
+        fleet = await getFleet()
       } catch {
-        if (mounted) {
-          try {
-            const fleet = await getFleet()
-            const asset = fleet.fleet.find(item => item.asset_id === ASSET_ID)
-            if (asset?.uplinked) {
-              setUplinked(true)
-              addLog(`✓ ${ASSET_ID} registered with commander`)
-            } else {
-              addLog(`⚠ ${ASSET_ID} not discoverable yet — start the drone container first`)
-            }
-          } catch {
-            addLog(`⚠ Failed to verify ${ASSET_ID} status`)
+        addLog('⚠ Failed to fetch fleet')
+        return
+      }
+      if (!mounted) return
+      const active = fleet.fleet.filter(d => d.active)
+      if (active.length === 0) {
+        addLog('⚠ No active drones found — start drone containers first')
+        return
+      }
+      let anyUplinked = false
+      await Promise.all(active.map(async d => {
+        try {
+          await uplink(d.asset_id)
+          if (mounted) addLog(`✓ ${d.asset_id} uplinked — agent ready`)
+          anyUplinked = true
+        } catch {
+          // Already uplinked or unreachable — check current status
+          if (d.uplinked) {
+            if (mounted) addLog(`✓ ${d.asset_id} registered with commander`)
+            anyUplinked = true
+          } else {
+            if (mounted) addLog(`⚠ ${d.asset_id} not discoverable yet`)
           }
         }
-      }
+      }))
+      if (mounted && anyUplinked) setUplinked(true)
     }
     init()
     return () => { mounted = false }
@@ -1830,6 +2024,7 @@ export default function SARScene() {
       { id: 1, name: 'obstacle building' },
       { id: 2, name: 'balcony building' },
       { id: 3, name: 'shophouse block' },
+      { id: 4, name: 'NW tower' },
     ]
     const overlapping = SIM_BUILDINGS.filter(b => {
       const bb = buildingBounds(b)
@@ -1916,6 +2111,7 @@ export default function SARScene() {
         <TargetBuilding transparentWalls={transparentWalls} />
         <BalconyBuilding transparentWalls={transparentWalls} />
         <ShophouseBlock transparentWalls={transparentWalls} />
+        <NWTowerBuilding transparentWalls={transparentWalls} />
         <Survivors floodY={FLOOD_LEVEL} />
         {selectMode ? (
           <AreaSelectProbe
@@ -1939,13 +2135,17 @@ export default function SARScene() {
         {dragStart && dragEnd && (
           <AreaHighlight start={dragStart} end={dragEnd} finalised={showContextMenu} />
         )}
-        <DroneMesh
-          targetPos={dronePos}
-          status={droneStatus}
-          nearbyObstacles={telemetry?.nearby_obstacles}
-          nearestObstacleDist={telemetry?.nearest_obstacle_dist}
-          survivorsInRange={telemetry?.survivors_in_range}
-        />
+        {Object.values(drones).map(t => (
+          <DroneMesh
+            key={t.asset_id}
+            targetPos={new THREE.Vector3(t.x, t.y, t.z)}
+            status={t.status}
+            nearbyObstacles={t.nearby_obstacles}
+            nearestObstacleDist={t.nearest_obstacle_dist}
+            survivorsInRange={t.survivors_in_range}
+            assetId={t.asset_id}
+          />
+        ))}
         <SurvivorScanRays
           enabled={scanRaysEnabled}
           dronePos={dronePos}
