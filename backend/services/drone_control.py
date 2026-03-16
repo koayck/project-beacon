@@ -12,6 +12,7 @@ from backend.world.model import (
     FLOOD_LEVEL,
     WINDOW_SCAN_STANDOFF_M,
     WORLD,
+    Building,
 )
 
 _NORMAL_SPEED = 5.0
@@ -302,13 +303,6 @@ async def scan_area(
     return await grpc_client.scan_area(asset_id, cx, cy, cz, radius)
 
 
-async def thermal_scan(
-    asset_id: str, cx: float, cy: float, cz: float, radius: float = 5.0
-) -> dict:
-    """SAR-specific alias for area scanning."""
-    return await scan_area(asset_id, cx, cy, cz, radius)
-
-
 async def get_drone_view(
     asset_id: str,
     heading_deg: float = 0.0,
@@ -415,11 +409,18 @@ def _push_xz_clear(
     exclude_id: int,
     clearance: float = 0.5,
     max_iters: int = 5,
+    prefer_z: bool = False,
 ) -> tuple[float, float]:
     """Push (x, z) outside any building it overlaps (except the excluded building).
 
     On each iteration finds the first blocking building and exits via the
     nearest face + clearance.  Repeats until no overlap or max_iters reached.
+
+    ``prefer_z=True`` breaks ties in favour of the z-axis exit direction.
+    Use this for corners on the +X face (NE, SE) so the push goes along the
+    face rather than across it — e.g. the SE corner of a building whose
+    east neighbour is equally close in X and Z: pushing north (z) keeps the
+    corner on the east face; pushing west (x) would skip the east face scan.
     """
     for _ in range(max_iters):
         pushed = False
@@ -432,14 +433,24 @@ def _push_xz_clear(
                 dist_s = b.max_z - z
                 dist_n = z - b.min_z
                 m = min(dist_e, dist_w, dist_s, dist_n)
-                if m == dist_e:
-                    x = b.max_x + clearance
-                elif m == dist_w:
-                    x = b.min_x - clearance
-                elif m == dist_s:
-                    z = b.max_z + clearance
+                if prefer_z:
+                    if m == dist_s:
+                        z = b.max_z + clearance
+                    elif m == dist_n:
+                        z = b.min_z - clearance
+                    elif m == dist_e:
+                        x = b.max_x + clearance
+                    else:
+                        x = b.min_x - clearance
                 else:
-                    z = b.min_z - clearance
+                    if m == dist_e:
+                        x = b.max_x + clearance
+                    elif m == dist_w:
+                        x = b.min_x - clearance
+                    elif m == dist_s:
+                        z = b.max_z + clearance
+                    else:
+                        z = b.min_z - clearance
                 pushed = True
                 break
         if not pushed:
@@ -512,6 +523,52 @@ def _safe_standoff_per_face(
                     best = min(best, nb.min_x - building.max_x - clearance)
         face_standoffs[face] = max(best, min_standoff)
     return face_standoffs
+
+
+def _route_sweep_segment(
+    from_x: float,
+    from_y: float,
+    from_z: float,
+    to_x: float,
+    to_y: float,
+    to_z: float,
+    exclude_id: int,
+    clear_y: float,
+    margin: float = 1.0,
+) -> list[dict]:
+    """
+    Return intermediate transit waypoints needed to route around any adjacent
+    building that blocks the direct sweep segment from→to.
+
+    Excludes ``exclude_id`` (the building being scanned) from collision checks.
+    If the direct path is clear, returns an empty list.
+    Otherwise returns two waypoints (climb + cruise at ``clear_y``) marked
+    ``transit=True`` so ``sweep_scan_building`` skips scanning at those positions.
+    The caller is responsible for appending the actual destination at ``to_y``.
+    """
+    blockers = [
+        b for b in WORLD.obstacles_in_path(
+            from_x, from_y, from_z,
+            to_x, to_y, to_z,
+            samples=30, margin=margin,
+        )
+        if b.id != exclude_id
+    ]
+    if not blockers:
+        return []
+
+    over_y = round(max(b.max_y for b in blockers) + 3.0, 2)
+    over_y = max(over_y, round(clear_y, 2))
+    return [
+        {
+            "x": round(from_x, 2), "y": over_y, "z": round(from_z, 2),
+            "reason": "climb over adjacent building", "transit": True,
+        },
+        {
+            "x": round(to_x, 2), "y": over_y, "z": round(to_z, 2),
+            "reason": "cruise over adjacent building", "transit": True,
+        },
+    ]
 
 
 def plan_building_vertical_sweep(
@@ -594,9 +651,14 @@ def plan_building_vertical_sweep(
     p_min_z = building.min_z - perimeter_margin
     p_max_z = building.max_z + perimeter_margin
 
-    # Push the NW perimeter corner outside any adjacent building
-    # (e.g. a shophouse sharing the building's NW corner).
-    nw_x, nw_z = _push_xz_clear(p_min_x, p_min_z, building.id)
+    # Push all four perimeter corners outside any adjacent building.
+    # clearance=1.5 > _route_sweep_segment margin (1.0) so the vertical descent
+    # back to scan altitude at a pushed corner is also guaranteed to be clear.
+    _CORNER_CLEARANCE = 1.5
+    nw_x, nw_z = _push_xz_clear(p_min_x, p_min_z, building.id, clearance=_CORNER_CLEARANCE)
+    ne_x, ne_z = _push_xz_clear(p_max_x, p_min_z, building.id, clearance=_CORNER_CLEARANCE, prefer_z=True)
+    se_x, se_z = _push_xz_clear(p_max_x, p_max_z, building.id, clearance=_CORNER_CLEARANCE, prefer_z=True)
+    sw_x, sw_z = _push_xz_clear(p_min_x, p_max_z, building.id, clearance=_CORNER_CLEARANCE)
 
     # When NW was pushed east, flying the west face straight to the
     # corrected NW would clip through the target building's corner.
@@ -639,15 +701,15 @@ def plan_building_vertical_sweep(
         if "north" in level_windows:
             ww = level_windows["north"]
             ring.append((ww["x"], ww["z"], f"window scan north floor {ww['floor']}"))
-        ring.append((p_max_x, p_min_z, "perimeter NE"))
+        ring.append((ne_x, ne_z, "perimeter NE"))
         if "east" in level_windows:
             ww = level_windows["east"]
             ring.append((ww["x"], ww["z"], f"window scan east floor {ww['floor']}"))
-        ring.append((p_max_x, p_max_z, "perimeter SE"))
+        ring.append((se_x, se_z, "perimeter SE"))
         if "south" in level_windows:
             ww = level_windows["south"]
             ring.append((ww["x"], ww["z"], f"window scan south floor {ww['floor']}"))
-        ring.append((p_min_x, p_max_z, "perimeter SW"))
+        ring.append((sw_x, sw_z, "perimeter SW"))
         if "west" in level_windows:
             ww = level_windows["west"]
             ring.append((ww["x"], ww["z"], f"window scan west floor {ww['floor']}"))
@@ -657,7 +719,10 @@ def plan_building_vertical_sweep(
             ring.append((p_min_x, west_stop_z, "west face stop (adjacent building)"))
         ring.append((nw_x, nw_z, "close perimeter"))
 
+        prev_rx, prev_rz = nw_x, nw_z
         for rx, rz, reason in ring:
+            for extra in _route_sweep_segment(prev_rx, level_y, prev_rz, rx, level_y, rz, building.id, rooftop_y):
+                waypoints.append({**extra, "level_y": rooftop_y})
             waypoints.append(
                 {
                     "x": round(rx, 2),
@@ -667,6 +732,7 @@ def plan_building_vertical_sweep(
                     "reason": reason,
                 }
             )
+            prev_rx, prev_rz = rx, rz
 
     # Windowless buildings: rooftop-level perimeter flyaround.
     # Floor-level rings are skipped for buildings without windows because adjacent
@@ -676,12 +742,15 @@ def plan_building_vertical_sweep(
     # scan coverage given the large sensor radius.
     if not floor_levels and top_y > start_y:
         levels.append(rooftop_y)
+        prev_rx, prev_rz = nw_x, nw_z
         for rx, rz, label in [
-            (nw_x,    nw_z,    "rooftop NW scan"),
-            (p_max_x, p_min_z, "rooftop NE scan"),
-            (p_max_x, p_max_z, "rooftop SE scan"),
-            (p_min_x, p_max_z, "rooftop SW scan"),
+            (nw_x,  nw_z,  "rooftop NW scan"),
+            (ne_x,  ne_z,  "rooftop NE scan"),
+            (se_x,  se_z,  "rooftop SE scan"),
+            (sw_x,  sw_z,  "rooftop SW scan"),
         ]:
+            for extra in _route_sweep_segment(prev_rx, rooftop_y, prev_rz, rx, rooftop_y, rz, building.id, rooftop_y):
+                waypoints.append({**extra, "level_y": rooftop_y})
             waypoints.append(
                 {
                     "x": round(rx, 2),
@@ -691,6 +760,7 @@ def plan_building_vertical_sweep(
                     "reason": label,
                 }
             )
+            prev_rx, prev_rz = rx, rz
 
     # Ascent waypoint: go up at NW corner before moving to building centre
     # to avoid clipping through the building at intermediate heights.
@@ -826,12 +896,11 @@ async def sweep_scan_building(
                 "completed_waypoints": 0,
             }
 
-    # ── Steps 3-4: Sweep floor rings + rooftop (direct moves) ─────────
-    # The drone is now above the building. All sweep waypoints are at the
-    # building perimeter (window standoff) or directly above — no other
-    # buildings sit between consecutive ring waypoints, so direct moves
-    # are safe. The drone descends to the lowest floor's NW corner first,
-    # then walks each ring upward, finishing at the rooftop.
+    # ── Steps 3-4: Sweep floor rings + rooftop ────────────────────────
+    # Waypoints come from plan_building_vertical_sweep.  Most are perimeter
+    # scan points; some are transit waypoints (transit=True) inserted to route
+    # over adjacent buildings at shared corners — those are moved through but
+    # not scanned.
     for index, wp in enumerate(plan["waypoints"], start=1):
         move_result = await client.move_to(
             asset_id, wp["x"], wp["y"], wp["z"],
@@ -857,6 +926,9 @@ async def sweep_scan_building(
                 "status": wait_result.get("status"),
                 "completed_waypoints": index - 1,
             }
+
+        if wp.get("transit"):
+            continue
 
         scan_result = await client.scan_area(asset_id, wp["x"], wp["y"], wp["z"], scan_radius)
         if not scan_result.get("success", True):
@@ -1201,10 +1273,15 @@ async def plan_route(
     dz = target_z - cz
     length = math.sqrt(dx * dx + dz * dz)
     if length < 1e-6:
+        # Drone is already at the target X/Z — no horizontal navigation needed.
         return {
             "asset_id": asset_id,
-            "error": "No clear route found",
-            "obstacles": [{"id": b.id, "cx": b.cx, "cz": b.cz, "h": b.h} for b in obstacles],
+            "from": {"x": cx, "y": cy, "z": cz},
+            "to": {"x": target_x, "y": target_y, "z": target_z},
+            "waypoints": [],
+            "obstacle_count": 0,
+            "strategy": "already_at_destination",
+            "summary": f"Already at destination (x={target_x}, z={target_z}). No navigation needed.",
             **({"target_resolution": target_resolution} if target_resolution else {}),
         }
 
@@ -1255,6 +1332,40 @@ async def plan_route(
         "error": "No clear route found",
         "obstacles": [{"id": b.id, "cx": b.cx, "cz": b.cz, "h": b.h} for b in obstacles],
         **({"target_resolution": target_resolution} if target_resolution else {}),
+    }
+
+
+def find_buildings_in_area(
+    center_x: float,
+    center_z: float,
+    radius: float = 30.0,
+) -> dict:
+    """
+    Return all buildings whose nearest edge is within `radius` metres of
+    (center_x, center_z).  Results are sorted nearest-first so the scan loop
+    visits the closest building first.
+    """
+    buildings = WORLD.buildings_near(center_x, center_z, radius)
+    buildings_sorted = sorted(buildings, key=lambda b: b.distance_xz(center_x, center_z))
+    return {
+        "buildings": [
+            {
+                "id": b.id,
+                "x": b.cx,
+                "z": b.cz,
+                "height": b.h,
+                "bounds": {
+                    "min_x": b.min_x,
+                    "max_x": b.max_x,
+                    "min_z": b.min_z,
+                    "max_z": b.max_z,
+                },
+            }
+            for b in buildings_sorted
+        ],
+        "total": len(buildings_sorted),
+        "center": {"x": center_x, "z": center_z},
+        "radius": radius,
     }
 
 
