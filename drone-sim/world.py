@@ -24,17 +24,20 @@ _RAW_BUILDINGS = [
     ( -7, -10, 6, 5, 10),   # obstacle on direct route (0,0,0) → (-15,0,-20)
     ( 20, -20, 6, 6,  9),   # balcony building (3 floors, exterior balcony on south face)
     ( 12, -27, 10, 8, 9),   # twin shophouse block (3 floors, windows on south face)
+    (-23, -28, 10, 10, 21), # NW tower (7 floors), SE corner overlaps NW corner of target
 ]
 
 # (x, y, z) — inside the target building, one per floor (floors 2, 3, 4)
 # survY(n) = (n-1)*3.0 + 0.65  →  3.65, 6.65, 9.65
 _RAW_SURVIVORS = [
-    (-16.5, 3.65, -19.0),   # floor 2 — target building
-    (-14.5, 6.65, -20.5),   # floor 3 — target building
-    (-13.5, 9.65, -21.0),   # floor 4 — target building
-    ( 20.0, 6.65, -16.0),   # floor 3 — balcony building, on exterior balcony (outside AABB)
-    (  9.5, 3.65, -27.0),   # floor 2 — shophouse A, visible through south window
-    ( 14.5, 6.65, -27.0),   # floor 3 — shophouse B, visible through south window
+    (-16.5,  3.65, -19.0),  # floor 2 — target building
+    (-14.5,  6.65, -20.5),  # floor 3 — target building
+    (-13.5,  9.65, -21.0),  # floor 4 — target building
+    ( 20.0,  6.65, -16.0),  # floor 3 — balcony building, on exterior balcony (outside AABB)
+    (  9.5,  3.65, -27.0),  # floor 2 — shophouse A, visible through south window
+    ( 14.5,  6.65, -27.0),  # floor 3 — shophouse B, visible through south window
+    (-19.0,  3.65, -27.5),  # floor 2 — NW tower, inside near east window
+    (-23.0, 12.65, -22.0),  # floor 5 — NW tower, on south balcony (outside AABB)
 ]
 
 
@@ -236,11 +239,37 @@ def _shophouse_windows(cx: float, cz: float) -> tuple[SimWindowAperture, ...]:
     return tuple(windows)
 
 
+def _nw_tower_windows(cx: float, cz: float) -> tuple[SimWindowAperture, ...]:
+    windows: list[SimWindowAperture] = []
+    layout: tuple[tuple[int, WindowFace, float], ...] = (
+        (2, "east",  0.5),
+        (4, "south", -1.5),
+        (6, "north",  2.0),
+        (7, "west",  -1.0),
+    )
+    window_width = 1.8
+    window_height = 1.6
+    for floor, face, offset in layout:
+        sill_y = (floor - 1) * 3.0 + 0.4
+        axis_center = cx + offset if face in ("north", "south") else cz + offset
+        windows.append(
+            SimWindowAperture(
+                face=face,
+                axis_center=axis_center,
+                sill_y=sill_y,
+                width=window_width,
+                height=window_height,
+            )
+        )
+    return tuple(windows)
+
+
 BUILDINGS = [
     SimBuilding(
         i, cx, cz, w, d, h,
         _target_windows(cx, cz) if i == 0
         else _shophouse_windows(cx, cz) if i == 3
+        else _nw_tower_windows(cx, cz) if i == 4
         else ()
     )
     for i, (cx, cz, w, d, h) in enumerate(_RAW_BUILDINGS)
