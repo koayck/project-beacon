@@ -691,27 +691,29 @@ def plan_building_vertical_sweep(
     # window at a given level are simply skipped.
     for level_y in floor_levels:
         levels.append(level_y)
-        level_windows = {w["face"]: w for w in above_flood if round(w["y"], 2) == level_y}
+        level_wps = [w for w in above_flood if round(w["y"], 2) == level_y]
+        # Group by face, preserving insertion order within each face, so multiple
+        # windows on the same face at the same floor (e.g. shophouse south x2) are
+        # all visited instead of the last one silently overwriting the others.
+        level_windows: dict[str, list[dict]] = {}
+        for w in level_wps:
+            level_windows.setdefault(w["face"], []).append(w)
 
-        # Ring: NW → [north] → NE → [east] → SE → [south] → SW → [west] → NW
+        # Ring: NW → [north…] → NE → [east…] → SE → [south…] → SW → [west…] → NW
         # NW corner may be adjusted east to avoid an adjacent building.
         ring: list[tuple[float, float, str]] = [
             (nw_x, nw_z, "perimeter NW"),
         ]
-        if "north" in level_windows:
-            ww = level_windows["north"]
+        for ww in level_windows.get("north", []):
             ring.append((ww["x"], ww["z"], f"window scan north floor {ww['floor']}"))
         ring.append((ne_x, ne_z, "perimeter NE"))
-        if "east" in level_windows:
-            ww = level_windows["east"]
+        for ww in level_windows.get("east", []):
             ring.append((ww["x"], ww["z"], f"window scan east floor {ww['floor']}"))
         ring.append((se_x, se_z, "perimeter SE"))
-        if "south" in level_windows:
-            ww = level_windows["south"]
+        for ww in level_windows.get("south", []):
             ring.append((ww["x"], ww["z"], f"window scan south floor {ww['floor']}"))
         ring.append((sw_x, sw_z, "perimeter SW"))
-        if "west" in level_windows:
-            ww = level_windows["west"]
+        for ww in level_windows.get("west", []):
             ring.append((ww["x"], ww["z"], f"window scan west floor {ww['floor']}"))
         # When NW was pushed east, add a "west-face stop" before closing the ring
         # so the drone hugs the west face safely and then turns NE to reach NW.
@@ -859,11 +861,13 @@ async def sweep_scan_building(
     rooftop = plan["rooftop_position"]
 
     # ── Step 2: Navigate to top of building using plan_route ───────────
+    building_id = plan["building"]["id"]
     route = await plan_route(
         asset_id=asset_id,
         target_x=rooftop["x"],
         target_z=rooftop["z"],
         target_y=rooftop["y"],
+        exclude_building_id=building_id,
     )
     if "error" in route:
         return {
@@ -1139,10 +1143,15 @@ async def plan_route(
     target_z: float,
     target_y: float | None = None,
     snap_to_building_center: bool = False,
+    exclude_building_id: int | None = None,
 ) -> dict:
     """
     Pre-compute a collision-free route from the drone's current position
     to the target (target_x, target_z) with optional altitude target_y.
+
+    ``exclude_building_id`` removes a specific building from obstacle checks —
+    used when the destination IS the target building (e.g. rooftop approach) so
+    the building doesn't block its own approach route.
     """
     client = grpc_client
     status = await client.get_status(asset_id)
@@ -1204,7 +1213,12 @@ async def plan_route(
             f"{selected_window_waypoint['face']} floor {selected_window_waypoint['floor']}."
         )
 
-    obstacles = WORLD.obstacles_in_path(cx, cy, cz, target_x, target_y, target_z, samples=40, margin=1.0)
+    def _filter(buildings: list) -> list:
+        if exclude_building_id is None:
+            return buildings
+        return [b for b in buildings if b.id != exclude_building_id]
+
+    obstacles = _filter(WORLD.obstacles_in_path(cx, cy, cz, target_x, target_y, target_z, samples=40, margin=1.0))
     if not obstacles:
         return {
             "asset_id": asset_id,
@@ -1222,8 +1236,8 @@ async def plan_route(
     max_obstacle_h = max(b.max_y for b in obstacles)
     clearance_y = max_obstacle_h + 5.0
 
-    seg_climb = WORLD.obstacles_in_path(cx, cy, cz, cx, clearance_y, cz, samples=20, margin=1.0)
-    seg_cruise = WORLD.obstacles_in_path(
+    seg_climb = _filter(WORLD.obstacles_in_path(cx, cy, cz, cx, clearance_y, cz, samples=20, margin=1.0))
+    seg_cruise = _filter(WORLD.obstacles_in_path(
         cx,
         clearance_y,
         cz,
@@ -1232,8 +1246,8 @@ async def plan_route(
         target_z,
         samples=40,
         margin=1.0,
-    )
-    seg_descend = WORLD.obstacles_in_path(
+    ))
+    seg_descend = _filter(WORLD.obstacles_in_path(
         target_x,
         clearance_y,
         target_z,
@@ -1242,7 +1256,7 @@ async def plan_route(
         target_z,
         samples=20,
         margin=1.0,
-    )
+    ))
 
     if not seg_climb and not seg_cruise and not seg_descend:
         waypoints = [
@@ -1297,8 +1311,8 @@ async def plan_route(
         wp_x = mid_x + sign * perp_x * offset_dist
         wp_z = mid_z + sign * perp_z * offset_dist
 
-        seg1 = WORLD.obstacles_in_path(cx, cy, cz, wp_x, fly_y, wp_z, samples=40, margin=1.0)
-        seg2 = WORLD.obstacles_in_path(
+        seg1 = _filter(WORLD.obstacles_in_path(cx, cy, cz, wp_x, fly_y, wp_z, samples=40, margin=1.0))
+        seg2 = _filter(WORLD.obstacles_in_path(
             wp_x,
             fly_y,
             wp_z,
@@ -1307,7 +1321,7 @@ async def plan_route(
             target_z,
             samples=40,
             margin=1.0,
-        )
+        ))
         if not seg1 and not seg2:
             waypoints = [
                 {"x": wp_x, "y": fly_y, "z": wp_z, "reason": "detour around obstacle"},
@@ -1413,6 +1427,6 @@ async def deploy_swarm(asset_ids: list[str], formation: str = "spread") -> dict:
 async def recall_swarm(asset_ids: list[str]) -> dict:
     """Command all drones in the list to return to base immediately."""
     results = await asyncio.gather(
-        *[grpc_client.return_to_base(aid) for aid in asset_ids]
+        *[return_to_base(aid) for aid in asset_ids]
     )
     return {"recalled": asset_ids, "results": list(results)}
