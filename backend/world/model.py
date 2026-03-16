@@ -351,6 +351,7 @@ def _build_world() -> WorldModel:
         layout: tuple[tuple[int, WindowFace, float], ...] = (
             (1, "west", 0.0),
             (2, "north", -1.5),
+            (3, "east", -0.5),
             (4, "south", 1.5),
         )
         window_width = 2.0
