@@ -10,13 +10,6 @@ interface AgentMessage {
   ts: number
 }
 
-interface AreaSelection {
-  x1: number
-  z1: number
-  x2: number
-  z2: number
-}
-
 interface Props {
   assetId: string
   connected: boolean
@@ -24,11 +17,6 @@ interface Props {
   battery: number | null
   onCommand: (prompt: string, onEvent: (e: AgentStreamEvent) => void) => Promise<void>
   onStop?: () => void
-  areaSelectMode?: boolean
-  onToggleAreaSelect?: () => void
-  areaSelection?: AreaSelection | null
-  onScanArea?: () => void
-  onCancelArea?: () => void
 }
 
 const QUICK_ACTIONS = [
@@ -59,7 +47,7 @@ function messagesToText(messages: AgentMessage[]): string {
     .join('\n\n')
 }
 
-export default function CommandPanel({ assetId, connected, uplinked, battery, onCommand, onStop, areaSelectMode, onToggleAreaSelect, areaSelection, onScanArea, onCancelArea }: Props) {
+export default function CommandPanel({ assetId, connected, uplinked, battery, onCommand, onStop }: Props) {
   const [input, setInput]       = useState('')
   const [busy, setBusy]         = useState(false)
   const [elapsed, setElapsed]   = useState(0)
@@ -342,84 +330,7 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
             {action.label}
           </button>
         ))}
-        <button
-          onClick={onToggleAreaSelect}
-          disabled={!connected || busy}
-          title="Select area on map to scan"
-          style={{
-            marginLeft: 'auto',
-            background: areaSelectMode ? 'rgba(255,80,120,0.15)' : 'transparent',
-            border: `1px solid ${areaSelectMode ? 'rgba(255,80,120,0.5)' : 'rgba(80,120,200,0.25)'}`,
-            borderRadius: 4,
-            color: (!connected || busy) ? '#334' : areaSelectMode ? '#ff6088' : '#5af',
-            padding: '2px 8px',
-            cursor: (!connected || busy) ? 'default' : 'pointer',
-            fontFamily: 'Courier New, monospace',
-            fontSize: 10,
-            letterSpacing: 0.5,
-            transition: 'all 0.15s',
-          }}
-        >
-          {areaSelectMode ? '⬚ SELECTING...' : '⬚ SELECT AREA'}
-        </button>
       </div>
-
-      {/* Area selection confirmation */}
-      {areaSelection && (
-        <div style={{
-          display: 'flex',
-          gap: 8,
-          padding: '5px 10px',
-          borderTop: '1px solid rgba(255,80,120,0.2)',
-          alignItems: 'center',
-          background: 'rgba(255,80,120,0.05)',
-        }}>
-          <span style={{ color: '#aaa', fontSize: 10, fontFamily: 'Courier New, monospace' }}>
-            ({areaSelection.x1.toFixed(1)}, {areaSelection.z1.toFixed(1)}) → ({areaSelection.x2.toFixed(1)}, {areaSelection.z2.toFixed(1)})
-          </span>
-          <button
-            onClick={() => {
-              if (!areaSelection) return
-              const prompt = `Scan the area bounded by (${areaSelection.x1.toFixed(1)}, ${areaSelection.z1.toFixed(1)}) to (${areaSelection.x2.toFixed(1)}, ${areaSelection.z2.toFixed(1)}) for survivors`
-              submit(prompt)
-              onScanArea?.()
-            }}
-            disabled={busy}
-            style={{
-              marginLeft: 'auto',
-              background: 'rgba(255,80,120,0.15)',
-              border: '1px solid rgba(255,80,120,0.45)',
-              borderRadius: 4,
-              color: busy ? '#334' : '#ff6088',
-              padding: '2px 10px',
-              cursor: busy ? 'default' : 'pointer',
-              fontFamily: 'Courier New, monospace',
-              fontSize: 11,
-              fontWeight: 'bold',
-              letterSpacing: 0.5,
-              transition: 'all 0.15s',
-            }}
-          >
-            SCAN AREA
-          </button>
-          <button
-            onClick={onCancelArea}
-            style={{
-              background: 'transparent',
-              border: '1px solid #334',
-              borderRadius: 4,
-              color: '#667',
-              padding: '2px 6px',
-              cursor: 'pointer',
-              fontFamily: 'Courier New, monospace',
-              fontSize: 11,
-              transition: 'all 0.15s',
-            }}
-          >
-            ✕
-          </button>
-        </div>
-      )}
 
       {/* Direct-action bar */}
       <div style={{
