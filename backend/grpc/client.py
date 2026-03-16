@@ -40,6 +40,7 @@ class DroneGrpcClient:
         self._connections: dict[str, _DroneConnection] = {}
 
     def register(self, asset_id: str, host: str, port: int) -> None:
+        asset_id = asset_id.upper()
         if asset_id in self._connections:
             self._connections[asset_id].channel.close()
         channel = grpc.insecure_channel(f"{host}:{port}")
@@ -47,7 +48,7 @@ class DroneGrpcClient:
         self._connections[asset_id] = _DroneConnection(host, port, channel, stub)
 
     def _stub(self, asset_id: str) -> beacon_pb2_grpc.DroneControlStub:
-        conn = self._connections.get(asset_id)
+        conn = self._connections.get(asset_id.upper())
         if not conn:
             raise KeyError(f"No gRPC connection for {asset_id}. Call /uplink first.")
         return conn.stub

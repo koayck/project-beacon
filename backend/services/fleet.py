@@ -6,7 +6,7 @@ from backend.runtime import grpc_client, udp_listener
 
 
 def _grpc_target(asset_id: str) -> tuple[str, int]:
-    idx = int(asset_id.split("-")[1])
+    idx = int(asset_id.upper().split("-")[1])
     return "localhost", 50050 + idx
 
 
