@@ -299,8 +299,12 @@ SINGLE BUILDING — command targets one specific building or coordinate:
      with id=-1, height=0, bounds={min_x:x, max_x:x, min_z:z, max_z:z}.
 
 AREA SCAN — command mentions area / zone / radius / "all buildings" with no explicit list:
-  1. Call find_buildings_in_area(center_x, center_z, radius).
+  1. Call get_drone_status(asset_id) to get the drone's current position.
+  2. Call find_buildings_in_area(center_x, center_z, radius,
+       drone_x=<drone.x>, drone_z=<drone.z>).
      Default radius = 30.0 m unless the operator specifies one.
+     Passing drone_x/drone_z sorts buildings nearest to the drone first,
+     minimising inter-building transit time.
 
 In all cases, output ONLY valid JSON — no markdown, no extra text:
   {"asset_id": "<asset_id>", "buildings": [<building objects>]}
@@ -318,7 +322,7 @@ _scan_resolver_agent = Agent(
     generate_content_config=QWEN3_GEN_CONFIG,
     output_key="scan_buildings",
     instruction=_RESOLVER_INSTRUCTION,
-    tools=[make_toolset(["resolve_scan_target", "find_buildings_in_area"])],
+    tools=[make_toolset(["resolve_scan_target", "find_buildings_in_area", "get_drone_status"])],
 )
 
 
