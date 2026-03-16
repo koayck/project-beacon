@@ -35,6 +35,7 @@ const TARGET_BZ = -20
 const TARGET_WINDOW_LAYOUT = [
   { floor: 1, face: 'west', offset: 0.0 },
   { floor: 2, face: 'north', offset: -1.5 },
+  { floor: 3, face: 'east', offset: -0.5 },
   { floor: 4, face: 'south', offset: 1.5 },
 ] as const
 const TARGET_WINDOW_WIDTH = 2.0
@@ -1845,7 +1846,13 @@ export default function SARScene() {
       // Entire selection is dominated by one building — scan the building directly.
       prompt = `scan the ${buildingNames[0]} at coordinates (${overlapping[0].cx.toFixed(1)}, 0, ${overlapping[0].cz.toFixed(1)}) for survivors`
     } else if (buildingNames.length > 1) {
-      prompt = `scan the area from (${selection.minX}, ${selection.minZ}) to (${selection.maxX}, ${selection.maxZ}) for survivors. The area contains the following buildings: ${buildingNames.join(', ')}. Search each building thoroughly.`
+      const buildingList = overlapping
+        .map(b => {
+          const name = NAMED_BUILDINGS.find(n => n.id === b.id)?.name ?? `building ${b.id}`
+          return `${name} at (${b.cx.toFixed(1)}, 0, ${b.cz.toFixed(1)})`
+        })
+        .join('; ')
+      prompt = `scan for survivors in each of the following buildings: ${buildingList}. Do not ask for coordinates — they are provided above. Scan each building in sequence.`
     } else {
       prompt = `scan area from (${selection.minX}, ${selection.minZ}) to (${selection.maxX}, ${selection.maxZ}) for survivors`
     }

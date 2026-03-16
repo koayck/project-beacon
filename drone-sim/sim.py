@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import NamedTuple
 
-from world import next_position_blocked
+from world import next_position_blocked, get_view
 
 
 class DroneStatus(str, Enum):
@@ -121,6 +121,38 @@ class DroneSimulator:
             )
 
     # ── Physics ────────────────────────────────────────────────────────────
+
+    def get_enriched_status(self) -> dict:
+        """Drone state combined with world-model awareness fields.
+
+        Keeps grpc_server.py as a pure transport adapter — it only needs to
+        call this method rather than importing world.get_view() directly.
+        """
+        s = self.get_snapshot()
+        view = get_view(s.position.x, s.position.y, s.position.z)
+        return {
+            "asset_id": s.asset_id,
+            "x": s.position.x,
+            "y": s.position.y,
+            "z": s.position.z,
+            "battery": s.battery,
+            "status": s.status.value,
+            "nearby_obstacles": view["nearby_obstacles"],
+            "nearest_obstacle_dist": view["nearest_obstacle_dist"],
+            "survivors_in_range": view["survivors_in_range"],
+            "over_flood": view["over_flood"],
+            "altitude_agl": view["altitude_agl"],
+        }
+
+    def get_view(self, heading_deg: float = 0.0, detection_range: float = 20.0) -> dict:
+        """Full sensor view from the drone's current position.
+
+        Keeps grpc_server.py as a pure transport adapter — it delegates view
+        computation here rather than importing world.get_view() directly.
+        """
+        s = self.get_snapshot()
+        return get_view(s.position.x, s.position.y, s.position.z,
+                        heading_deg=heading_deg, detection_range=detection_range)
 
     def _loop(self) -> None:
         while self._running:
