@@ -2,7 +2,7 @@
 
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Line, OrbitControls, PerspectiveCamera } from '@react-three/drei'
-import { useRef, useState, useEffect, useMemo, useCallback, type RefObject } from 'react'
+import { useRef, useState, useEffect, useMemo, useCallback, type RefObject, type MutableRefObject } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import CommandPanel from './CommandPanel'
@@ -49,6 +49,32 @@ const OBS_Z = -10
 const OBS_W = 6
 const OBS_D = 5
 const OBS_H = 10
+
+// Balcony building — 3-story residential with exterior balcony on floor 3 (south face)
+const BAL_X = 20
+const BAL_Z = -20
+const BAL_W = 6
+const BAL_D = 6
+const BAL_H = 9   // 3 floors × 3m
+const BAL_BALCONY_FLOOR = 3
+const BAL_BALCONY_DEPTH = 2.0
+const BAL_BALCONY_WIDTH = 3.0
+
+// Twin shophouse block — 2 adjoined 3-story shophouses with shared party wall
+const SHOP_X = 12
+const SHOP_Z = -27
+const SHOP_W = 10  // 5m per unit
+const SHOP_D = 8
+const SHOP_H = 9   // 3 floors × 3m
+const SHOP_WINDOW_LAYOUT = [
+  { floor: 2, face: 'south' as const, offset: -2.5 },
+  { floor: 2, face: 'south' as const, offset:  2.5 },
+  { floor: 3, face: 'south' as const, offset: -2.5 },
+  { floor: 3, face: 'south' as const, offset:  2.5 },
+] as const
+const SHOP_WINDOW_WIDTH = 1.6
+const SHOP_WINDOW_HEIGHT = 1.4
+const SHOP_WINDOW_SILL = 0.5
 
 // Drone start position
 const DRONE_START = new THREE.Vector3(13, 1, 13)
@@ -100,7 +126,7 @@ const CITY_BUILDINGS = [
   [-24,-27, 6, 4,10, '#C89E74', '#B88E64'],
   [-16,-27, 6, 4,12, '#D0A882', '#C09876'],
   [  0,-27, 8, 4, 8, '#BCA880', '#ACA070'],
-  [ 16,-27, 6, 4,11, '#D2AE86', '#C29E76'],
+  // [16,-27] removed — replaced by functional ShophouseBlock
   [ 24,-27, 6, 4,10, '#C8A47A', '#B89468'],
   [ 32,-27, 6, 4,10, '#CCA882', '#BC9870'],
   // ── Western tower cluster ────────────────────────────────────────────────
@@ -181,6 +207,11 @@ const SURVIVOR_POSITIONS = [
   { x: TARGET_BX - 1.5, y: survY(2), z: TARGET_BZ + 1.0 },
   { x: TARGET_BX + 0.5, y: survY(3), z: TARGET_BZ - 0.5 },
   { x: TARGET_BX + 1.5, y: survY(4), z: TARGET_BZ - 1.0 },
+  // Balcony building — survivor on exterior balcony, floor 3 (outside AABB, direct LOS)
+  { x: BAL_X, y: survY(BAL_BALCONY_FLOOR), z: BAL_Z + BAL_D / 2 + BAL_BALCONY_DEPTH / 2 },
+  // Twin shophouse — Shop A floor 2, Shop B floor 3 (inside, visible through south windows)
+  { x: SHOP_X - 2.5, y: survY(2), z: SHOP_Z },
+  { x: SHOP_X + 2.5, y: survY(3), z: SHOP_Z },
   // building rooftops
   // { x: -10,  y: 31.0,  z:  -8  },  // ultra-slim skyscraper
   // { x:  16,  y: 25.0,  z:   14 },  // charcoal tower
@@ -244,9 +275,22 @@ const TARGET_BUILDING_WINDOWS: SimWindowAperture[] = TARGET_WINDOW_LAYOUT.map(({
   height: TARGET_WINDOW_HEIGHT,
 }))
 
+const SHOPHOUSE_WINDOWS: SimWindowAperture[] = SHOP_WINDOW_LAYOUT.map(({ floor, face, offset }) => {
+  const f = face as WindowFace
+  return {
+    face: f,
+    axisCenter: f === 'north' || f === 'south' ? SHOP_X + offset : SHOP_Z + offset,
+    sillY: (floor - 1) * FLOOR_H + SHOP_WINDOW_SILL,
+    width: SHOP_WINDOW_WIDTH,
+    height: SHOP_WINDOW_HEIGHT,
+  }
+})
+
 const SIM_BUILDINGS: SimBuilding[] = [
   { id: 0, cx: TARGET_BX, cz: TARGET_BZ, w: FLOOR_W, d: FLOOR_D, h: total_h, windows: TARGET_BUILDING_WINDOWS },
   { id: 1, cx: OBS_X, cz: OBS_Z, w: OBS_W, d: OBS_D, h: OBS_H, windows: [] },
+  { id: 2, cx: BAL_X, cz: BAL_Z, w: BAL_W, d: BAL_D, h: BAL_H, windows: [] },
+  { id: 3, cx: SHOP_X, cz: SHOP_Z, w: SHOP_W, d: SHOP_D, h: SHOP_H, windows: SHOPHOUSE_WINDOWS },
 ]
 
 function buildingBounds(b: SimBuilding) {
@@ -634,6 +678,123 @@ function ObstacleBuilding() {
   )
 }
 
+function BalconyBuilding({ transparentWalls }: { transparentWalls: boolean }) {
+  const hw = BAL_W / 2
+  const hd = BAL_D / 2
+  const balconyY = (BAL_BALCONY_FLOOR - 1) * FLOOR_H
+  const numFloors = Math.round(BAL_H / FLOOR_H)
+
+  const wallPanels = [
+    { pos: [BAL_X, BAL_H / 2, BAL_Z - hd] as [number, number, number], size: [BAL_W, BAL_H, 0.14] as [number, number, number] },
+    { pos: [BAL_X, BAL_H / 2, BAL_Z + hd] as [number, number, number], size: [BAL_W, BAL_H, 0.14] as [number, number, number] },
+    { pos: [BAL_X - hw, BAL_H / 2, BAL_Z] as [number, number, number], size: [0.14, BAL_H, BAL_D] as [number, number, number] },
+    { pos: [BAL_X + hw, BAL_H / 2, BAL_Z] as [number, number, number], size: [0.14, BAL_H, BAL_D] as [number, number, number] },
+  ]
+
+  return (
+    <>
+      {/* Floor slabs */}
+      {Array.from({ length: numFloors + 1 }, (_, n) => (
+        <mesh key={n} position={[BAL_X, n * FLOOR_H, BAL_Z]}>
+          <boxGeometry args={[BAL_W, FLOOR_T, BAL_D]} />
+          <meshStandardMaterial color={C_SLAB} />
+        </mesh>
+      ))}
+      {/* Walls */}
+      {wallPanels.map(({ pos, size }, i) => (
+        <mesh key={i} position={pos}>
+          <boxGeometry args={size} />
+          <meshStandardMaterial
+            color={transparentWalls ? '#9ab1a8' : '#7a8a72'}
+            transparent={transparentWalls}
+            opacity={transparentWalls ? 0.22 : 1}
+            depthWrite={!transparentWalls}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      ))}
+      {/* Balcony platform — protrudes from south face on floor 3 */}
+      <mesh position={[BAL_X, balconyY, BAL_Z + hd + BAL_BALCONY_DEPTH / 2]}>
+        <boxGeometry args={[BAL_BALCONY_WIDTH, FLOOR_T, BAL_BALCONY_DEPTH]} />
+        <meshStandardMaterial color={C_SLAB} />
+      </mesh>
+      {/* Balcony railing — front */}
+      <mesh position={[BAL_X, balconyY + 0.5, BAL_Z + hd + BAL_BALCONY_DEPTH]}>
+        <boxGeometry args={[BAL_BALCONY_WIDTH, 1.0, 0.08]} />
+        <meshStandardMaterial color="#5a6a5a" />
+      </mesh>
+      {/* Balcony railing — sides */}
+      <mesh position={[BAL_X - BAL_BALCONY_WIDTH / 2, balconyY + 0.5, BAL_Z + hd + BAL_BALCONY_DEPTH / 2]}>
+        <boxGeometry args={[0.08, 1.0, BAL_BALCONY_DEPTH]} />
+        <meshStandardMaterial color="#5a6a5a" />
+      </mesh>
+      <mesh position={[BAL_X + BAL_BALCONY_WIDTH / 2, balconyY + 0.5, BAL_Z + hd + BAL_BALCONY_DEPTH / 2]}>
+        <boxGeometry args={[0.08, 1.0, BAL_BALCONY_DEPTH]} />
+        <meshStandardMaterial color="#5a6a5a" />
+      </mesh>
+    </>
+  )
+}
+
+function ShophouseBlock({ transparentWalls }: { transparentWalls: boolean }) {
+  const hw = SHOP_W / 2
+  const hd = SHOP_D / 2
+  const numFloors = Math.round(SHOP_H / FLOOR_H)
+  const windowYCenter = (floor: number) =>
+    (floor - 1) * FLOOR_H + SHOP_WINDOW_SILL + SHOP_WINDOW_HEIGHT / 2
+
+  const wallPanels = [
+    { pos: [SHOP_X, SHOP_H / 2, SHOP_Z - hd] as [number, number, number], size: [SHOP_W, SHOP_H, 0.14] as [number, number, number] },
+    { pos: [SHOP_X, SHOP_H / 2, SHOP_Z + hd] as [number, number, number], size: [SHOP_W, SHOP_H, 0.14] as [number, number, number] },
+    { pos: [SHOP_X - hw, SHOP_H / 2, SHOP_Z] as [number, number, number], size: [0.14, SHOP_H, SHOP_D] as [number, number, number] },
+    { pos: [SHOP_X + hw, SHOP_H / 2, SHOP_Z] as [number, number, number], size: [0.14, SHOP_H, SHOP_D] as [number, number, number] },
+  ]
+
+  return (
+    <>
+      {/* Floor slabs */}
+      {Array.from({ length: numFloors + 1 }, (_, n) => (
+        <mesh key={n} position={[SHOP_X, n * FLOOR_H, SHOP_Z]}>
+          <boxGeometry args={[SHOP_W, FLOOR_T, SHOP_D]} />
+          <meshStandardMaterial color={C_SLAB} />
+        </mesh>
+      ))}
+      {/* Walls */}
+      {wallPanels.map(({ pos, size }, i) => (
+        <mesh key={i} position={pos}>
+          <boxGeometry args={size} />
+          <meshStandardMaterial
+            color={transparentWalls ? '#b1a08a' : '#C49870'}
+            transparent={transparentWalls}
+            opacity={transparentWalls ? 0.22 : 1}
+            depthWrite={!transparentWalls}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      ))}
+      {/* Party wall divider */}
+      <mesh position={[SHOP_X, SHOP_H / 2, SHOP_Z]}>
+        <boxGeometry args={[0.14, SHOP_H, SHOP_D]} />
+        <meshStandardMaterial color="#8a7a6a" />
+      </mesh>
+      {/* Windows on south face (floors 2 & 3) */}
+      {SHOP_WINDOW_LAYOUT.map(({ floor, offset }, i) => (
+        <mesh key={i} position={[SHOP_X + offset, windowYCenter(floor), SHOP_Z + hd + 0.07]}>
+          <boxGeometry args={[SHOP_WINDOW_WIDTH, SHOP_WINDOW_HEIGHT, 0.10]} />
+          <meshStandardMaterial color={C_GLASS} transparent opacity={0.2} depthWrite={false} side={THREE.DoubleSide} />
+        </mesh>
+      ))}
+      {/* Shopfront awnings on ground floor */}
+      {[-2.5, 2.5].map((offset, i) => (
+        <mesh key={`awning-${i}`} position={[SHOP_X + offset, 2.6, SHOP_Z + hd + 0.6]} rotation={[-0.4, 0, 0]}>
+          <boxGeometry args={[4, 0.06, 1.2]} />
+          <meshStandardMaterial color="#c44830" />
+        </mesh>
+      ))}
+    </>
+  )
+}
+
 // Survivors pulse faster and turn orange when submerged by the flood
 function Survivors({ floodY }: { floodY: number }) {
   const refs = useRef<(THREE.Mesh | null)[]>(SURVIVOR_POSITIONS.map(() => null))
@@ -799,6 +960,209 @@ function GroundCursor({ point }: { point: THREE.Vector3 | null }) {
   )
 }
 
+// ── Area selection ────────────────────────────────────────────────────────────
+
+interface AreaSelection {
+  minX: number
+  maxX: number
+  minZ: number
+  maxZ: number
+}
+
+function snapToGrid(v: number): number {
+  return Math.round(v / GRID_SPACING) * GRID_SPACING
+}
+
+function selectionFromPoints(a: THREE.Vector3, b: THREE.Vector3): AreaSelection {
+  return {
+    minX: snapToGrid(Math.min(a.x, b.x)),
+    maxX: snapToGrid(Math.max(a.x, b.x)),
+    minZ: snapToGrid(Math.min(a.z, b.z)),
+    maxZ: snapToGrid(Math.max(a.z, b.z)),
+  }
+}
+
+// Invisible ground plane that captures drag-to-select events
+function AreaSelectProbe({
+  onDragUpdate,
+  onDragEnd,
+}: {
+  onDragUpdate: (start: THREE.Vector3, end: THREE.Vector3) => void
+  onDragEnd: (sel: AreaSelection) => void
+}) {
+  const dragStart = useRef<THREE.Vector3 | null>(null)
+  const isDragging = useRef(false)
+
+  return (
+    <mesh
+      rotation={[-Math.PI / 2, 0, 0]}
+      position={[0, 0.06, 0]}
+      onPointerDown={e => {
+        e.stopPropagation()
+        ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+        dragStart.current = e.point.clone()
+        isDragging.current = true
+        onDragUpdate(e.point.clone(), e.point.clone())
+      }}
+      onPointerMove={e => {
+        e.stopPropagation()
+        if (!isDragging.current || !dragStart.current) return
+        onDragUpdate(dragStart.current, e.point.clone())
+      }}
+      onPointerUp={e => {
+        e.stopPropagation()
+        if (!isDragging.current || !dragStart.current) return
+        isDragging.current = false
+        const sel = selectionFromPoints(dragStart.current, e.point.clone())
+        dragStart.current = null
+        onDragEnd(sel)
+      }}
+    >
+      <planeGeometry args={[span, span]} />
+      <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+    </mesh>
+  )
+}
+
+// Orange selection rectangle on the ground plane
+function AreaHighlight({
+  start,
+  end,
+  finalised,
+}: {
+  start: THREE.Vector3
+  end: THREE.Vector3
+  finalised: boolean
+}) {
+  const meshRef = useRef<THREE.Mesh>(null)
+  const t = useRef(0)
+
+  const sel = selectionFromPoints(start, end)
+  const cx = (sel.minX + sel.maxX) / 2
+  const cz = (sel.minZ + sel.maxZ) / 2
+  const w = Math.max(sel.maxX - sel.minX, GRID_SPACING)
+  const d = Math.max(sel.maxZ - sel.minZ, GRID_SPACING)
+
+  useFrame((_, delta) => {
+    if (!finalised || !meshRef.current) return
+    t.current += delta * 3
+    const mat = meshRef.current.material as THREE.MeshStandardMaterial
+    mat.opacity = 0.18 + Math.sin(t.current) * 0.08
+  })
+
+  return (
+    <group>
+      {/* Fill */}
+      <mesh ref={meshRef} position={[cx, 0.09, cz]}>
+        <boxGeometry args={[w, 0.04, d]} />
+        <meshStandardMaterial
+          color={finalised ? '#ff9900' : '#ff6600'}
+          transparent
+          opacity={finalised ? 0.22 : 0.15}
+          depthWrite={false}
+        />
+      </mesh>
+      {/* Border lines */}
+      <Line
+        points={[
+          [sel.minX, 0.12, sel.minZ],
+          [sel.maxX, 0.12, sel.minZ],
+          [sel.maxX, 0.12, sel.maxZ],
+          [sel.minX, 0.12, sel.maxZ],
+          [sel.minX, 0.12, sel.minZ],
+        ]}
+        color={finalised ? '#ffaa22' : '#ff8844'}
+        lineWidth={1.5}
+        transparent
+        opacity={0.9}
+      />
+    </group>
+  )
+}
+
+// HTML context menu anchored near screen-centre of the selection
+function AreaContextMenu({
+  selection,
+  onScan,
+  onClose,
+}: {
+  selection: AreaSelection
+  onScan: () => void
+  onClose: () => void
+}) {
+  const w = selection.maxX - selection.minX
+  const d = selection.maxZ - selection.minZ
+
+  return (
+    <div style={{
+      position: 'absolute',
+      top: '50%',
+      left: '50%',
+      transform: 'translate(-50%, -50%)',
+      background: 'rgba(8, 12, 22, 0.94)',
+      border: '1px solid #ff880066',
+      borderTop: '2px solid #ff8800',
+      borderRadius: 7,
+      padding: '12px 16px',
+      fontFamily: 'Courier New, monospace',
+      fontSize: 11,
+      color: '#aabbcc',
+      pointerEvents: 'auto',
+      minWidth: 220,
+      zIndex: 30,
+      boxShadow: '0 4px 24px rgba(0,0,0,0.6)',
+    }}>
+      <div style={{ color: '#ff9933', fontWeight: 'bold', marginBottom: 8, letterSpacing: 0.5 }}>
+        📐 AREA SELECTED
+      </div>
+      <div style={{ color: '#778899', marginBottom: 2 }}>
+        From&nbsp;
+        <span style={{ color: '#ccd' }}>({selection.minX}, {selection.minZ})</span>
+      </div>
+      <div style={{ color: '#778899', marginBottom: 2 }}>
+        To&nbsp;&nbsp;&nbsp;
+        <span style={{ color: '#ccd' }}>({selection.maxX}, {selection.maxZ})</span>
+      </div>
+      <div style={{ color: '#556677', marginBottom: 12 }}>
+        {w}m × {d}m area
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          onClick={onScan}
+          style={{
+            flex: 1,
+            background: 'rgba(255,136,0,0.18)',
+            border: '1px solid rgba(255,136,0,0.55)',
+            borderRadius: 4,
+            color: '#ffaa44',
+            padding: '6px 10px',
+            cursor: 'pointer',
+            fontSize: 11,
+            fontFamily: 'Courier New, monospace',
+          }}
+        >
+          📡 Scan this area
+        </button>
+        <button
+          onClick={onClose}
+          style={{
+            background: 'rgba(80,80,100,0.18)',
+            border: '1px solid rgba(120,130,150,0.4)',
+            borderRadius: 4,
+            color: '#889',
+            padding: '6px 10px',
+            cursor: 'pointer',
+            fontSize: 11,
+            fontFamily: 'Courier New, monospace',
+          }}
+        >
+          ✕
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Drone status panel (HTML overlay) ────────────────────────────────────────
 
 function _batteryColor(pct: number): string {
@@ -932,25 +1296,83 @@ function CoordOverlay({ point, copied }: { point: THREE.Vector3 | null; copied: 
   )
 }
 
-function CompassLabels() {
-  const style = (top?: string, bottom?: string, left?: string, right?: string): React.CSSProperties => ({
-    position: 'absolute',
-    top, bottom, left, right,
-    transform: top === '50%' || bottom === '50%' ? 'translateY(-50%)' : 'translateX(-50%)',
-    color: 'rgba(180,200,255,0.55)',
-    fontFamily: 'Courier New, monospace',
-    fontSize: 11,
-    letterSpacing: 2,
-    pointerEvents: 'none',
-    userSelect: 'none',
-    zIndex: 5,
+// Tracks the camera orientation each frame and writes the screen angle of
+// world-North (-Z axis) into a shared ref. Must live inside <Canvas>.
+function CameraTracker({ northAngleRef }: { northAngleRef: MutableRefObject<number> }) {
+  const { camera } = useThree()
+  const _v = useRef(new THREE.Vector3())
+  useFrame(() => {
+    // World North is -Z. Project it into view space, then read its screen angle.
+    _v.current.set(0, 0, -1).transformDirection(camera.matrixWorldInverse)
+    northAngleRef.current = Math.atan2(_v.current.x, _v.current.y)
   })
+  return null
+}
+
+// Positions N/S/E/W labels on the viewport edge, following the camera via rAF.
+function CompassLabels({ northAngleRef }: { northAngleRef: MutableRefObject<number> }) {
+  const nRef = useRef<HTMLDivElement>(null)
+  const sRef = useRef<HTMLDivElement>(null)
+  const eRef = useRef<HTMLDivElement>(null)
+  const wRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const PAD = 22
+    // Given a direction angle on screen (0=up, cw+), compute the edge position.
+    function edgePos(angle: number, w: number, h: number): { x: number; y: number } {
+      const dx = Math.sin(angle)
+      const dy = -Math.cos(angle)
+      const sx = Math.abs(dx) > 1e-9 ? (w / 2 - PAD) / Math.abs(dx) : Infinity
+      const sy = Math.abs(dy) > 1e-9 ? (h / 2 - PAD) / Math.abs(dy) : Infinity
+      const s  = Math.min(sx, sy)
+      return { x: w / 2 + dx * s, y: h / 2 + dy * s }
+    }
+
+    const SHARED_STYLE: Partial<CSSStyleDeclaration> = {
+      position: 'absolute',
+      color: 'rgba(180,200,255,0.55)',
+      fontFamily: 'Courier New, monospace',
+      fontSize: '11px',
+      letterSpacing: '2px',
+      pointerEvents: 'none',
+      userSelect: 'none',
+      zIndex: '5',
+      transform: 'translate(-50%, -50%)',
+    }
+    ;[nRef, sRef, eRef, wRef].forEach(r => {
+      if (r.current) Object.assign(r.current.style, SHARED_STYLE)
+    })
+
+    const DIRS: [RefObject<HTMLDivElement | null>, number][] = [
+      [nRef, 0],
+      [sRef, Math.PI],
+      [eRef, Math.PI / 2],
+      [wRef, -Math.PI / 2],
+    ]
+
+    let rafId: number
+    function tick() {
+      const az = northAngleRef.current
+      const w  = window.innerWidth
+      const h  = window.innerHeight
+      for (const [ref, offset] of DIRS) {
+        if (!ref.current) continue
+        const { x, y } = edgePos(az + offset, w, h)
+        ref.current.style.left = `${x}px`
+        ref.current.style.top  = `${y}px`
+      }
+      rafId = requestAnimationFrame(tick)
+    }
+    rafId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(rafId)
+  }, [northAngleRef])
+
   return (
     <>
-      <div style={style('18px', undefined, '50%', undefined)}>N</div>
-      <div style={style(undefined, '18px', '50%', undefined)}>S</div>
-      <div style={{ ...style('50%', undefined, undefined, '18px'), transform: 'translateY(-50%)' }}>W</div>
-      <div style={{ ...style('50%', undefined, undefined, undefined), right: 18, transform: 'translateY(-50%)' }}>E</div>
+      <div ref={nRef}>N</div>
+      <div ref={sRef}>S</div>
+      <div ref={eRef}>E</div>
+      <div ref={wRef}>W</div>
     </>
   )
 }
@@ -1097,6 +1519,7 @@ interface ControlsProps {
   onToggleWalls: () => void
   scanRaysEnabled: boolean
   onToggleScanRays: () => void
+  selectMode: boolean
 }
 
 function Controls({
@@ -1106,6 +1529,7 @@ function Controls({
   onToggleWalls,
   scanRaysEnabled,
   onToggleScanRays,
+  selectMode,
 }: ControlsProps) {
   const submerged = SURVIVOR_POSITIONS.filter(p => p.y < FLOOD_LEVEL - 0.2).length
 
@@ -1114,8 +1538,8 @@ function Controls({
       position: 'absolute',
       top: 16,
       right: 16,
-      background: 'rgba(0,0,0,0.60)',
-      border: '1px solid #334',
+      background: selectMode ? 'rgba(30, 16, 0, 0.82)' : 'rgba(0,0,0,0.60)',
+      border: selectMode ? '1px solid #ff880066' : '1px solid #334',
       borderRadius: 6,
       padding: '10px 14px',
       color: '#667',
@@ -1125,12 +1549,25 @@ function Controls({
       pointerEvents: 'auto',
       minWidth: 200,
     }}>
-      <div style={{ color: '#99b', marginBottom: 4, letterSpacing: 1 }}>PROJECT BEACON — THAILAND TOWN SAR</div>
-      <div>Left drag  : orbit</div>
-      <div>Right drag : pan</div>
-      <div>Scroll     : zoom</div>
-      <div>F key      : toggle follow beacon</div>
-      <div style={{ marginTop: 6, color: '#4cf' }}>Enter      : send command</div>
+      {selectMode ? (
+        <>
+          <div style={{ color: '#ff9933', fontWeight: 'bold', marginBottom: 6, letterSpacing: 1 }}>
+            📐 SELECT MODE ACTIVE
+          </div>
+          <div style={{ color: '#cc7722' }}>Drag on map to select area</div>
+          <div style={{ color: '#664422' }}>Ctrl+S or Esc to cancel</div>
+        </>
+      ) : (
+        <>
+          <div style={{ color: '#99b', marginBottom: 4, letterSpacing: 1 }}>PROJECT BEACON — THAILAND TOWN SAR</div>
+          <div>Left drag  : orbit</div>
+          <div>Right drag : pan</div>
+          <div>Scroll     : zoom</div>
+          <div>F key      : toggle follow beacon</div>
+          <div style={{ color: '#c87' }}>Ctrl+S     : select area</div>
+          <div style={{ marginTop: 6, color: '#4cf' }}>Enter      : send command</div>
+        </>
+      )}
       <button
         onClick={onToggleFollow}
         style={{
@@ -1208,8 +1645,16 @@ export default function SARScene() {
   const [followBeacon, setFollowBeacon] = useState(false)
   const [transparentWalls, setTransparentWalls] = useState(false)
   const [scanRaysEnabled, setScanRaysEnabled] = useState(true)
+  // ── Area selection state ─────────────────────────────────────────────────────
+  const [selectMode, setSelectMode]       = useState(false)
+  const [dragStart, setDragStart]         = useState<THREE.Vector3 | null>(null)
+  const [dragEnd, setDragEnd]             = useState<THREE.Vector3 | null>(null)
+  const [selection, setSelection]         = useState<AreaSelection | null>(null)
+  const [showContextMenu, setShowContextMenu] = useState(false)
+  // ─────────────────────────────────────────────────────────────────────────────
   const copiedTimer               = useRef<ReturnType<typeof setTimeout> | null>(null)
   const orbitRef                  = useRef<OrbitControlsImpl | null>(null)
+  const northAngleRef             = useRef<number>(0)
 
   const handleGroundClick = useCallback((pt: THREE.Vector3) => {
     const text = `${pt.x.toFixed(1)}, ${pt.y.toFixed(1)}, ${pt.z.toFixed(1)}`
@@ -1302,19 +1747,47 @@ export default function SARScene() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat || event.key.toLowerCase() !== 'f') return
-
       const target = event.target as HTMLElement | null
       const tag = target?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return
+      const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable
 
-      event.preventDefault()
-      toggleFollowBeacon()
+      // F key — follow toggle (skip if in input)
+      if (!event.repeat && event.key.toLowerCase() === 'f' && !inInput) {
+        event.preventDefault()
+        toggleFollowBeacon()
+        return
+      }
+
+      // Ctrl+S — toggle area select mode (always prevent browser save)
+      if (event.ctrlKey && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        if (inInput) return
+        setSelectMode(prev => {
+          const next = !prev
+          if (!next) {
+            setDragStart(null)
+            setDragEnd(null)
+            setSelection(null)
+            setShowContextMenu(false)
+          }
+          return next
+        })
+        return
+      }
+
+      // Escape — exit select mode
+      if (event.key === 'Escape' && selectMode) {
+        setSelectMode(false)
+        setDragStart(null)
+        setDragEnd(null)
+        setSelection(null)
+        setShowContextMenu(false)
+      }
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [toggleFollowBeacon])
+  }, [toggleFollowBeacon, selectMode])
 
   const abortRef = useRef<AbortController | null>(null)
 
@@ -1343,19 +1816,85 @@ export default function SARScene() {
     abortRef.current?.abort()
   }, [])
 
+  // ── Area scan injection ────────────────────────────────────────────────────
+  // We store a pending prompt and pass it to CommandPanel via the externalPrompt
+  // prop so the command appears in its input, then auto-submits.
+  const [pendingScanPrompt, setPendingScanPrompt] = useState<string | null>(null)
+
+  const handleAreaScan = useCallback(() => {
+    if (!selection) return
+
+    // Detect which named buildings overlap the selected area.
+    const NAMED_BUILDINGS: { id: number; name: string }[] = [
+      { id: 0, name: 'target building' },
+      { id: 1, name: 'obstacle building' },
+      { id: 2, name: 'balcony building' },
+      { id: 3, name: 'shophouse block' },
+    ]
+    const overlapping = SIM_BUILDINGS.filter(b => {
+      const bb = buildingBounds(b)
+      // AABB overlap between selection and building footprint
+      return bb.minX <= selection.maxX && bb.maxX >= selection.minX &&
+             bb.minZ <= selection.maxZ && bb.maxZ >= selection.minZ
+    })
+    const buildingNames = overlapping
+      .map(b => NAMED_BUILDINGS.find(n => n.id === b.id)?.name)
+      .filter(Boolean) as string[]
+
+    let prompt: string
+    if (buildingNames.length === 1) {
+      // Entire selection is dominated by one building — scan the building directly.
+      prompt = `scan the ${buildingNames[0]} at coordinates (${overlapping[0].cx.toFixed(1)}, 0, ${overlapping[0].cz.toFixed(1)}) for survivors`
+    } else if (buildingNames.length > 1) {
+      const buildingList = overlapping
+        .map(b => {
+          const name = NAMED_BUILDINGS.find(n => n.id === b.id)?.name ?? `building ${b.id}`
+          return `${name} at (${b.cx.toFixed(1)}, 0, ${b.cz.toFixed(1)})`
+        })
+        .join('; ')
+      prompt = `scan for survivors in each of the following buildings: ${buildingList}. Do not ask for coordinates — they are provided above. Scan each building in sequence.`
+    } else {
+      prompt = `scan area from (${selection.minX}, ${selection.minZ}) to (${selection.maxX}, ${selection.maxZ}) for survivors`
+    }
+
+    addLog(`📐 Area scan: (${selection.minX},${selection.minZ}) → (${selection.maxX},${selection.maxZ})`)
+    // Clear selection state
+    setSelectMode(false)
+    setDragStart(null)
+    setDragEnd(null)
+    setSelection(null)
+    setShowContextMenu(false)
+    // Inject prompt into CommandPanel
+    setPendingScanPrompt(prompt)
+  }, [selection, addLog])
+
+  const handleSelectionClose = useCallback(() => {
+    setSelectMode(false)
+    setDragStart(null)
+    setDragEnd(null)
+    setSelection(null)
+    setShowContextMenu(false)
+  }, [])
+
   const scannedSurvivors = useMemo(
     () => scannedSurvivorsFromDrone(dronePos),
     [dronePos.x, dronePos.y, dronePos.z],
   )
 
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative', background: '#0d0d17' }}>
+    <div style={{
+      width: '100%',
+      height: '100%',
+      position: 'relative',
+      background: '#0d0d17',
+      cursor: selectMode ? 'crosshair' : 'default',
+    }}>
       <Canvas shadows>
         <fog attach="fog" args={['#0d0d1f', 90, 260]} />
         <PerspectiveCamera makeDefault position={CAM_POS} fov={60} near={0.1} far={1000} />
         <OrbitControls
           ref={orbitRef}
-          enabled={!followBeacon}
+          enabled={!followBeacon && !selectMode}
           enableDamping
           dampingFactor={0.08}
           minDistance={5}
@@ -1363,6 +1902,7 @@ export default function SARScene() {
           target={[0, 5, 0]}
         />
         <FollowBeaconCamera enabled={followBeacon} targetPos={dronePos} controlsRef={orbitRef} />
+        <CameraTracker northAngleRef={northAngleRef} />
 
         {/* Lighting */}
         <ambientLight intensity={0.55} />
@@ -1374,9 +1914,31 @@ export default function SARScene() {
         <GridOverlay />
         <ObstacleBuilding />
         <TargetBuilding transparentWalls={transparentWalls} />
+        <BalconyBuilding transparentWalls={transparentWalls} />
+        <ShophouseBlock transparentWalls={transparentWalls} />
         <Survivors floodY={FLOOD_LEVEL} />
-        <GroundProbe onMove={setHoverPt} onDoubleClick={handleGroundClick} />
-        <GroundCursor point={hoverPt} />
+        {selectMode ? (
+          <AreaSelectProbe
+            onDragUpdate={(start, end) => {
+              setDragStart(start)
+              setDragEnd(end)
+              setShowContextMenu(false)
+              setSelection(null)
+            }}
+            onDragEnd={sel => {
+              setSelection(sel)
+              setShowContextMenu(true)
+            }}
+          />
+        ) : (
+          <>
+            <GroundProbe onMove={setHoverPt} onDoubleClick={handleGroundClick} />
+            <GroundCursor point={hoverPt} />
+          </>
+        )}
+        {dragStart && dragEnd && (
+          <AreaHighlight start={dragStart} end={dragEnd} finalised={showContextMenu} />
+        )}
         <DroneMesh
           targetPos={dronePos}
           status={droneStatus}
@@ -1392,8 +1954,8 @@ export default function SARScene() {
       </Canvas>
 
       <DroneStatusPanel drones={drones} />
-      <CoordOverlay point={hoverPt} copied={copied} />
-      <CompassLabels />
+      {!selectMode && <CoordOverlay point={hoverPt} copied={copied} />}
+      <CompassLabels northAngleRef={northAngleRef} />
       <MissionLog lines={log} />
       <Controls
         followBeacon={followBeacon}
@@ -1402,7 +1964,15 @@ export default function SARScene() {
         onToggleWalls={toggleWallTransparency}
         scanRaysEnabled={scanRaysEnabled}
         onToggleScanRays={toggleScanRays}
+        selectMode={selectMode}
       />
+      {showContextMenu && selection && (
+        <AreaContextMenu
+          selection={selection}
+          onScan={handleAreaScan}
+          onClose={handleSelectionClose}
+        />
+      )}
       <CommandPanel
         assetId={ASSET_ID}
         connected={connected}
@@ -1410,6 +1980,8 @@ export default function SARScene() {
         battery={battery}
         onCommand={handleCommand}
         onStop={handleStop}
+        externalPrompt={pendingScanPrompt}
+        onExternalPromptConsumed={() => setPendingScanPrompt(null)}
       />
     </div>
   )

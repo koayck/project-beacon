@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from dataclasses import dataclass
-from typing import Any
+from functools import partial
 
 import grpc
 
@@ -18,6 +19,10 @@ except ImportError as exc:
     raise ImportError(
         "gRPC stubs not found in backend/grpc/. Run: bash scripts/gen_proto.sh"
     ) from exc
+
+# Per-call gRPC deadline.  Keeps individual RPC calls from blocking the event
+# loop indefinitely if the drone container is slow or the thread pool is full.
+_GRPC_TIMEOUT_S = 15.0
 
 
 @dataclass
@@ -47,18 +52,29 @@ class DroneGrpcClient:
             raise KeyError(f"No gRPC connection for {asset_id}. Call /uplink first.")
         return conn.stub
 
+    async def _call(self, fn, *args, **kwargs):
+        """Run a blocking synchronous gRPC call in the default thread executor."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, partial(fn, *args, **kwargs))
+
     async def move_to(
         self, asset_id: str, x: float, y: float, z: float, speed: float = 5.0
     ) -> dict:
         stub = self._stub(asset_id)
-        resp = stub.MoveTo(
-            beacon_pb2.MoveToRequest(asset_id=asset_id, x=x, y=y, z=z, speed=speed)
+        resp = await self._call(
+            stub.MoveTo,
+            beacon_pb2.MoveToRequest(asset_id=asset_id, x=x, y=y, z=z, speed=speed),
+            timeout=_GRPC_TIMEOUT_S,
         )
         return {"success": resp.success, "message": resp.message}
 
     async def get_status(self, asset_id: str) -> dict:
         stub = self._stub(asset_id)
-        resp = stub.GetStatus(beacon_pb2.StatusRequest(asset_id=asset_id))
+        resp = await self._call(
+            stub.GetStatus,
+            beacon_pb2.StatusRequest(asset_id=asset_id),
+            timeout=_GRPC_TIMEOUT_S,
+        )
         return {
             "asset_id": resp.asset_id,
             "x": resp.x, "y": resp.y, "z": resp.z,
@@ -69,17 +85,23 @@ class DroneGrpcClient:
 
     async def return_to_base(self, asset_id: str) -> dict:
         stub = self._stub(asset_id)
-        resp = stub.ReturnToBase(beacon_pb2.ReturnRequest(asset_id=asset_id))
+        resp = await self._call(
+            stub.ReturnToBase,
+            beacon_pb2.ReturnRequest(asset_id=asset_id),
+            timeout=_GRPC_TIMEOUT_S,
+        )
         return {"success": resp.success, "message": resp.message}
 
     async def scan_area(
         self, asset_id: str, cx: float, cy: float, cz: float, radius: float = 5.0
     ) -> dict:
         stub = self._stub(asset_id)
-        resp = stub.ScanArea(
+        resp = await self._call(
+            stub.ScanArea,
             beacon_pb2.ScanAreaRequest(
                 asset_id=asset_id, cx=cx, cy=cy, cz=cz, radius=radius
-            )
+            ),
+            timeout=_GRPC_TIMEOUT_S,
         )
         return {"success": resp.success, "message": resp.message}
 
@@ -90,12 +112,14 @@ class DroneGrpcClient:
         detection_range: float = 0.0,
     ) -> dict:
         stub = self._stub(asset_id)
-        resp = stub.GetView(
+        resp = await self._call(
+            stub.GetView,
             beacon_pb2.ViewRequest(
                 asset_id=asset_id,
                 heading_deg=heading_deg,
                 range=detection_range,
-            )
+            ),
+            timeout=_GRPC_TIMEOUT_S,
         )
         objects = [
             {

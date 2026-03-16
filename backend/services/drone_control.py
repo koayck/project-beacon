@@ -12,6 +12,7 @@ from backend.world.model import (
     FLOOD_LEVEL,
     WINDOW_SCAN_STANDOFF_M,
     WORLD,
+    Building,
 )
 
 _NORMAL_SPEED = 5.0
@@ -302,13 +303,6 @@ async def scan_area(
     return await grpc_client.scan_area(asset_id, cx, cy, cz, radius)
 
 
-async def thermal_scan(
-    asset_id: str, cx: float, cy: float, cz: float, radius: float = 5.0
-) -> dict:
-    """SAR-specific alias for area scanning."""
-    return await scan_area(asset_id, cx, cy, cz, radius)
-
-
 async def get_drone_view(
     asset_id: str,
     heading_deg: float = 0.0,
@@ -409,6 +403,174 @@ def resolve_scan_target(
     }
 
 
+def _push_xz_clear(
+    x: float,
+    z: float,
+    exclude_id: int,
+    clearance: float = 0.5,
+    max_iters: int = 5,
+    prefer_z: bool = False,
+) -> tuple[float, float]:
+    """Push (x, z) outside any building it overlaps (except the excluded building).
+
+    On each iteration finds the first blocking building and exits via the
+    nearest face + clearance.  Repeats until no overlap or max_iters reached.
+
+    ``prefer_z=True`` breaks ties in favour of the z-axis exit direction.
+    Use this for corners on the +X face (NE, SE) so the push goes along the
+    face rather than across it — e.g. the SE corner of a building whose
+    east neighbour is equally close in X and Z: pushing north (z) keeps the
+    corner on the east face; pushing west (x) would skip the east face scan.
+    """
+    for _ in range(max_iters):
+        pushed = False
+        for b in WORLD.buildings:
+            if b.id == exclude_id:
+                continue
+            if b.min_x <= x <= b.max_x and b.min_z <= z <= b.max_z:
+                dist_e = b.max_x - x
+                dist_w = x - b.min_x
+                dist_s = b.max_z - z
+                dist_n = z - b.min_z
+                m = min(dist_e, dist_w, dist_s, dist_n)
+                if prefer_z:
+                    if m == dist_s:
+                        z = b.max_z + clearance
+                    elif m == dist_n:
+                        z = b.min_z - clearance
+                    elif m == dist_e:
+                        x = b.max_x + clearance
+                    else:
+                        x = b.min_x - clearance
+                else:
+                    if m == dist_e:
+                        x = b.max_x + clearance
+                    elif m == dist_w:
+                        x = b.min_x - clearance
+                    elif m == dist_s:
+                        z = b.max_z + clearance
+                    else:
+                        z = b.min_z - clearance
+                pushed = True
+                break
+        if not pushed:
+            break
+    return round(x, 2), round(z, 2)
+
+
+def _west_face_stop_z(
+    west_x: float,
+    to_z: float,
+    exclude_id: int,
+    clearance: float = 0.5,
+) -> float:
+    """Southernmost safe z when flying north along x=west_x toward to_z.
+
+    Returns to_z when the path is unobstructed; otherwise the z just south of
+    the first blocking building's south face.
+    """
+    stop_z = to_z
+    for b in WORLD.buildings:
+        if b.id == exclude_id:
+            continue
+        if b.min_x <= west_x <= b.max_x and b.max_z > to_z:
+            stop_z = max(stop_z, b.max_z + clearance)
+    return round(stop_z, 2)
+
+
+def _safe_standoff_per_face(
+    building: "Building",
+    desired: float,
+    min_standoff: float = 1.0,
+    clearance: float = 0.5,
+) -> dict[str, float]:
+    """Compute the max safe standoff per face given neighbouring buildings.
+
+    For each face direction, find the nearest building whose footprint
+    overlaps in the perpendicular axis and cap the standoff so the
+    waypoint doesn't land inside it (with `clearance` margin).
+    """
+    from backend.world.model import WORLD
+
+    face_standoffs: dict[str, float] = {}
+    for face in ("north", "south", "east", "west"):
+        best = desired
+        for nb in WORLD.buildings:
+            if nb.id == building.id:
+                continue
+            if face == "north":
+                # Window waypoint goes to z = building.min_z - standoff.
+                # Neighbour blocks if its z-range straddles that position
+                # and it overlaps in X.
+                if nb.max_x <= building.min_x or nb.min_x >= building.max_x:
+                    continue  # no X overlap
+                if nb.max_z <= building.min_z and nb.max_z > building.min_z - desired:
+                    best = min(best, building.min_z - nb.max_z - clearance)
+            elif face == "south":
+                if nb.max_x <= building.min_x or nb.min_x >= building.max_x:
+                    continue
+                if nb.min_z >= building.max_z and nb.min_z < building.max_z + desired:
+                    best = min(best, nb.min_z - building.max_z - clearance)
+            elif face == "west":
+                if nb.max_z <= building.min_z or nb.min_z >= building.max_z:
+                    continue
+                if nb.max_x <= building.min_x and nb.max_x > building.min_x - desired:
+                    best = min(best, building.min_x - nb.max_x - clearance)
+            elif face == "east":
+                if nb.max_z <= building.min_z or nb.min_z >= building.max_z:
+                    continue
+                if nb.min_x >= building.max_x and nb.min_x < building.max_x + desired:
+                    best = min(best, nb.min_x - building.max_x - clearance)
+        face_standoffs[face] = max(best, min_standoff)
+    return face_standoffs
+
+
+def _route_sweep_segment(
+    from_x: float,
+    from_y: float,
+    from_z: float,
+    to_x: float,
+    to_y: float,
+    to_z: float,
+    exclude_id: int,
+    clear_y: float,
+    margin: float = 1.0,
+) -> list[dict]:
+    """
+    Return intermediate transit waypoints needed to route around any adjacent
+    building that blocks the direct sweep segment from→to.
+
+    Excludes ``exclude_id`` (the building being scanned) from collision checks.
+    If the direct path is clear, returns an empty list.
+    Otherwise returns two waypoints (climb + cruise at ``clear_y``) marked
+    ``transit=True`` so ``sweep_scan_building`` skips scanning at those positions.
+    The caller is responsible for appending the actual destination at ``to_y``.
+    """
+    blockers = [
+        b for b in WORLD.obstacles_in_path(
+            from_x, from_y, from_z,
+            to_x, to_y, to_z,
+            samples=30, margin=margin,
+        )
+        if b.id != exclude_id
+    ]
+    if not blockers:
+        return []
+
+    over_y = round(max(b.max_y for b in blockers) + 3.0, 2)
+    over_y = max(over_y, round(clear_y, 2))
+    return [
+        {
+            "x": round(from_x, 2), "y": over_y, "z": round(from_z, 2),
+            "reason": "climb over adjacent building", "transit": True,
+        },
+        {
+            "x": round(to_x, 2), "y": over_y, "z": round(to_z, 2),
+            "reason": "cruise over adjacent building", "transit": True,
+        },
+    ]
+
+
 def plan_building_vertical_sweep(
     target_x: float,
     target_z: float,
@@ -418,6 +580,9 @@ def plan_building_vertical_sweep(
 ) -> dict:
     """
     Plan a perimeter sweep around a building across all heights above water level.
+
+    Returns waypoints only for the sweep itself (floor rings + rooftop).
+    Navigation to/from the building is handled by the caller.
     """
     building = WORLD.building_near_xz(target_x, target_z, margin=BUILDING_PROXIMITY_MARGIN_M)
     if building is None:
@@ -428,7 +593,6 @@ def plan_building_vertical_sweep(
         }
 
     safe_standoff = max(standoff, 0.5)
-    safe_step = max(level_step, 0.5)
     start_y = max(FLOOD_LEVEL + max(flood_clearance, 0.0), 0.5)
     top_y = building.max_y
     if start_y > top_y:
@@ -448,38 +612,182 @@ def plan_building_vertical_sweep(
             "flood_level": FLOOD_LEVEL,
         }
 
-    levels: list[float] = []
-    y = start_y
-    while y < top_y:
-        levels.append(round(y, 2))
-        y += safe_step
-    if not levels or levels[-1] < top_y:
-        levels.append(round(top_y, 2))
+    # Window-facing waypoints grouped by floor, with per-face dynamic
+    # standoff that shrinks when a neighbouring building is too close.
+    desired_standoff = max(safe_standoff, WINDOW_SCAN_STANDOFF_M)
+    face_standoffs = _safe_standoff_per_face(building, desired_standoff)
 
-    min_x = building.min_x - safe_standoff
-    max_x = building.max_x + safe_standoff
-    min_z = building.min_z - safe_standoff
-    max_z = building.max_z + safe_standoff
+    # Build window waypoints manually using per-face standoffs.
+    all_window_wps: list[dict] = []
+    for window in building.windows:
+        y = round(window.sill_y + window.height / 2, 2)
+        floor = int(window.sill_y // 3.0) + 1  # FLOOR_HEIGHT_M = 3.0
+        so = face_standoffs[window.face]
+        if window.face == "north":
+            x, z = window.axis_center, building.min_z - so
+        elif window.face == "south":
+            x, z = window.axis_center, building.max_z + so
+        elif window.face == "west":
+            x, z = building.min_x - so, window.axis_center
+        else:  # east
+            x, z = building.max_x + so, window.axis_center
+        all_window_wps.append({
+            "x": round(x, 2), "y": y, "z": round(z, 2),
+            "face": window.face, "floor": floor,
+        })
+    above_flood = [w for w in all_window_wps if w["y"] >= start_y]
+
+    # Derive floor levels from window centre heights, ascending.
+    floor_levels = sorted({round(w["y"], 2) for w in above_flood})
+    # Note: no level_step fallback here — windowless buildings cannot be safely
+    # ringed at floor level when adjacent buildings block the perimeter corners.
+    # They receive a rooftop-level perimeter flyaround instead (see below).
+
+    # Perimeter corners kept tight (1 m from wall) to avoid colliding
+    # with neighbouring buildings.
+    perimeter_margin = 1.0
+    p_min_x = building.min_x - perimeter_margin
+    p_max_x = building.max_x + perimeter_margin
+    p_min_z = building.min_z - perimeter_margin
+    p_max_z = building.max_z + perimeter_margin
+
+    # Push all four perimeter corners outside any adjacent building.
+    # clearance=1.5 > _route_sweep_segment margin (1.0) so the vertical descent
+    # back to scan altitude at a pushed corner is also guaranteed to be clear.
+    _CORNER_CLEARANCE = 1.5
+    nw_x, nw_z = _push_xz_clear(p_min_x, p_min_z, building.id, clearance=_CORNER_CLEARANCE)
+    ne_x, ne_z = _push_xz_clear(p_max_x, p_min_z, building.id, clearance=_CORNER_CLEARANCE, prefer_z=True)
+    se_x, se_z = _push_xz_clear(p_max_x, p_max_z, building.id, clearance=_CORNER_CLEARANCE, prefer_z=True)
+    sw_x, sw_z = _push_xz_clear(p_min_x, p_max_z, building.id, clearance=_CORNER_CLEARANCE)
+
+    # When NW was pushed east, flying the west face straight to the
+    # corrected NW would clip through the target building's corner.
+    # Compute the last safe z on the west face before the blocking neighbour.
+    _nw_pushed_east = nw_x > p_min_x + 0.01
+    west_stop_z = _west_face_stop_z(p_min_x, p_min_z, building.id) if _nw_pushed_east else p_min_z
+
+    # Rooftop hover point — above building centre.
+    rooftop_y = round(top_y + safe_standoff, 2)
 
     waypoints: list[dict] = []
-    for level_y in levels:
-        ring = [
-            (min_x, level_y, min_z, "perimeter corner NW"),
-            (max_x, level_y, min_z, "perimeter corner NE"),
-            (max_x, level_y, max_z, "perimeter corner SE"),
-            (min_x, level_y, max_z, "perimeter corner SW"),
-            (min_x, level_y, min_z, "close perimeter ring"),
+    levels: list[float] = []
+
+    # Descent waypoint: from above building centre, move laterally to
+    # the NW corner at rooftop altitude before descending to the lowest
+    # floor. This avoids clipping through the building roof.
+    if floor_levels:
+        waypoints.append(
+            {
+                "x": nw_x,
+                "y": rooftop_y,
+                "z": nw_z,
+                "level_y": rooftop_y,
+                "reason": "descent to NW corner",
+            }
+        )
+
+    # Ascending floor rings — each ring walks the perimeter with window
+    # waypoints inserted at their natural face position. Faces without a
+    # window at a given level are simply skipped.
+    for level_y in floor_levels:
+        levels.append(level_y)
+        level_windows = {w["face"]: w for w in above_flood if round(w["y"], 2) == level_y}
+
+        # Ring: NW → [north] → NE → [east] → SE → [south] → SW → [west] → NW
+        # NW corner may be adjusted east to avoid an adjacent building.
+        ring: list[tuple[float, float, str]] = [
+            (nw_x, nw_z, "perimeter NW"),
         ]
-        for x, y_val, z, reason in ring:
+        if "north" in level_windows:
+            ww = level_windows["north"]
+            ring.append((ww["x"], ww["z"], f"window scan north floor {ww['floor']}"))
+        ring.append((ne_x, ne_z, "perimeter NE"))
+        if "east" in level_windows:
+            ww = level_windows["east"]
+            ring.append((ww["x"], ww["z"], f"window scan east floor {ww['floor']}"))
+        ring.append((se_x, se_z, "perimeter SE"))
+        if "south" in level_windows:
+            ww = level_windows["south"]
+            ring.append((ww["x"], ww["z"], f"window scan south floor {ww['floor']}"))
+        ring.append((sw_x, sw_z, "perimeter SW"))
+        if "west" in level_windows:
+            ww = level_windows["west"]
+            ring.append((ww["x"], ww["z"], f"window scan west floor {ww['floor']}"))
+        # When NW was pushed east, add a "west-face stop" before closing the ring
+        # so the drone hugs the west face safely and then turns NE to reach NW.
+        if _nw_pushed_east and west_stop_z > p_min_z + 0.01:
+            ring.append((p_min_x, west_stop_z, "west face stop (adjacent building)"))
+        ring.append((nw_x, nw_z, "close perimeter"))
+
+        prev_rx, prev_rz = nw_x, nw_z
+        for rx, rz, reason in ring:
+            for extra in _route_sweep_segment(prev_rx, level_y, prev_rz, rx, level_y, rz, building.id, rooftop_y):
+                waypoints.append({**extra, "level_y": rooftop_y})
             waypoints.append(
                 {
-                    "x": x,
-                    "y": y_val,
-                    "z": z,
+                    "x": round(rx, 2),
+                    "y": level_y,
+                    "z": round(rz, 2),
                     "level_y": level_y,
                     "reason": reason,
                 }
             )
+            prev_rx, prev_rz = rx, rz
+
+    # Windowless buildings: rooftop-level perimeter flyaround.
+    # Floor-level rings are skipped for buildings without windows because adjacent
+    # structures may make the full perimeter unreachable at low altitude (e.g. a
+    # shophouse sharing the NW corner physically blocks the west / north-west path).
+    # Flying at rooftop altitude clears all neighbours and still gives full
+    # scan coverage given the large sensor radius.
+    if not floor_levels and top_y > start_y:
+        levels.append(rooftop_y)
+        prev_rx, prev_rz = nw_x, nw_z
+        for rx, rz, label in [
+            (nw_x,  nw_z,  "rooftop NW scan"),
+            (ne_x,  ne_z,  "rooftop NE scan"),
+            (se_x,  se_z,  "rooftop SE scan"),
+            (sw_x,  sw_z,  "rooftop SW scan"),
+        ]:
+            for extra in _route_sweep_segment(prev_rx, rooftop_y, prev_rz, rx, rooftop_y, rz, building.id, rooftop_y):
+                waypoints.append({**extra, "level_y": rooftop_y})
+            waypoints.append(
+                {
+                    "x": round(rx, 2),
+                    "y": rooftop_y,
+                    "z": round(rz, 2),
+                    "level_y": rooftop_y,
+                    "reason": label,
+                }
+            )
+            prev_rx, prev_rz = rx, rz
+
+    # Ascent waypoint: go up at NW corner before moving to building centre
+    # to avoid clipping through the building at intermediate heights.
+    if floor_levels:
+        waypoints.append(
+            {
+                "x": nw_x,
+                "y": rooftop_y,
+                "z": nw_z,
+                "level_y": rooftop_y,
+                "reason": "ascent to rooftop altitude",
+            }
+        )
+
+    # Rooftop scan last. Only append level if not already added (windowless perimeter path
+    # already appended rooftop_y to levels above).
+    if rooftop_y not in levels:
+        levels.append(rooftop_y)
+    waypoints.append(
+        {
+            "x": building.cx,
+            "y": rooftop_y,
+            "z": building.cz,
+            "level_y": rooftop_y,
+            "reason": "rooftop scan",
+        }
+    )
 
     return {
         "matched_building": True,
@@ -499,6 +807,7 @@ def plan_building_vertical_sweep(
         "level_count": len(levels),
         "waypoints": waypoints,
         "waypoint_count": len(waypoints),
+        "rooftop_position": {"x": building.cx, "y": rooftop_y, "z": building.cz},
         "summary": (
             f"Vertical perimeter sweep for building {building.id}: "
             f"{len(levels)} level(s), {len(waypoints)} waypoint(s), "
@@ -547,54 +856,79 @@ async def sweep_scan_building(
         }
 
     waypoint_reports: list[dict] = []
-    for index, wp in enumerate(plan["waypoints"], start=1):
-        route = await plan_route(
-            asset_id=asset_id,
-            target_x=wp["x"],
-            target_z=wp["z"],
-            target_y=wp["y"],
+    rooftop = plan["rooftop_position"]
+
+    # ── Step 2: Navigate to top of building using plan_route ───────────
+    route = await plan_route(
+        asset_id=asset_id,
+        target_x=rooftop["x"],
+        target_z=rooftop["z"],
+        target_y=rooftop["y"],
+    )
+    if "error" in route:
+        return {
+            "asset_id": asset_id,
+            "error": "Sweep route blocked — cannot reach building rooftop",
+            "route_error": route["error"],
+            "route_obstacles": route.get("obstacles", []),
+            "completed_waypoints": 0,
+        }
+    for move_wp in route.get("waypoints", []):
+        move_result = await client.move_to(
+            asset_id, move_wp["x"], move_wp["y"], move_wp["z"],
+            get_drone_speed(asset_id),
         )
-        if "error" in route:
+        if not move_result.get("success", True):
             return {
                 "asset_id": asset_id,
-                "error": "Sweep route blocked",
-                "route_error": route["error"],
+                "error": "Failed while navigating to building rooftop",
+                "move_result": move_result,
+                "completed_waypoints": 0,
+            }
+        wait_result = await _wait_until_waypoint_reached(
+            asset_id, move_wp["x"], move_wp["y"], move_wp["z"],
+        )
+        if not wait_result.get("ok", False):
+            return {
+                "asset_id": asset_id,
+                "error": wait_result.get("error", "Could not reach building rooftop"),
+                "status": wait_result.get("status"),
+                "completed_waypoints": 0,
+            }
+
+    # ── Steps 3-4: Sweep floor rings + rooftop ────────────────────────
+    # Waypoints come from plan_building_vertical_sweep.  Most are perimeter
+    # scan points; some are transit waypoints (transit=True) inserted to route
+    # over adjacent buildings at shared corners — those are moved through but
+    # not scanned.
+    for index, wp in enumerate(plan["waypoints"], start=1):
+        move_result = await client.move_to(
+            asset_id, wp["x"], wp["y"], wp["z"],
+            get_drone_speed(asset_id),
+        )
+        if not move_result.get("success", True):
+            return {
+                "asset_id": asset_id,
+                "error": "Failed while moving to sweep waypoint",
                 "failed_waypoint": wp,
-                "route_obstacles": route.get("obstacles", []),
+                "move_result": move_result,
                 "completed_waypoints": index - 1,
             }
 
-        for route_wp in route.get("waypoints", []):
-            move_result = await client.move_to(
-                asset_id,
-                route_wp["x"],
-                route_wp["y"],
-                route_wp["z"],
-                get_drone_speed(asset_id),
-            )
-            if not move_result.get("success", True):
-                return {
-                    "asset_id": asset_id,
-                    "error": "Failed while moving to sweep waypoint",
-                    "failed_route_waypoint": route_wp,
-                    "move_result": move_result,
-                    "completed_waypoints": index - 1,
-                }
+        wait_result = await _wait_until_waypoint_reached(
+            asset_id, wp["x"], wp["y"], wp["z"],
+        )
+        if not wait_result.get("ok", False):
+            return {
+                "asset_id": asset_id,
+                "error": wait_result.get("error", "Sweep waypoint not reached"),
+                "failed_waypoint": wp,
+                "status": wait_result.get("status"),
+                "completed_waypoints": index - 1,
+            }
 
-            wait_result = await _wait_until_waypoint_reached(
-                asset_id,
-                route_wp["x"],
-                route_wp["y"],
-                route_wp["z"],
-            )
-            if not wait_result.get("ok", False):
-                return {
-                    "asset_id": asset_id,
-                    "error": wait_result.get("error", "Sweep waypoint not reached"),
-                    "failed_route_waypoint": route_wp,
-                    "status": wait_result.get("status"),
-                    "completed_waypoints": index - 1,
-                }
+        if wp.get("transit"):
+            continue
 
         scan_result = await client.scan_area(asset_id, wp["x"], wp["y"], wp["z"], scan_radius)
         if not scan_result.get("success", True):
@@ -655,6 +989,11 @@ async def sweep_scan_building(
             and math.isfinite(float(det["distance"]))
             and float(det["distance"]) <= scan_radius
         ]
+        view_survivor_count = view.get("survivors_in_range")
+        survivors_visible_count = len(detected_survivors)
+        if isinstance(view_survivor_count, int):
+            survivors_visible_count = max(survivors_visible_count, view_survivor_count)
+        survivors_within_radius_count = len(survivors_in_scan_radius)
         waypoint_reports.append(
             {
                 "index": index,
@@ -662,10 +1001,23 @@ async def sweep_scan_building(
                 "y": wp["y"],
                 "z": wp["z"],
                 "level_y": wp["level_y"],
-                "survivors_in_range": len(survivors_in_scan_radius),
-                "detected_survivors": survivors_in_scan_radius,
+                # Keep sweep summary aligned with rendered scan rays / sensor visibility.
+                "survivors_in_range": survivors_visible_count,
+                "survivors_within_scan_radius": survivors_within_radius_count,
+                "detected_survivors": detected_survivors,
+                "detected_survivors_within_scan_radius": survivors_in_scan_radius,
                 "sensor_summary": view.get("summary", ""),
             }
+        )
+
+    # ── Step 5: Return to top of building ─────────────────────────────
+    move_result = await client.move_to(
+        asset_id, rooftop["x"], rooftop["y"], rooftop["z"],
+        get_drone_speed(asset_id),
+    )
+    if move_result.get("success", True):
+        await _wait_until_waypoint_reached(
+            asset_id, rooftop["x"], rooftop["y"], rooftop["z"],
         )
 
     max_survivors_seen = max((r["survivors_in_range"] for r in waypoint_reports), default=0)
@@ -921,10 +1273,15 @@ async def plan_route(
     dz = target_z - cz
     length = math.sqrt(dx * dx + dz * dz)
     if length < 1e-6:
+        # Drone is already at the target X/Z — no horizontal navigation needed.
         return {
             "asset_id": asset_id,
-            "error": "No clear route found",
-            "obstacles": [{"id": b.id, "cx": b.cx, "cz": b.cz, "h": b.h} for b in obstacles],
+            "from": {"x": cx, "y": cy, "z": cz},
+            "to": {"x": target_x, "y": target_y, "z": target_z},
+            "waypoints": [],
+            "obstacle_count": 0,
+            "strategy": "already_at_destination",
+            "summary": f"Already at destination (x={target_x}, z={target_z}). No navigation needed.",
             **({"target_resolution": target_resolution} if target_resolution else {}),
         }
 
@@ -975,6 +1332,40 @@ async def plan_route(
         "error": "No clear route found",
         "obstacles": [{"id": b.id, "cx": b.cx, "cz": b.cz, "h": b.h} for b in obstacles],
         **({"target_resolution": target_resolution} if target_resolution else {}),
+    }
+
+
+def find_buildings_in_area(
+    center_x: float,
+    center_z: float,
+    radius: float = 30.0,
+) -> dict:
+    """
+    Return all buildings whose nearest edge is within `radius` metres of
+    (center_x, center_z).  Results are sorted nearest-first so the scan loop
+    visits the closest building first.
+    """
+    buildings = WORLD.buildings_near(center_x, center_z, radius)
+    buildings_sorted = sorted(buildings, key=lambda b: b.distance_xz(center_x, center_z))
+    return {
+        "buildings": [
+            {
+                "id": b.id,
+                "x": b.cx,
+                "z": b.cz,
+                "height": b.h,
+                "bounds": {
+                    "min_x": b.min_x,
+                    "max_x": b.max_x,
+                    "min_z": b.min_z,
+                    "max_z": b.max_z,
+                },
+            }
+            for b in buildings_sorted
+        ],
+        "total": len(buildings_sorted),
+        "center": {"x": center_x, "z": center_z},
+        "radius": radius,
     }
 
 

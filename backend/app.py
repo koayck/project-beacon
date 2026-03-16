@@ -37,6 +37,7 @@ from backend.services.fleet import (
     restore_registered_connections,
     scan_frequencies as scan_unlinked_frequencies,
 )
+from backend.services.drone_control import return_to_base as rtb_service
 
 import logging
 
@@ -215,8 +216,8 @@ async def set_speed(asset_id: str, req: SpeedRequest) -> dict:
 
 @app.post("/drone/{asset_id}/reset")
 async def reset_drone_to_base(asset_id: str) -> dict:
-    """Immediately command a drone to return to base, bypassing the ADK agent."""
-    result = await grpc_client.return_to_base(asset_id)
+    """Command a drone to return to base using obstacle-aware routing."""
+    result = await rtb_service(asset_id)
     return {"asset_id": asset_id, **result}
 
 

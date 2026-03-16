@@ -52,9 +52,12 @@ SWEEP PROCEDURE (unchanged)
 
 _SCAN_MODE_PREFIX = """SCAN TARGET NORMALISATION (scan workflow only)
 1. Call resolve_scan_target(target_x, target_z) first.
-2. If matched_building=true, use resolved_target.x/z (building center) and
-   recommended_scan_y when calling plan_route.
-3. Call plan_route(asset_id, resolved_x, resolved_z, resolved_y, snap_to_building_center=true).
+2. If matched_building=true:
+   - Use resolved_target.x/z (building center) for plan_route coordinates.
+   - Set target_y = building.height + 5 (hover above rooftop, NOT recommended_scan_y).
+   - Do NOT pass snap_to_building_center — the sweep agent handles floor-level
+     navigation once the drone is positioned above the rooftop.
+3. Call plan_route(asset_id, resolved_x, resolved_z, target_y).
 4. Include building bounds (min/max X/Z) from tool output in your operator update.
 
 """

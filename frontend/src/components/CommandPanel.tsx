@@ -17,6 +17,8 @@ interface Props {
   battery: number | null
   onCommand: (prompt: string, onEvent: (e: AgentStreamEvent) => void) => Promise<void>
   onStop?: () => void
+  externalPrompt?: string | null
+  onExternalPromptConsumed?: () => void
 }
 
 const QUICK_ACTIONS = [
@@ -47,7 +49,7 @@ function messagesToText(messages: AgentMessage[]): string {
     .join('\n\n')
 }
 
-export default function CommandPanel({ assetId, connected, uplinked, battery, onCommand, onStop }: Props) {
+export default function CommandPanel({ assetId, connected, uplinked, battery, onCommand, onStop, externalPrompt, onExternalPromptConsumed }: Props) {
   const [input, setInput]       = useState('')
   const [busy, setBusy]         = useState(false)
   const [elapsed, setElapsed]   = useState(0)
@@ -64,6 +66,44 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Auto-submit externally injected prompts (e.g. from area scan)
+  useEffect(() => {
+    if (!externalPrompt || busy || !connected) return
+    setInput(externalPrompt)
+    onExternalPromptConsumed?.()
+    // Defer to next tick so input state is set before submit reads it
+    setTimeout(() => {
+      setInput('')
+      setElapsed(0)
+      setTtft(null)
+      setTps(null)
+      setMessages(prev => [...prev, { role: 'user', lines: [externalPrompt], ts: Date.now() }])
+      setMessages(prev => [...prev, { role: 'agent', lines: [], ts: Date.now() }])
+      setBusy(true)
+      onCommand(externalPrompt, (event) => {
+        if (event.type === 'heartbeat') {
+          setElapsed(event.elapsed)
+        } else if (event.type === 'tool_call') {
+          appendAgentLine(formatToolCall(event.name, event.args, event.agent))
+        } else if (event.type === 'tool_result') {
+          appendAgentLine(formatToolResult(event.name, event.success, event.result))
+        } else if (event.type === 'text' || event.type === 'final') {
+          appendAgentLine(event.text)
+        } else if (event.type === 'error') {
+          appendAgentLine(`Error: ${event.text}`)
+        } else if (event.type === 'done') {
+          setTtft(event.ttft_ms)
+          setTps(event.tps)
+        }
+      }).catch(err => {
+        appendAgentLine(`Error: ${err}`)
+      }).finally(() => {
+        setBusy(false)
+      })
+    }, 0)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalPrompt])
 
   const appendAgentLine = (line: string) => {
     setMessages(prev => {
