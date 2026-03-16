@@ -100,9 +100,25 @@ def get_scan_results(tool_context: ToolContext) -> dict:
     return {"results": results, "total": len(results)}
 
 
+def finalize_scan(tool_context: ToolContext) -> dict:
+    """
+    Retrieve all accumulated scan results and exit the scan loop.
+    Call this ONCE, after saving the LAST building's result (Remaining: 0).
+    Sets escalate=True so the LoopAgent terminates.
+    """
+    raw = tool_context.state.get("scan_results_list", "[]")
+    try:
+        results: list[str] = json.loads(raw) if isinstance(raw, str) else raw
+    except (json.JSONDecodeError, TypeError):
+        results = []
+    tool_context.actions.escalate = True
+    return {"results": results, "total": len(results)}
+
+
 _pick_tool = FunctionTool(func=pick_next_building)
 _save_tool = FunctionTool(func=save_scan_result)
 _get_tool = FunctionTool(func=get_scan_results)
+_finalize_tool = FunctionTool(func=finalize_scan)
 
 
 # ── Building picker agent ──────────────────────────────────────────────────────
@@ -112,7 +128,7 @@ _PICKER_INSTRUCTION = """You manage the building scan queue.
 1. Call pick_next_building().
 2. If done=True: output "QUEUE_EMPTY" and stop.
 3. If done=False: output EXACTLY this line (fill in values, no extra text):
-   SCAN TARGET: Navigate <asset_id> to building at (x=<x>, z=<z>). Height: <height>m.
+   SCAN TARGET: Navigate <asset_id> to building at (x=<x>, z=<z>). Height: <height>m. Remaining: <remaining>.
 """
 
 _building_picker_agent = Agent(
@@ -176,6 +192,7 @@ SCAN GATE
 
 SWEEP SCAN PROCEDURE
 1. Parse asset_id, x, z from state["current_building"].
+   Also note whether state["current_building"] contains "Remaining: 0" — this means it is the LAST building.
 2. Call sweep_scan_building(asset_id) — drone is already positioned, omit x/z.
 3. Build a compact result string from the tool response:
    - Success: "Building at (x=<x>, z=<z>): <unique_survivor_count> survivor(s) across <level_count> level(s). Waypoints: <waypoint_count>."
@@ -184,16 +201,31 @@ SWEEP SCAN PROCEDURE
      If any submerged survivors: also append " [CRITICAL: <N> submerged]" to the header line.
    - Error:   "Building at (x=<x>, z=<z>): SCAN ERROR — <error>"
 4. Call save_scan_result(result=<compact_string>).
-5. Output only: "Result saved for building at (x=<x>, z=<z>)." — no verbose report.
+5. Check if this is the LAST building ("Remaining: 0" in current_building):
+   - YES (last building): Call finalize_scan() — it returns all accumulated results.
+     Output the full consolidated report using ONLY the results list from finalize_scan():
+     ═══════════════════════════════════════
+       AREA SCAN COMPLETE — <N> building(s)
+     ═══════════════════════════════════════
+     Building 1: <result line>
+       <survivor lines if any, indented 2 spaces>
+     Building 2: <result line>
+       <survivor lines if any, indented 2 spaces>
+     ...
+     ───────────────────────────────────────
+     TOTAL SURVIVORS DETECTED: <sum>   (or "No heat signatures detected across all scanned buildings." if 0)
+     ═══════════════════════════════════════
+     DO NOT write code. Output the report text directly.
+   - NO (more buildings remain): Output only "Result saved for building at (x=<x>, z=<z>)."
 """
 
 _thermal_for_scan = Agent(
     name="thermal_agent_scan",
     model=QWEN3_INSTRUCT,
-    description="Sweep-scans the current building and silently accumulates the result.",
+    description="Sweep-scans the current building and silently accumulates the result. Generates the final report after the last building.",
     generate_content_config=QWEN3_GEN_CONFIG,
     instruction=_SILENT_THERMAL_INSTRUCTION,
-    tools=[make_toolset(THERMAL_TOOLS), _save_tool],
+    tools=[make_toolset(THERMAL_TOOLS), _save_tool, _finalize_tool],
 )
 
 
@@ -300,5 +332,5 @@ scan_workflow = SequentialAgent(
         "final report. "
         "Use for ANY scan/thermal/survivor-detection command — single building or area scan."
     ),
-    sub_agents=[_scan_resolver_agent, _building_scan_loop, _scan_report_agent],
+    sub_agents=[_scan_resolver_agent, _building_scan_loop],
 )
