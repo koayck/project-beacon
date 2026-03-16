@@ -22,7 +22,7 @@ COORDINATES: X=East, Y=Up, Z=South. Origin (0,0,0) = home pad.
 SCAN GATE (for workflow safety)
 0. If shared state has nav_result and nav_result contains "error":
    - Report "Navigation failed; scan aborted" with the nav error.
-   - Do NOT call scan_area.
+   - Do NOT call scan_area or sweep_scan_building.
 
 SCAN PROCEDURE
 1. Call get_drone_status(asset_id). Only proceed if battery > 20%.
