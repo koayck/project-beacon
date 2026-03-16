@@ -21,7 +21,6 @@ except ImportError as exc:
     ) from exc
 
 from sim import DroneSimulator
-from world import get_view
 
 GRPC_PORT = int(os.environ.get("GRPC_PORT", "50051"))
 
@@ -38,21 +37,20 @@ class _DroneControlServicer(beacon_pb2_grpc.DroneControlServicer):
         )
 
     def GetStatus(self, request, context):
-        s = self._sim.get_snapshot()
-        view = get_view(s.position.x, s.position.y, s.position.z)
+        s = self._sim.get_enriched_status()
         return beacon_pb2.DroneStatus(
-            asset_id=s.asset_id,
-            x=s.position.x,
-            y=s.position.y,
-            z=s.position.z,
-            battery=s.battery,
-            status=s.status.value,
+            asset_id=s["asset_id"],
+            x=s["x"],
+            y=s["y"],
+            z=s["z"],
+            battery=s["battery"],
+            status=s["status"],
             timestamp_ms=int(time.time() * 1000),
-            nearby_obstacles=view["nearby_obstacles"],
-            nearest_obstacle_dist=view["nearest_obstacle_dist"],
-            survivors_in_range=view["survivors_in_range"],
-            over_flood=view["over_flood"],
-            altitude_agl=view["altitude_agl"],
+            nearby_obstacles=s["nearby_obstacles"],
+            nearest_obstacle_dist=s["nearest_obstacle_dist"],
+            survivors_in_range=s["survivors_in_range"],
+            over_flood=s["over_flood"],
+            altitude_agl=s["altitude_agl"],
         )
 
     def ReturnToBase(self, request, context):
@@ -69,9 +67,10 @@ class _DroneControlServicer(beacon_pb2_grpc.DroneControlServicer):
     def GetView(self, request, context):
         s = self._sim.get_snapshot()
         detection_range = request.range if request.range > 0 else 20.0
-        heading = request.heading_deg
-        view = get_view(s.position.x, s.position.y, s.position.z,
-                        heading_deg=heading, detection_range=detection_range)
+        view = self._sim.get_view(
+            heading_deg=request.heading_deg,
+            detection_range=detection_range,
+        )
 
         objects = [
             beacon_pb2.VisibleObject(
@@ -100,7 +99,7 @@ class _DroneControlServicer(beacon_pb2_grpc.DroneControlServicer):
 
 
 def serve(simulator: DroneSimulator, port: int = GRPC_PORT) -> grpc.Server:
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=20))
     beacon_pb2_grpc.add_DroneControlServicer_to_server(
         _DroneControlServicer(simulator), server
     )

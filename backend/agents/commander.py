@@ -6,7 +6,7 @@ from google.adk.agents import Agent
 from backend.agents._mcp import SWARM_TOOLS, make_toolset
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
 from backend.agents.navigation import navigation_agent
-from backend.agents.thermal import thermal_agent
+from backend.agents.scan_workflow import scan_workflow
 
 commander = Agent(
     name="commander",
@@ -16,8 +16,9 @@ commander = Agent(
     instruction="""You are the Ground Control Station commander for an autonomous drone swarm.
 
 You receive natural language commands and route them to the correct specialist:
-- navigation_agent: movement, positioning, waypoints, returning to base, status checks
-- thermal_agent: scanning, thermal imaging, survivor detection, heat signatures
+- navigation_agent: movement-only commands — positioning, waypoints, returning to base, status checks
+- scan_workflow: any scan, thermal imaging, survivor detection, or heat signature command
+  (handles navigation + scanning automatically; works for a single building or an entire area)
 
 For swarm-wide operations (deploy all drones, recall all drones), use deploy_swarm
 or recall_swarm directly.
@@ -29,6 +30,6 @@ Guidelines:
 - If an action fails, explain why and suggest alternatives
 - Keep responses concise and operational
 """,
-    sub_agents=[navigation_agent, thermal_agent],
+    sub_agents=[navigation_agent, scan_workflow],
     tools=[make_toolset(SWARM_TOOLS)],
 )

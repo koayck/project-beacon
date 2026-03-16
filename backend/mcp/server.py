@@ -2,12 +2,9 @@ from __future__ import annotations
 
 from fastmcp import FastMCP
 
-from backend.services.drone_control import (
-    deploy_swarm,
-    plan_sweep_pattern,
-)
 from backend.services.fleet import discover_fleet, ensure_uplink
 from backend.services.drone_control import (
+    find_buildings_in_area,
     get_drone_status,
     get_drone_view,
     move_drone_to,
@@ -16,7 +13,9 @@ from backend.services.drone_control import (
     return_to_base,
     scan_area,
     sweep_scan_building,
-    recall_swarm
+    recall_swarm,
+    deploy_swarm,
+    plan_sweep_pattern,
 )
 
 beacon_mcp = FastMCP(
@@ -65,19 +64,11 @@ async def get_drone_status_tool(asset_id: str) -> dict:
     return await get_drone_status(asset_id)
 
 
-@beacon_mcp.tool(name="thermal_scan")
-async def thermal_scan_tool(
-    asset_id: str, cx: float, cy: float, cz: float, radius: float = 5.0
-) -> dict:
-    """Perform a thermal scan around a point in the disaster zone."""
-    return await scan_area(asset_id, cx, cy, cz, radius)
-
-
 @beacon_mcp.tool(name="scan_area")
 async def scan_area_tool(
     asset_id: str, cx: float, cy: float, cz: float, radius: float = 5.0
 ) -> dict:
-    """Alias for thermal scans with the existing scan_area naming."""
+    """Perform a thermal scan around a point in the disaster zone."""
     return await scan_area(asset_id, cx, cy, cz, radius)
 
 
@@ -169,3 +160,18 @@ async def sweep_scan_building_tool(
     structured coverage report with survivor counts per level (filtered by scan_radius).
     """
     return await sweep_scan_building(asset_id, target_x, target_z, scan_radius, level_step, standoff)
+
+
+
+@beacon_mcp.tool(name="find_buildings_in_area")
+def find_buildings_in_area_tool(
+    center_x: float,
+    center_z: float,
+    radius: float = 30.0,
+) -> dict:
+    """
+    Return all buildings within radius metres of (center_x, center_z), sorted
+    nearest-first. Use before an area scan loop to discover which buildings
+    need to be scanned.
+    """
+    return find_buildings_in_area(center_x, center_z, radius)
