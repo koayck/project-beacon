@@ -168,10 +168,14 @@ def find_buildings_in_area_tool(
     center_x: float,
     center_z: float,
     radius: float = 30.0,
+    drone_x: float | None = None,
+    drone_z: float | None = None,
 ) -> dict:
     """
     Return all buildings within radius metres of (center_x, center_z), sorted
-    nearest-first. Use before an area scan loop to discover which buildings
-    need to be scanned.
+    nearest-first. When drone_x/drone_z are provided results are sorted by
+    distance from the drone's current position instead of the search centre,
+    reducing inter-building transit in multi-building area scans.
+    Use before an area scan loop to discover which buildings need to be scanned.
     """
-    return find_buildings_in_area(center_x, center_z, radius)
+    return find_buildings_in_area(center_x, center_z, radius, drone_x, drone_z)

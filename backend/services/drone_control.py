@@ -458,6 +458,106 @@ def _push_xz_clear(
     return round(x, 2), round(z, 2)
 
 
+# ── Perimeter ring helpers ─────────────────────────────────────────────────────
+
+# Clockwise corner order (NW=0, NE=1, SE=2, SW=3).
+_CORNERS_CW: list[str] = ["NW", "NE", "SE", "SW"]
+
+# Face traversed going CW from each corner to the next CW corner.
+_CW_FACE: dict[str, str] = {
+    "NW": "north",  # NW → NE
+    "NE": "east",   # NE → SE
+    "SE": "south",  # SE → SW
+    "SW": "west",   # SW → NW
+}
+
+
+def _nearest_corner(
+    x: float,
+    z: float,
+    corners: dict[str, tuple[float, float]],
+) -> str:
+    """Return the corner label (NW/NE/SE/SW) nearest to (x, z)."""
+    return min(
+        corners,
+        key=lambda c: math.sqrt((corners[c][0] - x) ** 2 + (corners[c][1] - z) ** 2),
+    )
+
+
+def _window_sort_reverse(face: str, clockwise: bool) -> tuple[str, bool]:
+    """Return ``(sort_field, reverse)`` for window waypoints on *face*.
+
+    Sorting by this key produces waypoints in traversal order for the given
+    direction so the drone sweeps smoothly along the face.
+    """
+    # CW: north=X-asc, east=Z-asc, south=X-desc, west=Z-desc.
+    # CCW: reverse of the above on each face.
+    if face == "north":
+        return ("x", not clockwise)
+    if face == "east":
+        return ("z", not clockwise)
+    if face == "south":
+        return ("x", clockwise)
+    # west
+    return ("z", clockwise)
+
+
+def _build_ring(
+    start: str,
+    clockwise: bool,
+    level_windows: dict[str, list[dict]],
+    corners: dict[str, tuple[float, float]],
+    nw_pushed_east: bool = False,
+    west_stop_z: float | None = None,
+    p_min_x: float = 0.0,
+) -> tuple[list[tuple[float, float, str]], str]:
+    """Build an open perimeter ring starting at *start* corner.
+
+    Visits all four corners (covering three face segments in the traversal
+    direction), then appends any window waypoints from the fourth "return"
+    face so no windows are missed.  The ring does **not** close back to
+    *start*.
+
+    Returns ``(ring_items, end_corner)`` where *ring_items* is a list of
+    ``(x, z, reason)`` tuples and *end_corner* is the last corner visited.
+    """
+    idx = _CORNERS_CW.index(start)
+    step = 1 if clockwise else -1
+    order = [_CORNERS_CW[(idx + step * i) % 4] for i in range(4)]
+
+    ring: list[tuple[float, float, str]] = []
+
+    for i, corner in enumerate(order):
+        cx, cz = corners[corner]
+        ring.append((cx, cz, f"perimeter {corner}"))
+
+        if i == 3:
+            # Append windows for the 4th (return) face so no window is skipped.
+            return_face = _CW_FACE[order[-1]] if clockwise else _CW_FACE[order[0]]
+            sf, rev = _window_sort_reverse(return_face, clockwise)
+            for ww in sorted(level_windows.get(return_face, []), key=lambda w: w[sf], reverse=rev):
+                ring.append((ww["x"], ww["z"], f"window scan {return_face} floor {ww['floor']}"))
+            break
+
+        next_corner = order[i + 1]
+        face = _CW_FACE[corner] if clockwise else _CW_FACE[next_corner]
+
+        # Window waypoints for this face in traversal order.
+        sf, rev = _window_sort_reverse(face, clockwise)
+        for ww in sorted(level_windows.get(face, []), key=lambda w: w[sf], reverse=rev):
+            ring.append((ww["x"], ww["z"], f"window scan {face} floor {ww['floor']}"))
+
+        # West-face-stop: insert only when flying north along the west face
+        # CW (SW→NW) and NW was pushed east — guards against clipping the
+        # blocking neighbour's corner before reaching the pushed NW position.
+        if face == "west" and clockwise and nw_pushed_east:
+            nw_x, nw_z = corners["NW"]
+            if west_stop_z is not None and west_stop_z > nw_z + 0.01:
+                ring.append((p_min_x, west_stop_z, "west face stop (adjacent building)"))
+
+    return ring, order[-1]
+
+
 def _west_face_stop_z(
     west_x: float,
     to_z: float,
@@ -577,12 +677,23 @@ def plan_building_vertical_sweep(
     level_step: float = 3.0,
     standoff: float = 2.0,
     flood_clearance: float = 0.5,
+    approach_x: float | None = None,
+    approach_z: float | None = None,
 ) -> dict:
     """
     Plan a perimeter sweep around a building across all heights above water level.
 
     Returns waypoints only for the sweep itself (floor rings + rooftop).
     Navigation to/from the building is handled by the caller.
+
+    When *approach_x* / *approach_z* are provided the planner uses an
+    approach-aware starting corner (nearest perimeter corner to the drone's
+    pre-navigation position) and a serpentine (boustrophedon) open-ring
+    traversal so consecutive floor rings chain seamlessly — the end of ring N
+    is the start of ring N+1 with no redundant close-ring return leg.
+
+    When omitted the legacy NW-start clockwise closed-ring behaviour is
+    preserved for backward compatibility.
     """
     building = WORLD.building_near_xz(target_x, target_z, margin=BUILDING_PROXIMITY_MARGIN_M)
     if building is None:
@@ -669,26 +780,45 @@ def plan_building_vertical_sweep(
     # Rooftop hover point — above building centre.
     rooftop_y = round(top_y + safe_standoff, 2)
 
+    # Named corners dict used by the serpentine helpers.
+    corners: dict[str, tuple[float, float]] = {
+        "NW": (nw_x, nw_z),
+        "NE": (ne_x, ne_z),
+        "SE": (se_x, se_z),
+        "SW": (sw_x, sw_z),
+    }
+
+    # Serpentine mode: activated when the caller supplies the drone's
+    # pre-navigation position so we can pick the nearest starting corner.
+    _serpentine = approach_x is not None and approach_z is not None
+    if _serpentine:
+        # assert approach_x and approach_z are not None — guaranteed by _serpentine check.
+        _start_corner = _nearest_corner(approach_x, approach_z, corners)  # type: ignore[arg-type]
+    else:
+        _start_corner = "NW"
+
     waypoints: list[dict] = []
     levels: list[float] = []
 
-    # Descent waypoint: from above building centre, move laterally to
-    # the NW corner at rooftop altitude before descending to the lowest
-    # floor. This avoids clipping through the building roof.
+    # Descent waypoint: from above building centre, move laterally to the
+    # start corner at rooftop altitude before descending to the lowest floor.
+    # This avoids clipping through the building roof.
     if floor_levels:
+        sc_x, sc_z = corners[_start_corner]
         waypoints.append(
             {
-                "x": nw_x,
+                "x": sc_x,
                 "y": rooftop_y,
-                "z": nw_z,
+                "z": sc_z,
                 "level_y": rooftop_y,
-                "reason": "descent to NW corner",
+                "reason": f"descent to {_start_corner} corner",
             }
         )
 
-    # Ascending floor rings — each ring walks the perimeter with window
-    # waypoints inserted at their natural face position. Faces without a
-    # window at a given level are simply skipped.
+    # Ascending floor rings.
+    _current_corner = _start_corner
+    _cw = True  # start clockwise; serpentine alternates per floor
+
     for level_y in floor_levels:
         levels.append(level_y)
         level_wps = [w for w in above_flood if round(w["y"], 2) == level_y]
@@ -699,42 +829,73 @@ def plan_building_vertical_sweep(
         for w in level_wps:
             level_windows.setdefault(w["face"], []).append(w)
 
-        # Ring: NW → [north…] → NE → [east…] → SE → [south…] → SW → [west…] → NW
-        # NW corner may be adjusted east to avoid an adjacent building.
-        ring: list[tuple[float, float, str]] = [
-            (nw_x, nw_z, "perimeter NW"),
-        ]
-        for ww in level_windows.get("north", []):
-            ring.append((ww["x"], ww["z"], f"window scan north floor {ww['floor']}"))
-        ring.append((ne_x, ne_z, "perimeter NE"))
-        for ww in level_windows.get("east", []):
-            ring.append((ww["x"], ww["z"], f"window scan east floor {ww['floor']}"))
-        ring.append((se_x, se_z, "perimeter SE"))
-        for ww in level_windows.get("south", []):
-            ring.append((ww["x"], ww["z"], f"window scan south floor {ww['floor']}"))
-        ring.append((sw_x, sw_z, "perimeter SW"))
-        for ww in level_windows.get("west", []):
-            ring.append((ww["x"], ww["z"], f"window scan west floor {ww['floor']}"))
-        # When NW was pushed east, add a "west-face stop" before closing the ring
-        # so the drone hugs the west face safely and then turns NE to reach NW.
-        if _nw_pushed_east and west_stop_z > p_min_z + 0.01:
-            ring.append((p_min_x, west_stop_z, "west face stop (adjacent building)"))
-        ring.append((nw_x, nw_z, "close perimeter"))
-
-        prev_rx, prev_rz = nw_x, nw_z
-        for rx, rz, reason in ring:
-            for extra in _route_sweep_segment(prev_rx, level_y, prev_rz, rx, level_y, rz, building.id, rooftop_y):
-                waypoints.append({**extra, "level_y": rooftop_y})
-            waypoints.append(
-                {
-                    "x": round(rx, 2),
-                    "y": level_y,
-                    "z": round(rz, 2),
-                    "level_y": level_y,
-                    "reason": reason,
-                }
+        if _serpentine:
+            # Open-ring serpentine: end of this ring becomes the start of the
+            # next, so consecutive floors chain without a redundant close leg.
+            ring_items, end_corner = _build_ring(
+                start=_current_corner,
+                clockwise=_cw,
+                level_windows=level_windows,
+                corners=corners,
+                nw_pushed_east=_nw_pushed_east,
+                west_stop_z=west_stop_z if _nw_pushed_east else None,
+                p_min_x=p_min_x,
             )
-            prev_rx, prev_rz = rx, rz
+            prev_rx, prev_rz = corners[_current_corner]
+            for rx, rz, reason in ring_items:
+                for extra in _route_sweep_segment(prev_rx, level_y, prev_rz, rx, level_y, rz, building.id, rooftop_y):
+                    waypoints.append({**extra, "level_y": rooftop_y})
+                waypoints.append(
+                    {
+                        "x": round(rx, 2),
+                        "y": level_y,
+                        "z": round(rz, 2),
+                        "level_y": level_y,
+                        "reason": reason,
+                    }
+                )
+                prev_rx, prev_rz = rx, rz
+            _current_corner = end_corner
+            _cw = not _cw  # alternate direction for next floor
+
+        else:
+            # Legacy closed-ring behaviour (NW start, clockwise, closes at NW).
+            # Ring: NW → [north…] → NE → [east…] → SE → [south…] → SW → [west…] → NW
+            # NW corner may be adjusted east to avoid an adjacent building.
+            ring: list[tuple[float, float, str]] = [
+                (nw_x, nw_z, "perimeter NW"),
+            ]
+            for ww in level_windows.get("north", []):
+                ring.append((ww["x"], ww["z"], f"window scan north floor {ww['floor']}"))
+            ring.append((ne_x, ne_z, "perimeter NE"))
+            for ww in level_windows.get("east", []):
+                ring.append((ww["x"], ww["z"], f"window scan east floor {ww['floor']}"))
+            ring.append((se_x, se_z, "perimeter SE"))
+            for ww in level_windows.get("south", []):
+                ring.append((ww["x"], ww["z"], f"window scan south floor {ww['floor']}"))
+            ring.append((sw_x, sw_z, "perimeter SW"))
+            for ww in level_windows.get("west", []):
+                ring.append((ww["x"], ww["z"], f"window scan west floor {ww['floor']}"))
+            # When NW was pushed east, add a "west-face stop" before closing the ring
+            # so the drone hugs the west face safely and then turns NE to reach NW.
+            if _nw_pushed_east and west_stop_z > p_min_z + 0.01:
+                ring.append((p_min_x, west_stop_z, "west face stop (adjacent building)"))
+            ring.append((nw_x, nw_z, "close perimeter"))
+
+            prev_rx, prev_rz = nw_x, nw_z
+            for rx, rz, reason in ring:
+                for extra in _route_sweep_segment(prev_rx, level_y, prev_rz, rx, level_y, rz, building.id, rooftop_y):
+                    waypoints.append({**extra, "level_y": rooftop_y})
+                waypoints.append(
+                    {
+                        "x": round(rx, 2),
+                        "y": level_y,
+                        "z": round(rz, 2),
+                        "level_y": level_y,
+                        "reason": reason,
+                    }
+                )
+                prev_rx, prev_rz = rx, rz
 
     # Windowless buildings: rooftop-level perimeter flyaround.
     # Floor-level rings are skipped for buildings without windows because adjacent
@@ -764,14 +925,15 @@ def plan_building_vertical_sweep(
             )
             prev_rx, prev_rz = rx, rz
 
-    # Ascent waypoint: go up at NW corner before moving to building centre
+    # Ascent waypoint: go up at the last corner before moving to building centre
     # to avoid clipping through the building at intermediate heights.
     if floor_levels:
+        ac_x, ac_z = corners[_current_corner]
         waypoints.append(
             {
-                "x": nw_x,
+                "x": ac_x,
                 "y": rooftop_y,
-                "z": nw_z,
+                "z": ac_z,
                 "level_y": rooftop_y,
                 "reason": "ascent to rooftop altitude",
             }
@@ -830,18 +992,23 @@ async def sweep_scan_building(
     Execute a full-height-above-water perimeter sweep scan around a building.
     """
     client = grpc_client
-    if target_x is None or target_z is None:
-        status = await client.get_status(asset_id)
-        if target_x is None:
-            target_x = status["x"]
-        if target_z is None:
-            target_z = status["z"]
+    # Always fetch status: needed for approach-aware sweep planning regardless
+    # of whether target_x / target_z were explicitly provided.
+    status = await client.get_status(asset_id)
+    approach_x: float = status["x"]
+    approach_z: float = status["z"]
+    if target_x is None:
+        target_x = approach_x
+    if target_z is None:
+        target_z = approach_z
 
     plan = plan_building_vertical_sweep(
         target_x=target_x,
         target_z=target_z,
         level_step=level_step,
         standoff=standoff,
+        approach_x=approach_x,
+        approach_z=approach_z,
     )
     if not plan.get("matched_building", False):
         return {
@@ -1353,14 +1520,22 @@ def find_buildings_in_area(
     center_x: float,
     center_z: float,
     radius: float = 30.0,
+    drone_x: float | None = None,
+    drone_z: float | None = None,
 ) -> dict:
     """
     Return all buildings whose nearest edge is within `radius` metres of
-    (center_x, center_z).  Results are sorted nearest-first so the scan loop
-    visits the closest building first.
+    (center_x, center_z).
+
+    Results are sorted nearest-first relative to the drone's current position
+    when *drone_x* / *drone_z* are provided, otherwise relative to the search
+    centre.  Drone-relative ordering reduces inter-building transit time for
+    multi-building area scans.
     """
     buildings = WORLD.buildings_near(center_x, center_z, radius)
-    buildings_sorted = sorted(buildings, key=lambda b: b.distance_xz(center_x, center_z))
+    sort_x = drone_x if drone_x is not None else center_x
+    sort_z = drone_z if drone_z is not None else center_z
+    buildings_sorted = sorted(buildings, key=lambda b: b.distance_xz(sort_x, sort_z))
     return {
         "buildings": [
             {
@@ -1380,6 +1555,7 @@ def find_buildings_in_area(
         "total": len(buildings_sorted),
         "center": {"x": center_x, "z": center_z},
         "radius": radius,
+        **({"drone_position": {"x": drone_x, "z": drone_z}} if drone_x is not None else {}),
     }
 
 
