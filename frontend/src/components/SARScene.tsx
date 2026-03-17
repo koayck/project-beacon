@@ -1491,9 +1491,6 @@ function DroneStatusPanel({ drones }: { drones: DroneMap }) {
 
   return (
     <div style={{
-      position: 'absolute',
-      top: 16,
-      left: 16,
       display: 'flex',
       flexDirection: 'column',
       gap: 8,
@@ -2030,6 +2027,223 @@ function IntelCard({
   )
 }
 
+// ── Activity Feed — clean, scannable mission timeline ─────────────────────────
+
+interface ActivityItem {
+  id: number
+  icon: string
+  label: string
+  detail?: string
+  ts: number
+  status: 'active' | 'done' | 'error'
+}
+
+let _activityId = 0
+
+/** Parse a stream event into zero or one activity items */
+function parseEventToActivity(event: import('@/lib/api').AgentStreamEvent): ActivityItem | null {
+  if (event.type === 'tool_call') {
+    const { name, args, agent } = event
+    if (name === 'transfer_to_agent') {
+      const target = String(args.agent_name ?? '').replace(/_/g, ' ')
+      return { id: ++_activityId, icon: '◈', label: `${target}`, ts: Date.now(), status: 'done' }
+    }
+    if (name === 'plan_route') {
+      const x = Number(args.target_x ?? 0).toFixed(0)
+      const z = Number(args.target_z ?? 0).toFixed(0)
+      const y = Number(args.target_y ?? 0).toFixed(0)
+      return { id: ++_activityId, icon: '◇', label: 'Planning route', detail: `→ (${x}, ${y}, ${z})`, ts: Date.now(), status: 'active' }
+    }
+    if (name === 'move_drone_to') {
+      const x = Number(args.x ?? 0).toFixed(1)
+      const z = Number(args.z ?? 0).toFixed(1)
+      const y = Number(args.y ?? 0).toFixed(1)
+      return { id: ++_activityId, icon: '▸', label: 'Moving', detail: `(${x}, ${y}, ${z})`, ts: Date.now(), status: 'active' }
+    }
+    if (name === 'sweep_scan_building') {
+      const x = Number(args.target_x ?? 0).toFixed(0)
+      const z = Number(args.target_z ?? 0).toFixed(0)
+      return { id: ++_activityId, icon: '◉', label: 'Scanning building', detail: `(${x}, ${z})`, ts: Date.now(), status: 'active' }
+    }
+    if (name === 'return_to_base') {
+      return { id: ++_activityId, icon: '⌂', label: 'Returning to base', ts: Date.now(), status: 'active' }
+    }
+    if (name === 'resolve_scan_target') {
+      const x = Number(args.target_x ?? 0).toFixed(0)
+      const z = Number(args.target_z ?? 0).toFixed(0)
+      return { id: ++_activityId, icon: '⊕', label: 'Resolving target', detail: `(${x}, ${z})`, ts: Date.now(), status: 'active' }
+    }
+    if (name === 'pick_next_building') {
+      return { id: ++_activityId, icon: '⊞', label: 'Selecting next building', ts: Date.now(), status: 'active' }
+    }
+    if (name === 'save_scan_result') {
+      return { id: ++_activityId, icon: '✎', label: 'Saving scan results', ts: Date.now(), status: 'active' }
+    }
+    if (name === 'get_scan_results') {
+      return { id: ++_activityId, icon: '⊡', label: 'Compiling report', ts: Date.now(), status: 'active' }
+    }
+    // Generic fallback for unknown tools
+    return { id: ++_activityId, icon: '⟡', label: name.replace(/_/g, ' '), detail: `[${agent}]`, ts: Date.now(), status: 'active' }
+  }
+
+  if (event.type === 'text' || event.type === 'final') {
+    const t = event.text
+    // "BEACON-01 arrived at (x, y, z)."
+    const arriveMatch = t.match(/arrived at \(([^)]+)\)/)
+    if (arriveMatch) {
+      return { id: ++_activityId, icon: '✓', label: 'Arrived', detail: `(${arriveMatch[1]})`, ts: Date.now(), status: 'done' }
+    }
+    // "SWEEP SCAN COMPLETE" — extract findings
+    const sweepMatch = t.match(/SWEEP SCAN COMPLETE/)
+    if (sweepMatch) {
+      const findingsMatch = t.match(/Findings\s*:\s*(.+)/)
+      return { id: ++_activityId, icon: '✓', label: 'Sweep complete', detail: findingsMatch?.[1]?.trim(), ts: Date.now(), status: 'done' }
+    }
+    // "AREA SCAN COMPLETE — N building(s)"
+    const areaMatch = t.match(/AREA SCAN COMPLETE.*?(\d+)\s*building/)
+    if (areaMatch) {
+      const totalMatch = t.match(/TOTAL SURVIVORS DETECTED:\s*(\d+)/)
+      return { id: ++_activityId, icon: '◈', label: `Area scan done`, detail: `${areaMatch[1]} bldg · ${totalMatch?.[1] ?? '?'} survivors`, ts: Date.now(), status: 'done' }
+    }
+    // "SCAN TARGET: Navigate ... to building at (x, z)"
+    const scanTargetMatch = t.match(/SCAN TARGET.*?building at \(x=([^,]+),\s*z=([^)]+)\)/)
+    if (scanTargetMatch) {
+      return { id: ++_activityId, icon: '▶', label: 'Next target', detail: `building (${scanTargetMatch[1]}, ${scanTargetMatch[2]})`, ts: Date.now(), status: 'active' }
+    }
+    // "QUEUE_EMPTY"
+    if (t.includes('QUEUE_EMPTY')) {
+      return { id: ++_activityId, icon: '✓', label: 'All buildings scanned', ts: Date.now(), status: 'done' }
+    }
+    return null
+  }
+
+  if (event.type === 'error') {
+    return { id: ++_activityId, icon: '✗', label: 'Error', detail: event.text.slice(0, 60), ts: Date.now(), status: 'error' }
+  }
+  if (event.type === 'done') {
+    return { id: ++_activityId, icon: '●', label: 'Agent done', ts: Date.now(), status: 'done' }
+  }
+
+  return null
+}
+
+const ACTIVITY_COLORS = {
+  active: '#5af',
+  done: '#4c8',
+  error: '#f66',
+} as const
+
+function ActivityFeed({ items, busy, onClear }: { items: ActivityItem[]; busy: boolean; onClear: () => void }) {
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [items.length])
+
+  return (
+    <div style={{
+      background: 'rgba(0,0,0,0.65)',
+      border: '1px solid #334',
+      borderRadius: 6,
+      padding: '10px 14px',
+      fontFamily: 'Courier New, monospace',
+      fontSize: 11,
+      lineHeight: 1.6,
+      pointerEvents: 'auto',
+      minWidth: 230,
+      maxWidth: 280,
+      maxHeight: 420,
+      overflowY: 'auto',
+    }}>
+      {/* Header */}
+      <div style={{
+        color: '#99b',
+        letterSpacing: 1,
+        marginBottom: 8,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+      }}>
+        <span>ACTIVITY</span>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          {busy && <span style={{ color: '#5af', fontSize: 10 }}>LIVE</span>}
+          {items.length > 0 && (
+            <button
+              onClick={onClear}
+              style={{
+                background: 'transparent',
+                border: '1px solid rgba(80,120,200,0.25)',
+                borderRadius: 3,
+                color: '#556',
+                padding: '0px 5px',
+                cursor: 'pointer',
+                fontFamily: 'Courier New, monospace',
+                fontSize: 10,
+                lineHeight: '16px',
+              }}
+              title="Clear activity feed"
+            >
+              CLR
+            </button>
+          )}
+        </div>
+      </div>
+
+      {items.length === 0 ? (
+        <div style={{ color: '#445', fontStyle: 'italic', fontSize: 10 }}>
+          No activity yet. Send a command to begin.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {items.map(item => (
+            <div key={item.id} style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 6,
+              padding: '3px 0',
+              borderBottom: '1px solid rgba(50,55,70,0.4)',
+            }}>
+              {/* Icon */}
+              <span style={{
+                color: ACTIVITY_COLORS[item.status],
+                flexShrink: 0,
+                width: 14,
+                textAlign: 'center',
+                fontSize: 11,
+              }}>
+                {item.icon}
+              </span>
+              {/* Content */}
+              <div style={{ minWidth: 0 }}>
+                <div style={{
+                  color: ACTIVITY_COLORS[item.status],
+                  fontSize: 11,
+                  fontWeight: item.status === 'done' ? 400 : 600,
+                }}>
+                  {item.label}
+                </div>
+                {item.detail && (
+                  <div style={{
+                    color: '#667',
+                    fontSize: 10,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    maxWidth: 220,
+                  }}>
+                    {item.detail}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 interface ControlsProps {
   followBeacon: boolean
   onToggleFollow: () => void
@@ -2161,6 +2375,8 @@ export default function SARScene() {
   const [transparentWalls, setTransparentWalls] = useState(false)
   const [scanRaysEnabled, setScanRaysEnabled] = useState(true)
   const [deliveringTo, setDeliveringTo] = useState<Set<string>>(new Set())
+  const [activities, setActivities] = useState<ActivityItem[]>([])
+  const [agentBusy, setAgentBusy] = useState(false)
   const [deliveredTo, setDeliveredTo] = useState<Set<string>>(new Set())
   // ── Cargo / throw state ────────────────────────────────────────────────────
   const [hasCargo, setHasCargo] = useState(false)
@@ -2384,9 +2600,39 @@ export default function SARScene() {
     const ac = new AbortController()
     abortRef.current = ac
     addLog(`⬆ ${prompt}`)
+    setAgentBusy(true)
+    // Add a user-prompt activity entry
+    setActivities(prev => [...prev, { id: ++_activityId, icon: '▹', label: prompt.length > 50 ? prompt.slice(0, 47) + '...' : prompt, ts: Date.now(), status: 'done' }])
     try {
       for await (const event of streamCommand(ASSET_ID, prompt, ac.signal)) {
         onEvent(event)
+        // Parse into activity feed
+        if (event.type === 'tool_result') {
+          // Mark the most recent active item as done
+          setActivities(prev => {
+            const idx = [...prev].reverse().findIndex(a => a.status === 'active')
+            if (idx === -1) return prev
+            const realIdx = prev.length - 1 - idx
+            const updated = [...prev]
+            updated[realIdx] = { ...updated[realIdx], status: event.success ? 'done' : 'error' }
+            return updated
+          })
+        }
+        const activity = parseEventToActivity(event)
+        if (activity) {
+          setActivities(prev => {
+            // Collapse consecutive move_drone_to — update the last move instead of adding
+            if (activity.label === 'Moving' && prev.length > 0) {
+              const last = prev[prev.length - 1]
+              if (last.label === 'Moving') {
+                const updated = [...prev]
+                updated[updated.length - 1] = { ...activity, id: last.id }
+                return updated
+              }
+            }
+            return [...prev, activity]
+          })
+        }
         // Propagate server-detected survivors into discoveredSurvivors
         if (
           (event.type === 'tool_result' || event.type === 'text') &&
@@ -2407,6 +2653,7 @@ export default function SARScene() {
     } catch (e: unknown) {
       if (e instanceof Error && e.name === 'AbortError') {
         addLog('⚠ Command aborted')
+        setActivities(prev => [...prev, { id: ++_activityId, icon: '✗', label: 'Aborted', ts: Date.now(), status: 'error' }])
       } else {
         throw e
       }
@@ -2424,6 +2671,8 @@ export default function SARScene() {
         deliveryApproach.current = null
         pendingDeliveryKey.current = null
       }
+    } finally {
+      setAgentBusy(false)
     }
   }, [addLog])
 
@@ -2619,7 +2868,21 @@ export default function SARScene() {
         <SupplyCrates deliveredTo={deliveredTo} />
       </Canvas>
 
-      <DroneStatusPanel drones={drones} />
+      <div style={{
+        position: 'absolute',
+        top: 16,
+        left: 16,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        pointerEvents: 'none',
+        maxHeight: 'calc(100% - 140px)',
+      }}>
+        <DroneStatusPanel drones={drones} />
+        <div style={{ pointerEvents: 'auto' }}>
+          <ActivityFeed items={activities} busy={agentBusy} onClear={() => setActivities([])} />
+        </div>
+      </div>
       {!selectMode && <CoordOverlay point={hoverPt} copied={copied} />}
       <CompassLabels northAngleRef={northAngleRef} />
       <MissionLog lines={log} />
