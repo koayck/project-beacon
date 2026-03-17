@@ -221,20 +221,20 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
           flexShrink: 0,
         }} />
         <span style={{ color: connected ? '#33ff88' : uplinked ? '#ffcc66' : '#ff6666', fontWeight: 'bold', letterSpacing: 1 }}>
-          {assetId}
+          COMMANDER
         </span>
         <span style={{ color: '#445', marginLeft: 4 }}>
           {connected ? 'LIVE' : uplinked ? 'REGISTERED / OFFLINE' : 'OFFLINE'}
         </span>
 
-        {battery !== null && (
+        {/* {battery !== null && (
           <span style={{ marginLeft: 'auto', color: battery > 30 ? '#88cc66' : '#ff9933' }}>
             ⚡ {battery.toFixed(0)}%
           </span>
-        )}
+        )} */}
 
         {(ttft !== null || tps !== null) && (
-          <span style={{ display: 'flex', gap: 10, marginLeft: battery !== null ? 8 : 'auto', color: '#5af', fontSize: 11 }}>
+          <span style={{ display: 'flex', gap: 10, marginLeft: 'auto', color: '#5af', fontSize: 11 }}>
             {ttft !== null && (
               <span title="Time to First Token">
                 <span style={{ color: '#446' }}>TTFT </span>
@@ -249,9 +249,9 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
           </span>
         )}
 
-        <span style={{ color: '#336', marginLeft: (ttft !== null || tps !== null || battery !== null) ? 8 : 'auto' }}>
+        {/* <span style={{ color: '#336', marginLeft: (ttft !== null || tps !== null || battery !== null) ? 8 : 'auto' }}>
           ADK / Qwen3.5
-        </span>
+        </span> */}
 
         {/* Action buttons */}
         <div style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
