@@ -1,7 +1,7 @@
 'use client'
 
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { Line, OrbitControls, PerspectiveCamera, Html } from '@react-three/drei'
+import { Line, OrbitControls, PerspectiveCamera, Text, Html } from '@react-three/drei'
 import { useRef, useState, useEffect, useMemo, useCallback, type RefObject, type MutableRefObject } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
@@ -765,6 +765,250 @@ function ShophouseBlock({ transparentWalls }: { transparentWalls: boolean }) {
   )
 }
 
+// ── Base landing pad at origin ────────────────────────────────────────────────
+
+function BasePad() {
+  const groupRef = useRef<THREE.Group>(null)
+  const ringsRef = useRef<THREE.Group>(null)
+  const scanRef = useRef<THREE.Mesh>(null)
+  const beaconRefs = useRef<THREE.Mesh[]>([])
+
+  const PAD_RADIUS = 5
+  const PAD_HEIGHT = 0.12
+  const PYLON_HEIGHT = 2.2
+  const PYLON_RADIUS = 0.15
+  const NUM_PULSE_RINGS = 3
+
+  useFrame(({ clock }) => {
+    const t = clock.elapsedTime
+
+    // Rotate the scan ring slowly (z-axis after the -PI/2 X rotation lays it flat)
+    if (scanRef.current) {
+      scanRef.current.rotation.set(-Math.PI / 2, 0, t * 0.6)
+    }
+
+    // Pulse the beacon pylons
+    beaconRefs.current.forEach((mesh, i) => {
+      if (!mesh) return
+      const phase = t * 2.0 + i * (Math.PI / 2)
+      const pulse = 0.4 + 0.6 * Math.abs(Math.sin(phase))
+      ;(mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = pulse
+    })
+
+    // Animate expanding pulse rings
+    if (ringsRef.current) {
+      ringsRef.current.children.forEach((child, i) => {
+        const mesh = child as THREE.Mesh
+        const phase = (t * 0.5 + i * (1.0 / NUM_PULSE_RINGS)) % 1.0
+        const scale = 0.3 + phase * 1.0
+        mesh.scale.set(scale, 1, scale)
+        ;(mesh.material as THREE.MeshStandardMaterial).opacity = 0.35 * (1.0 - phase)
+      })
+    }
+  })
+
+  // Corner pylon positions (square arrangement just inside pad edge)
+  const pylonOffset = PAD_RADIUS * 0.72
+  const pylonPositions: [number, number, number][] = [
+    [-pylonOffset, 0, -pylonOffset],
+    [ pylonOffset, 0, -pylonOffset],
+    [-pylonOffset, 0,  pylonOffset],
+    [ pylonOffset, 0,  pylonOffset],
+  ]
+
+  return (
+    <group ref={groupRef} position={[0, 0.04, 0]}>
+      {/* Main octagonal platform */}
+      <mesh position={[0, PAD_HEIGHT / 2, 0]}>
+        <cylinderGeometry args={[PAD_RADIUS, PAD_RADIUS, PAD_HEIGHT, 8]} />
+        <meshStandardMaterial color="#1a1d24" roughness={0.7} metalness={0.3} />
+      </mesh>
+
+      {/* Raised inner ring — darker deck */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, PAD_HEIGHT + 0.02, 0]}>
+        <ringGeometry args={[2.6, 3.4, 32]} />
+        <meshStandardMaterial
+          color="#0e1118"
+          emissive="#1a3a5a"
+          emissiveIntensity={0.15}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      {/* Inner cross markings — tactical crosshair */}
+      {[0, Math.PI / 2].map((rot, i) => (
+        <mesh key={`cross-${i}`} position={[0, PAD_HEIGHT + 0.03, 0]} rotation={[-Math.PI / 2, rot, 0]}>
+          <planeGeometry args={[4.8, 0.12]} />
+          <meshStandardMaterial
+            color="#2a5a7a"
+            emissive="#3a8abf"
+            emissiveIntensity={0.5}
+            side={THREE.DoubleSide}
+            transparent
+            opacity={0.8}
+          />
+        </mesh>
+      ))}
+
+      {/* Centre pip — glowing beacon dot */}
+      <mesh position={[0, PAD_HEIGHT + 0.06, 0]}>
+        <cylinderGeometry args={[0.35, 0.35, 0.06, 16]} />
+        <meshStandardMaterial
+          color="#00ccff"
+          emissive="#00ccff"
+          emissiveIntensity={1.2}
+        />
+      </mesh>
+
+      {/* Concentric ring markings on deck */}
+      {[1.6, 3.8].map((r, i) => (
+        <mesh key={`ring-${i}`} rotation={[-Math.PI / 2, 0, 0]} position={[0, PAD_HEIGHT + 0.025, 0]}>
+          <ringGeometry args={[r - 0.04, r + 0.04, 48]} />
+          <meshStandardMaterial
+            color="#1e4060"
+            emissive="#2060a0"
+            emissiveIntensity={0.3}
+            side={THREE.DoubleSide}
+            transparent
+            opacity={0.7}
+          />
+        </mesh>
+      ))}
+
+      {/* Edge ring — bright outline */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, PAD_HEIGHT + 0.025, 0]}>
+        <ringGeometry args={[PAD_RADIUS - 0.08, PAD_RADIUS + 0.02, 8]} />
+        <meshStandardMaterial
+          color="#2a4a6a"
+          emissive="#3070a0"
+          emissiveIntensity={0.4}
+          side={THREE.DoubleSide}
+          transparent
+          opacity={0.6}
+        />
+      </mesh>
+
+      {/* Animated scan arc — a partial ring that rotates */}
+      <mesh ref={scanRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, PAD_HEIGHT + 0.04, 0]}>
+        <ringGeometry args={[PAD_RADIUS - 0.3, PAD_RADIUS + 0.15, 32, 1, 0, Math.PI * 0.4]} />
+        <meshStandardMaterial
+          color="#00ddff"
+          emissive="#00ddff"
+          emissiveIntensity={0.9}
+          side={THREE.DoubleSide}
+          transparent
+          opacity={0.55}
+        />
+      </mesh>
+
+
+      {/* Diagonal corner marks — chevron-style tick marks */}
+      {[0, Math.PI / 2, Math.PI, Math.PI * 1.5].map((angle, i) => {
+        const dist = PAD_RADIUS * 0.55
+        const cx = Math.cos(angle + Math.PI / 4) * dist
+        const cz = Math.sin(angle + Math.PI / 4) * dist
+        return (
+          <mesh
+            key={`tick-${i}`}
+            position={[cx, PAD_HEIGHT + 0.03, cz]}
+            rotation={[-Math.PI / 2, angle + Math.PI / 4, 0]}
+          >
+            <planeGeometry args={[1.2, 0.08]} />
+            <meshStandardMaterial
+              color="#2a5a7a"
+              emissive="#3a8abf"
+              emissiveIntensity={0.4}
+              side={THREE.DoubleSide}
+              transparent
+              opacity={0.7}
+            />
+          </mesh>
+        )
+      })}
+
+      {/* "BASE" label on the deck */}
+      <Text
+        position={[0, PAD_HEIGHT + 0.04, 2.0]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        fontSize={1.1}
+        letterSpacing={0.25}
+        color="#3a8abf"
+        anchorX="center"
+        anchorY="middle"
+        fontWeight="bold"
+      >
+        BASE
+        <meshStandardMaterial
+          color="#2a6a9a"
+          emissive="#3a8abf"
+          emissiveIntensity={0.5}
+          transparent
+          opacity={0.85}
+        />
+      </Text>
+
+      {/* Point light for ambient base glow */}
+      <pointLight position={[0, 1.5, 0]} color="#1a6090" intensity={2.5} distance={12} decay={2} />
+    </group>
+  )
+}
+
+// ── Supply crates — dropped at survivor locations after delivery ──────────────
+
+function survivorKey(s: SurvivorPoint): string {
+  return `${s.x.toFixed(1)},${s.y.toFixed(1)},${s.z.toFixed(1)}`
+}
+
+function SupplyCrates({ deliveredTo }: { deliveredTo: Set<string> }) {
+  const crates = useMemo(() => {
+    return SURVIVOR_POSITIONS
+      .filter(s => deliveredTo.has(survivorKey(s)))
+      .map(s => ({ x: s.x, y: s.y, z: s.z }))
+  }, [deliveredTo])
+
+  const groupRef = useRef<THREE.Group>(null)
+
+  useFrame(({ clock }) => {
+    if (!groupRef.current) return
+    const t = clock.elapsedTime
+    groupRef.current.children.forEach((child, i) => {
+      // Gentle hover bob
+      child.position.y = crates[i].y - 0.6 + Math.sin(t * 1.5 + i * 2.1) * 0.08
+      child.rotation.y = t * 0.4 + i * 1.2
+    })
+  })
+
+  if (crates.length === 0) return null
+
+  return (
+    <group ref={groupRef}>
+      {crates.map((pos, i) => (
+        <group key={i} position={[pos.x, pos.y - 0.6, pos.z]}>
+          {/* Main crate body */}
+          <mesh castShadow>
+            <boxGeometry args={[0.5, 0.4, 0.5]} />
+            <meshStandardMaterial color="#ff8800" emissive="#cc5500" emissiveIntensity={0.4} />
+          </mesh>
+          {/* Cross straps */}
+          <mesh position={[0, 0.01, 0]}>
+            <boxGeometry args={[0.52, 0.06, 0.12]} />
+            <meshStandardMaterial color="#ffffff" emissive="#aaaaaa" emissiveIntensity={0.3} />
+          </mesh>
+          <mesh position={[0, 0.01, 0]}>
+            <boxGeometry args={[0.12, 0.06, 0.52]} />
+            <meshStandardMaterial color="#ffffff" emissive="#aaaaaa" emissiveIntensity={0.3} />
+          </mesh>
+          {/* Glow ring on ground */}
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.19, 0]}>
+            <ringGeometry args={[0.35, 0.5, 16]} />
+            <meshBasicMaterial color="#ff8800" transparent opacity={0.25} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  )
+}
+
 // ── NW Tower ─────────────────────────────────────────────────────────────────
 // 7-floor building whose SE corner overlaps the NW corner of the target
 // building by ~1 m. Has windows on floors 2, 4, 6, 7 and a balcony on floor 5.
@@ -1450,11 +1694,52 @@ function CompassLabels({ northAngleRef }: { northAngleRef: MutableRefObject<numb
   )
 }
 
+// ── Supply throw animation ───────────────────────────────────────────────────
+
+const THROW_DURATION = 1.2  // seconds for supply to fly from drone to survivor
+
+interface SupplyThrowProps {
+  from: THREE.Vector3
+  to: SurvivorPoint
+  onComplete: () => void
+}
+
+function SupplyThrow({ from, to, onComplete }: SupplyThrowProps) {
+  const meshRef = useRef<THREE.Mesh>(null)
+  const progress = useRef(0)
+  const startPos = useRef(from.clone())
+
+  useFrame((_, delta) => {
+    if (!meshRef.current) return
+    progress.current += delta / THROW_DURATION
+    const t = Math.min(progress.current, 1)
+
+    const x = startPos.current.x + (to.x - startPos.current.x) * t
+    const z = startPos.current.z + (to.z - startPos.current.z) * t
+    const arc = 4 * t * (1 - t) * 1.2
+    const y = startPos.current.y + (to.y - startPos.current.y) * t + arc
+
+    meshRef.current.position.set(x, y, z)
+    meshRef.current.rotation.x += delta * 5
+    meshRef.current.rotation.z += delta * 3
+
+    if (t >= 1) onComplete()
+  })
+
+  return (
+    <mesh ref={meshRef} position={startPos.current.toArray()}>
+      <boxGeometry args={[0.35, 0.28, 0.35]} />
+      <meshStandardMaterial color="#ff8800" emissive="#cc5500" emissiveIntensity={0.5} />
+    </mesh>
+  )
+}
+
 // ── Drone (telemetry-driven position with smooth lerp) ────────────────────────
 
 interface DroneProps {
   targetPos: THREE.Vector3
   status: string
+  hasCargo: boolean
   nearbyObstacles?: number
   nearestObstacleDist?: number
   survivorsInRange?: number
@@ -1463,8 +1748,9 @@ interface DroneProps {
   scanTiltDeg?: number
 }
 
-function DroneMesh({ targetPos, status, nearbyObstacles = 0, nearestObstacleDist = 999, survivorsInRange = 0, assetId = '', headingDeg = 0, scanTiltDeg = 0 }: DroneProps) {
+function DroneMesh({ targetPos, status, hasCargo, nearbyObstacles = 0, nearestObstacleDist = 999, survivorsInRange = 0, assetId = '', headingDeg = 0, scanTiltDeg = 0 }: DroneProps) {
   const groupRef = useRef<THREE.Group>(null)
+  const cargoRef = useRef<THREE.Mesh>(null)
   const coneRef = useRef<THREE.Mesh>(null)
   const lerpPos = useRef(DRONE_START.clone())
 
@@ -1485,7 +1771,7 @@ function DroneMesh({ targetPos, status, nearbyObstacles = 0, nearestObstacleDist
   }
 
   // FOV cone: horizontal, points in heading direction, shown during full scan session
-  const SCAN_FOV_HALF_DEG = 30
+  const SCAN_FOV_HALF_DEG = 60
   const SCAN_FOV_RANGE = 3  // metres — thermal camera effective range
   const coneRadius = SCAN_FOV_RANGE * Math.tan((SCAN_FOV_HALF_DEG * Math.PI) / 180)
 
@@ -1496,31 +1782,31 @@ function DroneMesh({ targetPos, status, nearbyObstacles = 0, nearestObstacleDist
 
     if (coneRef.current) {
       const headingRad = (headingDegRef.current * Math.PI) / 180
-      const tiltRad = (scanTiltDegRef.current * Math.PI) / 180
-      const cosT = Math.cos(tiltRad)
-      // Scan direction: heading in XZ, optionally tilted down
-      const scanDirX = Math.sin(headingRad) * cosT
-      const scanDirY = Math.sin(tiltRad)          // negative when tilting down
-      const scanDirZ = -Math.cos(headingRad) * cosT
-
-      // Apex (tip) at drone. Center = drone + scanDir*(RANGE/2) so:
-      //   apex = center - scanDir*(RANGE/2) = drone ✓
+      const tiltRad = (scanTiltDegRef.current * Math.PI) / 180  // 0=horizontal, -PI/2=down
       const half = SCAN_FOV_RANGE / 2
+
+      // Scan direction unit vector in 3D (heading + tilt)
+      const scanDirX = Math.sin(headingRad) * Math.cos(tiltRad)
+      const scanDirY = -Math.sin(tiltRad)  // tiltRad negative → scanDirY positive = upward offset... flip
+      const scanDirZ = -Math.cos(headingRad) * Math.cos(tiltRad)
+
+      // Offset center backward along scan direction so apex sits at drone position
       coneRef.current.position.set(
-        lerpPos.current.x + scanDirX * half,
-        lerpPos.current.y + scanDirY * half,
-        lerpPos.current.z + scanDirZ * half,
+        lerpPos.current.x - scanDirX * half,
+        lerpPos.current.y - scanDirY * half,
+        lerpPos.current.z - scanDirZ * half,
       )
-      // Rotate ConeGeometry's -Y axis (base direction) to point along scanDir.
-      // setFromUnitVectors is unambiguous — no Euler angle guessing.
-      const baseDir = new THREE.Vector3(scanDirX, scanDirY, scanDirZ)
-      if (baseDir.lengthSq() > 1e-6) {
-        coneRef.current.quaternion.setFromUnitVectors(
-          new THREE.Vector3(0, -1, 0),
-          baseDir.normalize(),
-        )
-      }
+      // Euler: tilt around local X then yaw to heading
+      // rotation.x = tiltRad (negative = nose down), then rotated by heading
+      coneRef.current.rotation.set(tiltRad, Math.PI / 2 - headingRad, -Math.PI / 2)
       coneRef.current.visible = inScanSessionRef.current
+    }
+
+    // Cargo block hangs underneath drone
+    if (cargoRef.current) {
+      cargoRef.current.position.copy(lerpPos.current)
+      cargoRef.current.position.y -= 0.55
+      cargoRef.current.visible = hasCargo
     }
 
     const bodyColor =
@@ -1557,6 +1843,11 @@ function DroneMesh({ targetPos, status, nearbyObstacles = 0, nearestObstacleDist
           <boxGeometry args={[0.38, 0.10, 0.38]} />
           <meshStandardMaterial color="#00ffff" emissive="#00aaaa" emissiveIntensity={0.3} />
         </mesh>
+      {/* Cargo block — hangs below drone when carrying supplies */}
+      <mesh ref={cargoRef} position={DRONE_START.toArray()} visible={false}>
+        <boxGeometry args={[0.4, 0.3, 0.4]} />
+        <meshStandardMaterial color="#ff8800" emissive="#cc5500" emissiveIntensity={0.4} />
+      </mesh>
         {/* X-axis arm */}
         <mesh>
           <boxGeometry args={[0.96, 0.05, 0.07]} />
@@ -1763,7 +2054,7 @@ function Controls({
       >
         {transparentWalls ? 'WALLS: TRANSPARENT' : 'WALLS: SOLID'}
       </button>
-      {/* <button
+      <button
         onClick={onToggleScanRays}
         style={{
           marginTop: 6,
@@ -1780,7 +2071,7 @@ function Controls({
         }}
       >
         {scanRaysEnabled ? 'SCAN RAYS: ON' : 'SCAN RAYS: OFF'}
-      </button> */}
+      </button>
       <div style={{ marginTop: 8, borderTop: '1px solid #334', paddingTop: 6 }}>
         <div style={{ color: '#f84' }}>FLOOD: +{FLOOD_LEVEL.toFixed(1)}m above ground</div>
         <div style={{ color: '#f44', marginTop: 3 }}>
@@ -1804,6 +2095,12 @@ export default function SARScene() {
   const [followBeacon, setFollowBeacon] = useState(false)
   const [transparentWalls, setTransparentWalls] = useState(false)
   const [scanRaysEnabled, setScanRaysEnabled] = useState(true)
+  const [deliveredTo, setDeliveredTo] = useState<Set<string>>(new Set())
+  const [hasCargo, setHasCargo] = useState(false)
+  const [activeThrow, setActiveThrow] = useState<{ from: THREE.Vector3; to: SurvivorPoint } | null>(null)
+  const deliveryTarget = useRef<SurvivorPoint | null>(null)
+  const deliveryApproach = useRef<SurvivorPoint | null>(null)
+  const cargoPickedUp = useRef(false)
   // ── Area selection state ─────────────────────────────────────────────────────
   const [selectMode, setSelectMode]       = useState(false)
   const [dragStart, setDragStart]         = useState<THREE.Vector3 | null>(null)
@@ -2036,6 +2333,16 @@ export default function SARScene() {
     setPendingScanPrompt(prompt)
   }, [selection, addLog])
 
+  const handleThrowComplete = useCallback(() => {
+    if (!activeThrow) return
+    const key = survivorKey(activeThrow.to)
+    setDeliveredTo(prev => new Set(prev).add(key))
+    deliveryTarget.current = null
+    deliveryApproach.current = null
+    setActiveThrow(null)
+    addLog('✓ Supply delivered to survivor')
+  }, [activeThrow, addLog])
+
   const handleSelectionClose = useCallback(() => {
     setSelectMode(false)
     setDragStart(null)
@@ -2113,6 +2420,7 @@ export default function SARScene() {
             key={t.asset_id}
             targetPos={new THREE.Vector3(t.x, t.y, t.z)}
             status={t.status}
+            hasCargo={hasCargo}
             nearbyObstacles={t.nearby_obstacles}
             nearestObstacleDist={t.nearest_obstacle_dist}
             survivorsInRange={t.survivors_in_range}
@@ -2121,6 +2429,14 @@ export default function SARScene() {
             scanTiltDeg={t.scan_tilt_deg}
           />
         ))}
+        {activeThrow && (
+          <SupplyThrow
+            from={activeThrow.from}
+            to={activeThrow.to}
+            onComplete={handleThrowComplete}
+          />
+        )}
+        <SupplyCrates deliveredTo={deliveredTo} />
         <SurvivorScanRays
           enabled={scanRaysEnabled}
           dronePos={dronePos}
