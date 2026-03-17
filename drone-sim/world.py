@@ -470,3 +470,10 @@ def next_position_blocked(x: float, y: float, z: float,
         if _segment_intersects_building(x, y, z, nx, ny, nz, b):
             return b
     return None
+
+
+def building_center_near(x: float, z: float) -> SimBuilding | None:
+    """Return the nearest building to (x, z), or None if BUILDINGS is empty."""
+    if not BUILDINGS:
+        return None
+    return min(BUILDINGS, key=lambda b: b.dist_xz(x, z))

@@ -72,6 +72,9 @@ class DroneSimulator:
         )
         self._lock = threading.Lock()
         self._running = False
+        self._scan_mode = False  # stays True for the entire sweep session
+        self._scan_center: Vec3 = origin  # building center being scanned
+        self._scan_building_height: float = 0.0  # used to detect rooftop scan
 
     def start(self) -> None:
         self._running = True
@@ -84,14 +87,25 @@ class DroneSimulator:
         with self._lock:
             return self._snapshot
 
+    def get_scan_center(self) -> Vec3 | None:
+        """Return the current scan target (building center), or None if not scanning."""
+        with self._lock:
+            return self._scan_center if self._scan_mode else None
+
+    def get_scan_building_height(self) -> float | None:
+        """Return height of the building being scanned, or None if not scanning."""
+        with self._lock:
+            return self._scan_building_height if self._scan_mode else None
+
     def move_to(self, x: float, y: float, z: float, speed: float = 0.0) -> None:
         with self._lock:
             s = self._snapshot
+            move_status = DroneStatus.SCANNING if self._scan_mode else DroneStatus.MOVING
             self._snapshot = DroneSnapshot(
                 asset_id=s.asset_id,
                 position=s.position,
                 battery=s.battery,
-                status=DroneStatus.MOVING,
+                status=move_status,
                 target=Vec3(x, y, z),
                 speed=speed if speed > 0 else self.DEFAULT_SPEED,
             )
@@ -99,6 +113,7 @@ class DroneSimulator:
     def return_to_base(self) -> None:
         with self._lock:
             s = self._snapshot
+            self._scan_mode = False
             self._snapshot = DroneSnapshot(
                 asset_id=s.asset_id,
                 position=s.position,
@@ -111,12 +126,28 @@ class DroneSimulator:
     def scan_area(self, cx: float, cy: float, cz: float) -> None:
         with self._lock:
             s = self._snapshot
+            self._scan_mode = True
+            self._scan_center = Vec3(cx, cy, cz)
             self._snapshot = DroneSnapshot(
                 asset_id=s.asset_id,
                 position=s.position,
                 battery=s.battery,
                 status=DroneStatus.SCANNING,
                 target=Vec3(cx, cy, cz),
+                speed=s.speed,
+            )
+
+    def end_scan_mode(self) -> None:
+        """Clear scan session and transition to IDLE."""
+        with self._lock:
+            s = self._snapshot
+            self._scan_mode = False
+            self._snapshot = DroneSnapshot(
+                asset_id=s.asset_id,
+                position=s.position,
+                battery=s.battery,
+                status=DroneStatus.IDLE,
+                target=s.target,
                 speed=s.speed,
             )
 
@@ -166,6 +197,7 @@ class DroneSimulator:
         ):
             # Battery depleted while in motion — force-land, but allow new
             # commands once battery is reset or if status is already IDLE.
+            self._scan_mode = False
             return DroneSnapshot(
                 asset_id=s.asset_id,
                 position=s.position,
@@ -184,11 +216,14 @@ class DroneSimulator:
         if mobile:
             dist = s.position.distance_to(s.target)
             if dist <= self.ARRIVAL_THRESHOLD:
+                # During a scan session stay SCANNING (hovering at waypoint)
+                # instead of going IDLE so the FOV cone never flickers off.
+                arrive_status = DroneStatus.SCANNING if self._scan_mode else DroneStatus.IDLE
                 return DroneSnapshot(
                     asset_id=s.asset_id,
                     position=s.target,
                     battery=max(0.0, s.battery - self.DRAIN_MOVING),
-                    status=DroneStatus.IDLE,
+                    status=arrive_status,
                     target=s.target,
                     speed=s.speed,
                 )

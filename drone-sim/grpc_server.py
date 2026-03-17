@@ -58,6 +58,9 @@ class _DroneControlServicer(beacon_pb2_grpc.DroneControlServicer):
         return beacon_pb2.CommandResponse(success=True, message="Returning to base")
 
     def ScanArea(self, request, context):
+        if request.radius < 0:
+            self._sim.end_scan_mode()
+            return beacon_pb2.CommandResponse(success=True, message="Scan session ended")
         self._sim.scan_area(request.cx, request.cy, request.cz)
         return beacon_pb2.CommandResponse(
             success=True,
