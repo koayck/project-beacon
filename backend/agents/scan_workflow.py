@@ -51,6 +51,13 @@ def pick_next_building(tool_context: ToolContext) -> dict:
     it sets ``actions.escalate = True`` to exit the LoopAgent.
     """
     raw = tool_context.state.get("scan_buildings", "{}")
+    if isinstance(raw, str):
+        # Strip markdown code fences the LLM occasionally emits
+        stripped = raw.strip()
+        if stripped.startswith("```"):
+            stripped = stripped.split("\n", 1)[-1]
+            stripped = stripped.rsplit("```", 1)[0]
+            raw = stripped.strip()
     try:
         scan_data = json.loads(raw) if isinstance(raw, str) else raw
     except (json.JSONDecodeError, TypeError):
@@ -193,7 +200,7 @@ SCAN GATE
 SWEEP SCAN PROCEDURE
 1. Parse asset_id, x, z from state["current_building"].
    Also note whether state["current_building"] contains "Remaining: 0" — this means it is the LAST building.
-2. Call sweep_scan_building(asset_id) — drone is already positioned, omit x/z.
+2. Call sweep_scan_building(asset_id, target_x=x, target_z=z) — always pass the building coordinates explicitly.
 3. Build a compact result string from the tool response:
    - Success: "Building at (x=<x>, z=<z>): <unique_survivor_count> survivor(s) across <level_count> level(s). Waypoints: <waypoint_count>."
      If unique_survivor_count > 0, append a newline and one line per survivor from unique_survivors_detected:
