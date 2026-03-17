@@ -20,6 +20,9 @@ _NORMAL_SPEED = 5.0
 _drone_speeds: dict[str, float] = {}
 # Match world vision survivor sensor range to avoid sweep summary undercounting.
 DEFAULT_SWEEP_SCAN_RADIUS = 12.0
+# Half-angle of the drone's forward-facing thermal camera cone (degrees).
+# Survivors beyond this angle off the drone's heading are not detected.
+THERMAL_HORIZ_FOV_HALF_DEG: float = 60.0
 
 # Pre-defined formation offsets (x, y, z) relative to base.
 _FORMATIONS: dict[str, list[tuple[float, float, float]]] = {
@@ -645,15 +648,21 @@ def _route_sweep_segment(
     margin: float = 1.0,
 ) -> list[dict]:
     """
-    Return intermediate transit waypoints needed to route around any adjacent
-    building that blocks the direct sweep segment from→to.
+    Return intermediate transit waypoints needed to route around any building
+    that blocks the direct sweep segment from→to.
 
-    Excludes ``exclude_id`` (the building being scanned) from collision checks.
+    Neighbor buildings are checked with ``margin`` (default 1 m).  The scanned
+    building itself (``exclude_id``) is checked separately with margin=0 so that
+    diagonal corner-to-corner paths that clip through its own volume are also
+    re-routed, while window-approach positions legitimately on the face are not
+    falsely blocked.
+
     If the direct path is clear, returns an empty list.
     Otherwise returns two waypoints (climb + cruise at ``clear_y``) marked
     ``transit=True`` so ``sweep_scan_building`` skips scanning at those positions.
     The caller is responsible for appending the actual destination at ``to_y``.
     """
+    # Neighbouring buildings — use full margin so we stay comfortably clear.
     blockers = [
         b for b in WORLD.obstacles_in_path(
             from_x, from_y, from_z,
@@ -662,6 +671,16 @@ def _route_sweep_segment(
         )
         if b.id != exclude_id
     ]
+    # Scanned building itself — margin=0 catches paths that actually intersect
+    # the solid volume (e.g. diagonal SE→SW cuts) without flagging face approaches.
+    blockers.extend(
+        b for b in WORLD.obstacles_in_path(
+            from_x, from_y, from_z,
+            to_x, to_y, to_z,
+            samples=30, margin=0.0,
+        )
+        if b.id == exclude_id
+    )
     if not blockers:
         return []
 
@@ -1065,6 +1084,8 @@ async def sweep_scan_building(
 
     waypoint_reports: list[dict] = []
     rooftop = plan["rooftop_position"]
+    building_cx: float = plan["building"]["center_x"]
+    building_cz: float = plan["building"]["center_z"]
 
     # ── Step 2: Navigate to top of building using plan_route ───────────
     building_id = plan["building"]["id"]
@@ -1167,11 +1188,26 @@ async def sweep_scan_building(
                 "completed_waypoints": index - 1,
             }
 
-        view = await client.get_view(asset_id, heading_deg=0.0, detection_range=25.0)
+        # Face the building center so the thermal camera FOV is correctly oriented.
+        wp_x, wp_z = wp["x"], wp["z"]
+        face_dx = building_cx - wp_x
+        face_dz = building_cz - wp_z
+        heading_toward_building = math.degrees(math.atan2(face_dx, -face_dz)) % 360
+        view = await client.get_view(asset_id, heading_deg=heading_toward_building, detection_range=25.0)
         detected_survivors: list[dict] = []
         for obj in view.get("objects", []):
             if obj.get("object_type") != "survivor":
                 continue
+            # Horizontal FOV filter: discard survivors outside the camera cone.
+            sx, sz = obj.get("x", wp_x), obj.get("z", wp_z)
+            surv_dx, surv_dz = sx - wp_x, sz - wp_z
+            face_mag = math.sqrt(face_dx**2 + face_dz**2)
+            surv_mag = math.sqrt(surv_dx**2 + surv_dz**2)
+            if face_mag > 1e-6 and surv_mag > 1e-6:
+                cos_a = (face_dx * surv_dx + face_dz * surv_dz) / (face_mag * surv_mag)
+                angle_off_axis = math.degrees(math.acos(max(-1.0, min(1.0, cos_a))))
+                if angle_off_axis > THERMAL_HORIZ_FOV_HALF_DEG:
+                    continue
             detail_raw = obj.get("detail", "")
             detail: dict = {}
             if isinstance(detail_raw, str) and detail_raw:
@@ -1272,6 +1308,7 @@ async def sweep_scan_building(
     # This avoids false zeroes in summary when IDs are unavailable but detections exist.
     reported_survivor_count = max(len(unique_survivors_detected), max_survivors_seen)
     final_status = await client.get_status(asset_id)
+    await client.end_scan(asset_id)  # clear scan session → drone returns to IDLE
     latest_sensor_summary = waypoint_reports[-1]["sensor_summary"] if waypoint_reports else ""
     message = _build_sweep_scan_report(
         asset_id=asset_id,

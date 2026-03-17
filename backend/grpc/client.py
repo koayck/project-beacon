@@ -106,6 +106,10 @@ class DroneGrpcClient:
         )
         return {"success": resp.success, "message": resp.message}
 
+    async def end_scan(self, asset_id: str) -> dict:
+        """End the scan session and return the drone to IDLE."""
+        return await self.scan_area(asset_id, cx=0, cy=0, cz=0, radius=-1)
+
     async def get_view(
         self,
         asset_id: str,
