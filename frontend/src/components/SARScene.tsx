@@ -8,94 +8,70 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import CommandPanel from './CommandPanel'
 import { useTelemetry, type DroneMap } from '@/lib/ws'
 import { uplink, streamCommand, healthCheck, getFleet, type AgentStreamEvent } from '@/lib/api'
+import WORLD from '@shared/world.json'
 
-// ── Constants ─────────────────────────────────────────────────────────────────
+// ── Constants (from shared/world.json) ────────────────────────────────────────
 
-const GRID_CELLS = 50
+const GRID_CELLS  = 50
 const GRID_SPACING = 2
-const NUM_FLOORS = 4
-const FLOOR_H = 3.0
-const FLOOR_W = 8
-const FLOOR_D = 8
-const FLOOR_T = 0.20
-const SURV_HOVER = 0.55
 
-const span = GRID_CELLS * GRID_SPACING           // 100
-const total_h = NUM_FLOORS * FLOOR_H             // 12
+const FLOOR_H = WORLD.scene.floor_height_m
+const FLOOR_T = WORLD.scene.floor_slab_thickness_m
+const SURV_HOVER  = WORLD.scene.surv_hover_m
+const FLOOD_LEVEL = WORLD.scene.flood_level_m
 
-const slabY = (n: number) => (n - 1) * FLOOR_H
-const survY = (n: number) => slabY(n) + FLOOR_T / 2 + SURV_HOVER
+const span    = GRID_CELLS * GRID_SPACING           // 100
+const slabY   = (n: number) => (n - 1) * FLOOR_H
+const survY   = (n: number) => slabY(n) + FLOOR_T / 2 + SURV_HOVER
 
-// Fixed flood level (metres above ground)
-const FLOOD_LEVEL = 1.4
+// Building 0 — target (4-floor SAR target)
+const _b0            = WORLD.buildings[0]
+const TARGET_BX      = _b0.cx
+const TARGET_BZ      = _b0.cz
+const FLOOR_W        = _b0.w
+const FLOOR_D        = _b0.d
+const NUM_FLOORS     = Math.round(_b0.h / FLOOR_H)
+const total_h        = NUM_FLOORS * FLOOR_H
+const TARGET_WINDOW_LAYOUT  = _b0.windows
+const TARGET_WINDOW_WIDTH   = _b0.windows[0].width
+const TARGET_WINDOW_HEIGHT  = _b0.windows[0].height
+const TARGET_WINDOW_SILL    = _b0.windows[0].sill
 
-// Target building position (not at origin — base/home pad is at 0,0,0)
-const TARGET_BX = -15
-const TARGET_BZ = -20
-const TARGET_WINDOW_LAYOUT = [
-  { floor: 1, face: 'west', offset: 0.0 },
-  { floor: 2, face: 'north', offset: -1.5 },
-  { floor: 3, face: 'east', offset: -0.5 },
-  { floor: 4, face: 'south', offset: 1.5 },
-] as const
-const TARGET_WINDOW_WIDTH = 2.0
-const TARGET_WINDOW_HEIGHT = 1.6
-const TARGET_WINDOW_SILL = 0.4
+// Building 1 — obstacle (solid block on direct route base → target)
+const _b1  = WORLD.buildings[1]
+const OBS_X = _b1.cx,  OBS_Z = _b1.cz
+const OBS_W = _b1.w,   OBS_D = _b1.d,  OBS_H = _b1.h
 
-// Obstacle building — sits on the direct line from base to target building
-// Direct route (0,0,0) → (-15,0,-20): midpoint ≈ (-7.5, 0, -10)
-const OBS_X = -7
-const OBS_Z = -10
-const OBS_W = 6
-const OBS_D = 5
-const OBS_H = 10
+// Building 2 — balcony building (3-floor residential, south balcony floor 3)
+const _b2              = WORLD.buildings[2]
+const BAL_X = _b2.cx,  BAL_Z = _b2.cz
+const BAL_W = _b2.w,   BAL_D = _b2.d,  BAL_H = _b2.h
+const _b2bal           = _b2.balcony!
+const BAL_BALCONY_FLOOR = _b2bal.floor
+const BAL_BALCONY_DEPTH = _b2bal.depth
+const BAL_BALCONY_WIDTH = _b2bal.width
 
-// Balcony building — 3-story residential with exterior balcony on floor 3 (south face)
-const BAL_X = 20
-const BAL_Z = -20
-const BAL_W = 6
-const BAL_D = 6
-const BAL_H = 9   // 3 floors × 3m
-const BAL_BALCONY_FLOOR = 3
-const BAL_BALCONY_DEPTH = 2.0
-const BAL_BALCONY_WIDTH = 3.0
+// Building 3 — twin shophouse (3-floor, windows on south face floors 2 & 3)
+const _b3               = WORLD.buildings[3]
+const SHOP_X = _b3.cx,  SHOP_Z = _b3.cz
+const SHOP_W = _b3.w,   SHOP_D = _b3.d,  SHOP_H = _b3.h
+const SHOP_WINDOW_LAYOUT = _b3.windows
+const SHOP_WINDOW_WIDTH  = _b3.windows[0].width
+const SHOP_WINDOW_HEIGHT = _b3.windows[0].height
+const SHOP_WINDOW_SILL   = _b3.windows[0].sill
 
-// Twin shophouse block — 2 adjoined 3-story shophouses with shared party wall
-const SHOP_X = 12
-const SHOP_Z = -27
-const SHOP_W = 10  // 5m per unit
-const SHOP_D = 8
-const SHOP_H = 9   // 3 floors × 3m
-const SHOP_WINDOW_LAYOUT = [
-  { floor: 2, face: 'south' as const, offset: -2.5 },
-  { floor: 2, face: 'south' as const, offset:  2.5 },
-  { floor: 3, face: 'south' as const, offset: -2.5 },
-  { floor: 3, face: 'south' as const, offset:  2.5 },
-] as const
-const SHOP_WINDOW_WIDTH = 1.6
-const SHOP_WINDOW_HEIGHT = 1.4
-const SHOP_WINDOW_SILL = 0.5
-
-// NW Tower — 7-floor building whose SE corner overlaps the NW corner of the
-// target building (building 0). Overlap: 1 m each axis.
-// Building 0 NW corner: (-19, -24). NW Tower SE corner: (-18, -23).
-const NW_X = -23
-const NW_Z = -28
-const NW_W = 10
-const NW_D = 10
-const NW_H = 21   // 7 floors × 3m
-const NW_BALCONY_FLOOR = 5
-const NW_BALCONY_DEPTH = 2.0
-const NW_BALCONY_WIDTH = 4.0
-const NW_WINDOW_LAYOUT = [
-  { floor: 2, face: 'east'  as const, offset:  0.5 },  // east face  → toward building 0
-  { floor: 4, face: 'south' as const, offset: -1.5 },  // south face → toward target area
-  { floor: 6, face: 'north' as const, offset:  2.0 },  // north face → rear
-  { floor: 7, face: 'west'  as const, offset: -1.0 },  // west face  → open side
-] as const
-const NW_WINDOW_WIDTH  = 1.8
-const NW_WINDOW_HEIGHT = 1.6
-const NW_WINDOW_SILL   = 0.4
+// Building 4 — NW tower (7-floor, SE corner overlaps NW corner of target by ~1 m)
+const _b4              = WORLD.buildings[4]
+const NW_X = _b4.cx,   NW_Z = _b4.cz
+const NW_W = _b4.w,    NW_D = _b4.d,   NW_H = _b4.h
+const NW_WINDOW_LAYOUT  = _b4.windows
+const NW_WINDOW_WIDTH   = _b4.windows[0].width
+const NW_WINDOW_HEIGHT  = _b4.windows[0].height
+const NW_WINDOW_SILL    = _b4.windows[0].sill
+const _b4bal            = _b4.balcony!
+const NW_BALCONY_FLOOR  = _b4bal.floor
+const NW_BALCONY_DEPTH  = _b4bal.depth
+const NW_BALCONY_WIDTH  = _b4bal.width
 
 // Drone start position
 const DRONE_START = new THREE.Vector3(13, 1, 13)
@@ -223,44 +199,8 @@ const PARKS = [
   [-44,  0,  8,16],
 ] as const
 
-// ── Survivor positions — offset to match TARGET_BX / TARGET_BZ ────────────────
-const SURVIVOR_POSITIONS = [
-  { x: TARGET_BX - 1.5, y: survY(2), z: TARGET_BZ + 1.0 },
-  { x: TARGET_BX + 0.5, y: survY(3), z: TARGET_BZ - 0.5 },
-  { x: TARGET_BX + 1.5, y: survY(4), z: TARGET_BZ - 1.0 },
-  // Balcony building — survivor on exterior balcony, floor 3 (outside AABB, direct LOS)
-  { x: BAL_X, y: survY(BAL_BALCONY_FLOOR), z: BAL_Z + BAL_D / 2 + BAL_BALCONY_DEPTH / 2 },
-  // Twin shophouse — Shop A floor 2, Shop B floor 3 (inside, visible through south windows)
-  { x: SHOP_X - 2.5, y: survY(2), z: SHOP_Z },
-  { x: SHOP_X + 2.5, y: survY(3), z: SHOP_Z },
-  // NW Tower — floor 2 inside near east window; floor 5 on south balcony (outside AABB)
-  { x: NW_X + NW_W / 2 - 1.0, y: survY(2), z: NW_Z + 0.5 },
-  { x: NW_X, y: survY(NW_BALCONY_FLOOR), z: NW_Z + NW_D / 2 + NW_BALCONY_DEPTH / 2 },
-  // building rooftops
-  // { x: -10,  y: 31.0,  z:  -8  },  // ultra-slim skyscraper
-  // { x:  16,  y: 25.0,  z:   14 },  // charcoal tower
-  // { x:   8,  y: 23.0,  z:  -15 },  // cobalt slim
-  // { x:  38,  y: 27.5,  z:  -14 },  // eastern dark tower
-  // { x:  30,  y: 41.5,  z:  -38 },  // CBD tallest
-  // { x: -26,  y: 23.0,  z:  -38 },  // golden prang top
-  // // street level (will submerge as flood rises)
-  // { x:   8,  y: 0.4,   z:    5 },
-  // { x:  -7,  y: 0.4,   z:   -6 },
-  // { x:   3,  y: 0.4,   z:   12 },
-  // { x: -14,  y: 0.4,   z:   -2 },
-  // { x:  18,  y: 0.4,   z:    8 },
-  // { x:  -4,  y: 0.4,   z:  -14 },
-  // { x:  25,  y: 0.4,   z:  -10 },
-  // { x: -28,  y: 0.4,   z:   18 },
-  // { x:  12,  y: 0.4,   z:  -30 },
-  // { x: -18,  y: 0.4,   z:   26 },
-  // // mid-level ledges
-  // { x: -22,  y: 4.0,   z:    2 },
-  // { x:  20,  y: 6.5,   z:    0 },
-  // { x: -32,  y: 5.0,   z:    0 },
-  // { x:  30,  y: 7.0,   z:   14 },
-  // { x: -38,  y: 11.0,  z:  -14 },
-]
+// ── Survivor positions (from shared/world.json) ───────────────────────────────
+const SURVIVOR_POSITIONS = WORLD.survivors.map(s => ({ x: s.x, y: s.y, z: s.z }))
 
 const SURVIVOR_SENSOR_RANGE = 12.0
 const LOS_SAMPLE_COUNT = 30
@@ -291,31 +231,28 @@ interface SurvivorPoint {
   z: number
 }
 
-const TARGET_BUILDING_WINDOWS: SimWindowAperture[] = TARGET_WINDOW_LAYOUT.map(({ floor, face, offset }) => ({
-  face,
-  axisCenter: face === 'north' || face === 'south' ? TARGET_BX + offset : TARGET_BZ + offset,
-  sillY: (floor - 1) * FLOOR_H + TARGET_WINDOW_SILL,
-  width: TARGET_WINDOW_WIDTH,
-  height: TARGET_WINDOW_HEIGHT,
+const TARGET_BUILDING_WINDOWS: SimWindowAperture[] = TARGET_WINDOW_LAYOUT.map((w) => ({
+  face: w.face as WindowFace,
+  axisCenter: (w.face === 'north' || w.face === 'south') ? TARGET_BX + w.offset : TARGET_BZ + w.offset,
+  sillY: (w.floor - 1) * FLOOR_H + w.sill,
+  width: w.width,
+  height: w.height,
 }))
 
-const SHOPHOUSE_WINDOWS: SimWindowAperture[] = SHOP_WINDOW_LAYOUT.map(({ floor, face, offset }) => {
-  const f = face as WindowFace
-  return {
-    face: f,
-    axisCenter: f === 'north' || f === 'south' ? SHOP_X + offset : SHOP_Z + offset,
-    sillY: (floor - 1) * FLOOR_H + SHOP_WINDOW_SILL,
-    width: SHOP_WINDOW_WIDTH,
-    height: SHOP_WINDOW_HEIGHT,
-  }
-})
+const SHOPHOUSE_WINDOWS: SimWindowAperture[] = SHOP_WINDOW_LAYOUT.map((w) => ({
+  face: w.face as WindowFace,
+  axisCenter: (w.face === 'north' || w.face === 'south') ? SHOP_X + w.offset : SHOP_Z + w.offset,
+  sillY: (w.floor - 1) * FLOOR_H + w.sill,
+  width: w.width,
+  height: w.height,
+}))
 
-const NW_BUILDING_WINDOWS: SimWindowAperture[] = NW_WINDOW_LAYOUT.map(({ floor, face, offset }) => ({
-  face,
-  axisCenter: face === 'north' || face === 'south' ? NW_X + offset : NW_Z + offset,
-  sillY: (floor - 1) * FLOOR_H + NW_WINDOW_SILL,
-  width: NW_WINDOW_WIDTH,
-  height: NW_WINDOW_HEIGHT,
+const NW_BUILDING_WINDOWS: SimWindowAperture[] = NW_WINDOW_LAYOUT.map((w) => ({
+  face: w.face as WindowFace,
+  axisCenter: (w.face === 'north' || w.face === 'south') ? NW_X + w.offset : NW_Z + w.offset,
+  sillY: (w.floor - 1) * FLOOR_H + w.sill,
+  width: w.width,
+  height: w.height,
 }))
 
 const SIM_BUILDINGS: SimBuilding[] = [

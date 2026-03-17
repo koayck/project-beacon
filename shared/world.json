@@ -1,0 +1,79 @@
+{
+  "scene": {
+    "floor_height_m": 3.0,
+    "floor_slab_thickness_m": 0.20,
+    "flood_level_m": 1.4,
+    "surv_hover_m": 0.55,
+    "window_scan_standoff_m": 4.0,
+    "building_proximity_margin_m": 2.0
+  },
+  "buildings": [
+    {
+      "id": 0,
+      "name": "target",
+      "cx": -15, "cz": -20,
+      "w": 8, "d": 8, "h": 12,
+      "windows": [
+        { "floor": 1, "face": "west",  "offset":  0.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
+        { "floor": 2, "face": "west",  "offset":  2.5, "width": 2.0, "height": 1.6, "sill": 0.4 },
+        { "floor": 2, "face": "north", "offset": -1.5, "width": 2.0, "height": 1.6, "sill": 0.4 },
+        { "floor": 3, "face": "east",  "offset": -0.5, "width": 2.0, "height": 1.6, "sill": 0.4 },
+        { "floor": 4, "face": "south", "offset":  1.5, "width": 2.0, "height": 1.6, "sill": 0.4 }
+      ],
+      "balcony": null
+    },
+    {
+      "id": 1,
+      "name": "obstacle",
+      "cx": -7, "cz": -10,
+      "w": 6, "d": 5, "h": 10,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 2,
+      "name": "balcony_building",
+      "cx": 20, "cz": -20,
+      "w": 6, "d": 6, "h": 9,
+      "windows": [],
+      "balcony": { "floor": 3, "face": "south", "depth": 2.0, "width": 3.0 }
+    },
+    {
+      "id": 3,
+      "name": "shophouse",
+      "cx": 12, "cz": -27,
+      "w": 10, "d": 8, "h": 9,
+      "windows": [
+        { "floor": 2, "face": "south", "offset": -2.5, "width": 1.6, "height": 1.4, "sill": 0.5 },
+        { "floor": 2, "face": "south", "offset":  2.5, "width": 1.6, "height": 1.4, "sill": 0.5 },
+        { "floor": 3, "face": "south", "offset": -2.5, "width": 1.6, "height": 1.4, "sill": 0.5 },
+        { "floor": 3, "face": "south", "offset":  2.5, "width": 1.6, "height": 1.4, "sill": 0.5 }
+      ],
+      "balcony": null
+    },
+    {
+      "id": 4,
+      "name": "nw_tower",
+      "cx": -23, "cz": -28,
+      "w": 10, "d": 10, "h": 21,
+      "windows": [
+        { "floor": 2, "face": "east",  "offset":  0.5, "width": 1.8, "height": 1.6, "sill": 0.4 },
+        { "floor": 4, "face": "south", "offset": -1.5, "width": 1.8, "height": 1.6, "sill": 0.4 },
+        { "floor": 6, "face": "north", "offset":  2.0, "width": 1.8, "height": 1.6, "sill": 0.4 },
+        { "floor": 7, "face": "west",  "offset": -1.0, "width": 1.8, "height": 1.6, "sill": 0.4 }
+      ],
+      "balcony": { "floor": 5, "face": "south", "depth": 2.0, "width": 4.0 }
+    }
+  ],
+  "survivors": [
+    { "x": -16.5, "y":  3.65, "z": -19.0, "note": "floor 2 — target building" },
+    { "x": -14.5, "y":  6.65, "z": -20.5, "note": "floor 3 — target building" },
+    { "x": -13.5, "y":  9.65, "z": -21.0, "note": "floor 4 — target building" },
+    { "x":  20.0, "y":  6.65, "z": -16.0, "note": "floor 3 — balcony building, on exterior balcony" },
+    { "x":   9.5, "y":  3.65, "z": -27.0, "note": "floor 2 — shophouse A, visible through south window" },
+    { "x":  14.5, "y":  6.65, "z": -27.0, "note": "floor 3 — shophouse B, visible through south window" },
+    { "x": -19.0, "y":  3.65, "z": -27.5, "note": "floor 2 — NW tower, inside near east window" },
+    { "x": -23.0, "y": 12.65, "z": -22.0, "note": "floor 5 — NW tower, on south balcony" }
+  ],
+  "trees": []
+}
