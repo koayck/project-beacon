@@ -14,6 +14,8 @@ export interface TelemetryPayload {
   survivors_in_range?: number
   over_flood?: boolean
   altitude_agl?: number
+  heading_deg?: number
+  scan_tilt_deg?: number
 }
 
 export type DroneMap = Record<string, TelemetryPayload>

@@ -1459,21 +1459,35 @@ interface DroneProps {
   nearestObstacleDist?: number
   survivorsInRange?: number
   assetId?: string
+  headingDeg?: number
+  scanTiltDeg?: number
 }
 
-function DroneMesh({ targetPos, status, nearbyObstacles = 0, nearestObstacleDist = 999, survivorsInRange = 0, assetId = '' }: DroneProps) {
+function DroneMesh({ targetPos, status, nearbyObstacles = 0, nearestObstacleDist = 999, survivorsInRange = 0, assetId = '', headingDeg = 0, scanTiltDeg = 0 }: DroneProps) {
   const groupRef = useRef<THREE.Group>(null)
   const coneRef = useRef<THREE.Mesh>(null)
   const lerpPos = useRef(DRONE_START.clone())
 
-  // FOV cone: points downward from drone, color encodes situation
-  const coneColor = useMemo(() => {
-    if (status === 'BLOCKED') return 0xff2200
-    if (nearestObstacleDist < 5) return 0xff6600
-    if (nearbyObstacles > 0) return 0xffaa00
-    if (survivorsInRange > 0) return 0xff4444
-    return 0x00ff88
-  }, [status, nearbyObstacles, nearestObstacleDist, survivorsInRange])
+  // Keep refs so useFrame always reads fresh prop values (avoids stale closure)
+  const statusRef = useRef(status)
+  const headingDegRef = useRef(headingDeg)
+  const scanTiltDegRef = useRef(scanTiltDeg)
+  statusRef.current = status
+  headingDegRef.current = headingDeg
+  scanTiltDegRef.current = scanTiltDeg
+
+  // Track whether we're mid-scan-session: turns on when SCANNING seen,
+  // only turns off when drone returns to a terminal non-scan state.
+  const inScanSessionRef = useRef(false)
+  if (status === 'SCANNING') inScanSessionRef.current = true
+  if (status === 'IDLE' || status === 'RETURNING' || status === 'BLOCKED' || status === 'ERROR') {
+    inScanSessionRef.current = false
+  }
+
+  // FOV cone: horizontal, points in heading direction, shown during full scan session
+  const SCAN_FOV_HALF_DEG = 30
+  const SCAN_FOV_RANGE = 3  // metres — thermal camera effective range
+  const coneRadius = SCAN_FOV_RANGE * Math.tan((SCAN_FOV_HALF_DEG * Math.PI) / 180)
 
   useFrame((_, delta) => {
     if (!groupRef.current) return
@@ -1481,10 +1495,32 @@ function DroneMesh({ targetPos, status, nearbyObstacles = 0, nearestObstacleDist
     groupRef.current.position.copy(lerpPos.current)
 
     if (coneRef.current) {
-      coneRef.current.position.copy(lerpPos.current)
-      coneRef.current.position.y -= 0.3
-      const mat = coneRef.current.material as THREE.MeshStandardMaterial
-      mat.color.setHex(coneColor)
+      const headingRad = (headingDegRef.current * Math.PI) / 180
+      const tiltRad = (scanTiltDegRef.current * Math.PI) / 180
+      const cosT = Math.cos(tiltRad)
+      // Scan direction: heading in XZ, optionally tilted down
+      const scanDirX = Math.sin(headingRad) * cosT
+      const scanDirY = Math.sin(tiltRad)          // negative when tilting down
+      const scanDirZ = -Math.cos(headingRad) * cosT
+
+      // Apex (tip) at drone. Center = drone + scanDir*(RANGE/2) so:
+      //   apex = center - scanDir*(RANGE/2) = drone ✓
+      const half = SCAN_FOV_RANGE / 2
+      coneRef.current.position.set(
+        lerpPos.current.x + scanDirX * half,
+        lerpPos.current.y + scanDirY * half,
+        lerpPos.current.z + scanDirZ * half,
+      )
+      // Rotate ConeGeometry's -Y axis (base direction) to point along scanDir.
+      // setFromUnitVectors is unambiguous — no Euler angle guessing.
+      const baseDir = new THREE.Vector3(scanDirX, scanDirY, scanDirZ)
+      if (baseDir.lengthSq() > 1e-6) {
+        coneRef.current.quaternion.setFromUnitVectors(
+          new THREE.Vector3(0, -1, 0),
+          baseDir.normalize(),
+        )
+      }
+      coneRef.current.visible = inScanSessionRef.current
     }
 
     const bodyColor =
@@ -1559,13 +1595,13 @@ function DroneMesh({ targetPos, status, nearbyObstacles = 0, nearestObstacleDist
           </Html>
         )}
       </group>
-      {/* Downward-facing FOV cone */}
-      <mesh ref={coneRef} position={DRONE_START.toArray()} rotation={[Math.PI, 0, 0]}>
-        <coneGeometry args={[8, 12, 16, 1, true]} />
+      {/* Horizontal FOV cone — shown only during SCANNING, faces building */}
+      <mesh ref={coneRef} position={DRONE_START.toArray()} visible={false}>
+        <coneGeometry args={[coneRadius, SCAN_FOV_RANGE, 32, 1, true]} />
         <meshStandardMaterial
-          color="#00ff88"
+          color="#ffaa00"
           transparent
-          opacity={0.08}
+          opacity={0.35}
           side={THREE.DoubleSide}
           depthWrite={false}
         />
@@ -1727,7 +1763,7 @@ function Controls({
       >
         {transparentWalls ? 'WALLS: TRANSPARENT' : 'WALLS: SOLID'}
       </button>
-      <button
+      {/* <button
         onClick={onToggleScanRays}
         style={{
           marginTop: 6,
@@ -1744,7 +1780,7 @@ function Controls({
         }}
       >
         {scanRaysEnabled ? 'SCAN RAYS: ON' : 'SCAN RAYS: OFF'}
-      </button>
+      </button> */}
       <div style={{ marginTop: 8, borderTop: '1px solid #334', paddingTop: 6 }}>
         <div style={{ color: '#f84' }}>FLOOD: +{FLOOD_LEVEL.toFixed(1)}m above ground</div>
         <div style={{ color: '#f44', marginTop: 3 }}>
@@ -2081,6 +2117,8 @@ export default function SARScene() {
             nearestObstacleDist={t.nearest_obstacle_dist}
             survivorsInRange={t.survivors_in_range}
             assetId={t.asset_id}
+            headingDeg={t.heading_deg}
+            scanTiltDeg={t.scan_tilt_deg}
           />
         ))}
         <SurvivorScanRays
