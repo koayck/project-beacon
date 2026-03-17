@@ -1845,29 +1845,7 @@ function FollowBeaconCamera({ enabled, targetPos, controlsRef }: FollowBeaconCam
 
 // ── Overlays ──────────────────────────────────────────────────────────────────
 
-function MissionLog({ lines }: { lines: string[] }) {
-  return (
-    <div style={{
-      position: 'absolute',
-      bottom: 20,
-      left: 20,
-      background: 'rgba(0,0,0,0.65)',
-      border: '1px solid #334',
-      borderRadius: 6,
-      padding: '10px 14px',
-      color: '#9cf',
-      fontSize: 12,
-      fontFamily: 'Courier New, monospace',
-      lineHeight: 1.6,
-      maxWidth: 420,
-      pointerEvents: 'none',
-    }}>
-      {lines.map((l, i) => (
-        <div key={i} style={{ color: l.includes('confirmed') ? '#4f4' : '#9cf' }}>{l}</div>
-      ))}
-    </div>
-  )
-}
+// MissionLog removed — replaced by ActivityFeed
 
 // ── Intel Card — actionable scan findings ────────────────────────────────────
 
@@ -1878,6 +1856,7 @@ function IntelCard({
   deliveringTo,
   deliveredTo,
   onSendSupplies,
+  onRetryDelivery,
 }: {
   survivors: SurvivorPoint[]
   dronePos: THREE.Vector3
@@ -1885,6 +1864,7 @@ function IntelCard({
   deliveringTo: Set<string>
   deliveredTo: Set<string>
   onSendSupplies: (survivor: SurvivorPoint) => void
+  onRetryDelivery: (survivor: SurvivorPoint) => void
 }) {
   const detected = survivors.length
   const submerged = survivors.filter(s => s.y < FLOOD_LEVEL - 0.2).length
@@ -1895,6 +1875,7 @@ function IntelCard({
     <div style={{
       background: 'rgba(0,0,0,0.65)',
       border: `1px solid ${critical ? 'rgba(255,80,80,0.5)' : '#334'}`,
+      borderLeft: `3px solid ${critical ? '#cc3333' : '#cc8800'}`,
       borderRadius: 6,
       padding: '10px 14px',
       color: '#8899bb',
@@ -1998,26 +1979,55 @@ function IntelCard({
                   ({s.x.toFixed(1)}, {s.y.toFixed(1)}, {s.z.toFixed(1)})
                   {isSubmerged && !isDelivered && <span style={{ color: '#f44', marginLeft: 6 }}>CRITICAL</span>}
                 </span>
-                <button
-                  onClick={() => onSendSupplies(s)}
-                  disabled={isDelivering || isDelivered}
-                  style={{
-                    marginLeft: 6,
-                    border: `1px solid ${isDelivered ? 'rgba(60,200,255,0.3)' : isDelivering ? 'rgba(255,200,0,0.3)' : 'rgba(255,160,0,0.5)'}`,
-                    borderRadius: 3,
-                    background: isDelivered
-                      ? 'rgba(60,200,255,0.15)'
-                      : isDelivering ? 'rgba(255,200,0,0.12)' : 'rgba(255,140,0,0.15)',
-                    color: isDelivered ? '#4cf' : isDelivering ? '#ff6' : '#fa0',
-                    padding: '1px 6px',
-                    cursor: isDelivering || isDelivered ? 'default' : 'pointer',
-                    fontSize: 9,
-                    fontFamily: 'Courier New, monospace',
-                    opacity: isDelivered ? 0.7 : 1,
-                  }}
-                >
-                  {isDelivered ? 'DONE' : isDelivering ? 'EN ROUTE...' : 'DELIVER'}
-                </button>
+                {isDelivering ? (
+                  <span style={{ display: 'inline-flex', gap: 3, marginLeft: 6 }}>
+                    <span style={{
+                      border: '1px solid rgba(255,200,0,0.3)',
+                      borderRadius: 3,
+                      background: 'rgba(255,200,0,0.12)',
+                      color: '#ff6',
+                      padding: '1px 6px',
+                      fontSize: 9,
+                      fontFamily: 'Courier New, monospace',
+                    }}>
+                      EN ROUTE
+                    </span>
+                    <button
+                      onClick={() => onRetryDelivery(s)}
+                      style={{
+                        border: '1px solid rgba(255,100,100,0.5)',
+                        borderRadius: 3,
+                        background: 'rgba(255,60,60,0.15)',
+                        color: '#f88',
+                        padding: '1px 6px',
+                        cursor: 'pointer',
+                        fontSize: 9,
+                        fontFamily: 'Courier New, monospace',
+                      }}
+                    >
+                      RETRY
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => onSendSupplies(s)}
+                    disabled={isDelivered}
+                    style={{
+                      marginLeft: 6,
+                      border: `1px solid ${isDelivered ? 'rgba(60,200,255,0.3)' : 'rgba(255,160,0,0.5)'}`,
+                      borderRadius: 3,
+                      background: isDelivered ? 'rgba(60,200,255,0.15)' : 'rgba(255,140,0,0.15)',
+                      color: isDelivered ? '#4cf' : '#fa0',
+                      padding: '1px 6px',
+                      cursor: isDelivered ? 'default' : 'pointer',
+                      fontSize: 9,
+                      fontFamily: 'Courier New, monospace',
+                      opacity: isDelivered ? 0.7 : 1,
+                    }}
+                  >
+                    {isDelivered ? 'DONE' : 'DELIVER'}
+                  </button>
+                )}
               </div>
             </div>
           )
@@ -2144,6 +2154,7 @@ function ActivityFeed({ items, busy, onClear }: { items: ActivityItem[]; busy: b
     <div style={{
       background: 'rgba(0,0,0,0.65)',
       border: '1px solid #334',
+      borderLeft: '3px solid #2090b0',
       borderRadius: 6,
       padding: '10px 14px',
       fontFamily: 'Courier New, monospace',
@@ -2269,6 +2280,7 @@ function Controls({
     <div style={{
       background: selectMode ? 'rgba(30, 16, 0, 0.82)' : 'rgba(0,0,0,0.60)',
       border: selectMode ? '1px solid #ff880066' : '1px solid #334',
+      borderLeft: selectMode ? '3px solid #ff8800' : '3px solid #5a6a7a',
       borderRadius: 6,
       padding: '10px 14px',
       color: '#667',
@@ -2518,9 +2530,11 @@ export default function SARScene() {
     // Only throw when the drone has stopped moving (arrived at destination)
     if (droneStatus === 'MOVING') return
 
+    // Use horizontal (XZ) distance only — the drone may arrive at a higher
+    // altitude than the approach point due to obstacle-avoidance routing, but
+    // it is still positioned correctly for the throw.
     const distToApproach = Math.sqrt(
       (dronePos.x - approach.x) ** 2 +
-      (dronePos.y - approach.y) ** 2 +
       (dronePos.z - approach.z) ** 2,
     )
     if (distToApproach < APPROACH_ARRIVE_RADIUS) {
@@ -2768,6 +2782,25 @@ export default function SARScene() {
     setPendingScanPrompt(prompt)
   }, [addLog])
 
+  const handleRetryDelivery = useCallback((survivor: SurvivorPoint) => {
+    const key = survivorKey(survivor)
+    // Reset delivery state so handleSendSupplies can re-run cleanly
+    setDeliveringTo(prev => {
+      const next = new Set(prev)
+      next.delete(key)
+      return next
+    })
+    setHasCargo(false)
+    cargoPickedUp.current = false
+    deliveryTarget.current = null
+    deliveryApproach.current = null
+    pendingDeliveryKey.current = null
+    setActiveThrow(null)
+    addLog(`↻ Retrying delivery to survivor at (${survivor.x.toFixed(1)}, ${survivor.y.toFixed(1)}, ${survivor.z.toFixed(1)})`)
+    // Re-dispatch after a tick so state clears first
+    setTimeout(() => handleSendSupplies(survivor), 0)
+  }, [addLog, handleSendSupplies])
+
   const scannedSurvivors = useMemo(
     () => scannedSurvivorsFromDrone(dronePos),
     [dronePos.x, dronePos.y, dronePos.z],
@@ -2885,7 +2918,6 @@ export default function SARScene() {
       </div>
       {!selectMode && <CoordOverlay point={hoverPt} copied={copied} />}
       <CompassLabels northAngleRef={northAngleRef} />
-      <MissionLog lines={log} />
       <div style={{
         position: 'absolute',
         top: 16,
@@ -2911,6 +2943,7 @@ export default function SARScene() {
           deliveringTo={deliveringTo}
           deliveredTo={deliveredTo}
           onSendSupplies={handleSendSupplies}
+          onRetryDelivery={handleRetryDelivery}
         />
       </div>
       {showContextMenu && selection && (
