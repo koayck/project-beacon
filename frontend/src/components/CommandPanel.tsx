@@ -214,12 +214,12 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
       backdropFilter: 'blur(6px)',
       boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
     }}>
+      {/* Primary header row — identity + actions */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        padding: '7px 14px',
-        borderBottom: '1px solid rgba(80, 120, 200, 0.2)',
+        padding: '7px 14px 4px',
       }}>
         {/* Status dot */}
         <span style={{
@@ -231,39 +231,12 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
         <span style={{ color: connected ? '#33ff88' : uplinked ? '#ffcc66' : '#ff6666', fontWeight: 'bold', letterSpacing: 1 }}>
           {assetId}
         </span>
-        <span style={{ color: '#445', marginLeft: 4 }}>
+        <span style={{ color: '#445' }}>
           {connected ? 'LIVE' : uplinked ? 'REGISTERED / OFFLINE' : 'OFFLINE'}
         </span>
 
-        {battery !== null && (
-          <span style={{ marginLeft: 'auto', color: battery > 30 ? '#88cc66' : '#ff9933' }}>
-            ⚡ {battery.toFixed(0)}%
-          </span>
-        )}
-
-        {(ttft !== null || tps !== null) && (
-          <span style={{ display: 'flex', gap: 10, marginLeft: battery !== null ? 8 : 'auto', color: '#5af', fontSize: 11 }}>
-            {ttft !== null && (
-              <span title="Time to First Token">
-                <span style={{ color: '#446' }}>TTFT </span>
-                {ttft < 1000 ? `${ttft}ms` : `${(ttft / 1000).toFixed(1)}s`}
-              </span>
-            )}
-            {tps !== null && (
-              <span title="Tokens per Second">
-                <span style={{ color: '#446' }}>TPS </span>{tps}
-              </span>
-            )}
-          </span>
-        )}
-
-        <span style={{ color: '#336', marginLeft: (ttft !== null || tps !== null || battery !== null) ? 8 : 'auto' }}>
-          ADK / Qwen3.5
-        </span>
-
-        {/* Action buttons */}
-        <div style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
-          {/* Copy */}
+        {/* Action buttons — push right */}
+        <div style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
           <HeaderBtn
             title="Copy conversation"
             disabled={messages.length === 0}
@@ -272,7 +245,6 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
           >
             {copied ? '✓' : '⎘'}
           </HeaderBtn>
-          {/* Clear */}
           <HeaderBtn
             title="Clear chat history"
             disabled={messages.length === 0 || busy}
@@ -280,14 +252,12 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
           >
             ✕
           </HeaderBtn>
-          {/* Expand / collapse */}
           <HeaderBtn
             title={expanded ? 'Collapse panel' : 'Expand panel'}
             onClick={() => { setExpanded(v => !v); if (minimized) setMinimized(false) }}
           >
             {expanded ? '⊟' : '⊞'}
           </HeaderBtn>
-          {/* Minimize */}
           <HeaderBtn
             title={minimized ? 'Restore panel' : 'Minimize panel'}
             onClick={() => { setMinimized(v => !v); if (!minimized) setExpanded(false) }}
@@ -295,6 +265,42 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
             {minimized ? '▲' : '▼'}
           </HeaderBtn>
         </div>
+      </div>
+
+      {/* Secondary row — metrics */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '0 14px 6px',
+        borderBottom: '1px solid rgba(80, 120, 200, 0.2)',
+        fontSize: 10,
+      }}>
+        <span style={{ color: '#336' }}>ADK / Qwen3.5</span>
+
+        {battery !== null && (
+          <span style={{ color: battery > 30 ? '#88cc66' : '#ff9933' }}>
+            ⚡ {battery.toFixed(0)}%
+          </span>
+        )}
+
+        {ttft !== null && (
+          <span style={{ color: '#5af' }} title="Time to First Token">
+            <span style={{ color: '#446' }}>TTFT </span>
+            {ttft < 1000 ? `${ttft}ms` : `${(ttft / 1000).toFixed(1)}s`}
+          </span>
+        )}
+        {tps !== null && (
+          <span style={{ color: '#5af' }} title="Tokens per Second">
+            <span style={{ color: '#446' }}>TPS </span>{tps}
+          </span>
+        )}
+
+        {busy && (
+          <span style={{ color: '#5af', marginLeft: 'auto' }}>
+            <Spinner /> {elapsed > 0 ? `${elapsed}s` : 'inferring'}
+          </span>
+        )}
       </div>
 
       {!minimized && (
