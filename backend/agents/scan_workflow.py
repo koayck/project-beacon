@@ -176,7 +176,8 @@ SCAN GATE
 
 SWEEP SCAN PROCEDURE
 1. Parse asset_id, x, z from state["current_building"].
-2. Call sweep_scan_building(asset_id) — drone is already positioned, omit x/z.
+2. Call sweep_scan_building(asset_id, target_x=x, target_z=z) — always pass the building
+   coordinates explicitly so the correct building is targeted even if the drone is still in transit.
 3. Build a compact result string from the tool response:
    - Success: "Building at (x=<x>, z=<z>): <unique_survivor_count> survivor(s) across <level_count> level(s). Waypoints: <waypoint_count>."
      If unique_survivor_count > 0, append a newline and one line per survivor from unique_survivors_detected:
