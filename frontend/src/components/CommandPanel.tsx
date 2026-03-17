@@ -57,6 +57,7 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
   const [ttft, setTtft]         = useState<number | null>(null)
   const [tps, setTps]           = useState<number | null>(null)
   const [expanded, setExpanded] = useState(false)
+  const [minimized, setMinimized] = useState(false)
   const [copied, setCopied]     = useState(false)
   const [fastMode, setFastMode] = useState(false)
   const [resetting, setResetting] = useState(false)
@@ -195,7 +196,7 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
   }
 
   const logHeight = expanded ? 480 : 200
-  const panelWidth = expanded ? 780 : 560
+  const panelWidth = minimized ? 480 : expanded ? 780 : 560
 
   return (
     <div style={{
@@ -282,144 +283,155 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
           {/* Expand / collapse */}
           <HeaderBtn
             title={expanded ? 'Collapse panel' : 'Expand panel'}
-            onClick={() => setExpanded(v => !v)}
+            onClick={() => { setExpanded(v => !v); if (minimized) setMinimized(false) }}
           >
             {expanded ? '⊟' : '⊞'}
+          </HeaderBtn>
+          {/* Minimize */}
+          <HeaderBtn
+            title={minimized ? 'Restore panel' : 'Minimize panel'}
+            onClick={() => { setMinimized(v => !v); if (!minimized) setExpanded(false) }}
+          >
+            {minimized ? '▲' : '▼'}
           </HeaderBtn>
         </div>
       </div>
 
-      <div style={{
-        height: logHeight,
-        transition: 'height 0.2s ease',
-        overflowY: 'auto',
-        padding: '8px 14px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 6,
-      }}>
-        {messages.length === 0 && (
-          <div style={{ color: '#334', fontStyle: 'italic', marginTop: 4 }}>
-            {connected ? 'Type a natural language command...' : 'Waiting for backend connection...'}
-          </div>
-        )}
-        {messages.map((m) => (
-          <div key={m.ts} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-            {m.role === 'user' ? (
-              <div style={{ color: '#6af', alignSelf: 'flex-end' }}>
-                <span style={{ color: '#445', marginRight: 6 }}>YOU</span>
-                {m.lines[0]}
-              </div>
-            ) : (
-              <div style={{ color: '#aec', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
-                {m.lines.length === 0 && busy && (
-                  <span style={{ color: '#556', fontStyle: 'italic' }}>
-                    <Spinner /> LLM inferring{elapsed > 0 ? ` (${elapsed}s)` : '...'}
-                  </span>
-                )}
-                {m.lines.map((line, i) => (
-                  <div key={i} style={{
-                    color: line.startsWith('[') && line.includes('→')
-                      ? '#7af'
-                      : line.startsWith('  ✓')
-                      ? '#4c8'
-                      : line.startsWith('  ✗')
-                      ? '#f66'
-                      : '#aec',
-                  }}>
-                    {i === 0 && <span style={{ color: '#33cc66', marginRight: 6 }}>ADK</span>}
-                    {line}
-                  </div>
-                ))}
+      {!minimized && (
+        <>
+          <div style={{
+            height: logHeight,
+            transition: 'height 0.2s ease',
+            overflowY: 'auto',
+            padding: '8px 14px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+          }}>
+            {messages.length === 0 && (
+              <div style={{ color: '#334', fontStyle: 'italic', marginTop: 4 }}>
+                {connected ? 'Type a natural language command...' : 'Waiting for backend connection...'}
               </div>
             )}
+            {messages.map((m) => (
+              <div key={m.ts} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                {m.role === 'user' ? (
+                  <div style={{ color: '#6af', alignSelf: 'flex-end' }}>
+                    <span style={{ color: '#445', marginRight: 6 }}>YOU</span>
+                    {m.lines[0]}
+                  </div>
+                ) : (
+                  <div style={{ color: '#aec', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                    {m.lines.length === 0 && busy && (
+                      <span style={{ color: '#556', fontStyle: 'italic' }}>
+                        <Spinner /> LLM inferring{elapsed > 0 ? ` (${elapsed}s)` : '...'}
+                      </span>
+                    )}
+                    {m.lines.map((line, i) => (
+                      <div key={i} style={{
+                        color: line.startsWith('[') && line.includes('→')
+                          ? '#7af'
+                          : line.startsWith('  ✓')
+                          ? '#4c8'
+                          : line.startsWith('  ✗')
+                          ? '#f66'
+                          : '#aec',
+                      }}>
+                        {i === 0 && <span style={{ color: '#33cc66', marginRight: 6 }}>ADK</span>}
+                        {line}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+            <div ref={bottomRef} />
           </div>
-        ))}
-        <div ref={bottomRef} />
-      </div>
 
-      {/* Quick-action bar (agent commands) */}
-      <div style={{
-        display: 'flex',
-        gap: 5,
-        padding: '5px 10px',
-        borderTop: '1px solid rgba(80, 120, 200, 0.15)',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-      }}>
-        <span style={{ color: '#556', fontSize: 10, letterSpacing: 1, marginRight: 2 }}>QUICK</span>
-        {QUICK_ACTIONS.map(action => (
-          <button
-            key={action.label}
-            onClick={() => submit(action.prompt)}
-            disabled={!connected || busy}
-            title={action.prompt}
-            style={{
-              background: action.bg,
-              border: `1px solid ${action.border}`,
-              borderRadius: 4,
-              color: (!connected || busy) ? '#334' : action.color,
-              padding: '2px 8px',
-              cursor: (!connected || busy) ? 'default' : 'pointer',
-              fontFamily: 'Courier New, monospace',
-              fontSize: 10,
-              letterSpacing: 0.5,
-              transition: 'all 0.15s',
-            }}
-          >
-            {action.label}
-          </button>
-        ))}
-      </div>
+          {/* Quick-action bar (agent commands) */}
+          <div style={{
+            display: 'flex',
+            gap: 5,
+            padding: '5px 10px',
+            borderTop: '1px solid rgba(80, 120, 200, 0.15)',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+          }}>
+            <span style={{ color: '#556', fontSize: 10, letterSpacing: 1, marginRight: 2 }}>QUICK</span>
+            {QUICK_ACTIONS.map(action => (
+              <button
+                key={action.label}
+                onClick={() => submit(action.prompt)}
+                disabled={!connected || busy}
+                title={action.prompt}
+                style={{
+                  background: action.bg,
+                  border: `1px solid ${action.border}`,
+                  borderRadius: 4,
+                  color: (!connected || busy) ? '#334' : action.color,
+                  padding: '2px 8px',
+                  cursor: (!connected || busy) ? 'default' : 'pointer',
+                  fontFamily: 'Courier New, monospace',
+                  fontSize: 10,
+                  letterSpacing: 0.5,
+                  transition: 'all 0.15s',
+                }}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
 
-      {/* Direct-action bar */}
-      <div style={{
-        display: 'flex',
-        gap: 6,
-        padding: '5px 10px',
-        borderTop: '1px solid rgba(80, 120, 200, 0.15)',
-        alignItems: 'center',
-      }}>
-        <span style={{ color: '#334', fontSize: 10, letterSpacing: 1, marginRight: 2 }}>DIRECT</span>
-        <button
-          onClick={toggleSpeed}
-          disabled={!connected}
-          title={fastMode ? 'Switch to normal speed (5 m/s)' : 'Switch to fast speed (20 m/s)'}
-          style={{
-            background: fastMode ? 'rgba(255, 180, 0, 0.15)' : 'transparent',
-            border: `1px solid ${fastMode ? 'rgba(255,180,0,0.45)' : 'rgba(80,120,200,0.25)'}`,
-            borderRadius: 4,
-            color: !connected ? '#334' : fastMode ? '#ffcc44' : '#5af',
-            padding: '2px 10px',
-            cursor: !connected ? 'default' : 'pointer',
-            fontFamily: 'Courier New, monospace',
-            fontSize: 11,
-            letterSpacing: 0.5,
-            transition: 'all 0.15s',
-          }}
-        >
-          {fastMode ? '⚡ FAST' : '⚡ NORMAL'}
-        </button>
-        <button
-          onClick={handleReset}
-          disabled={!connected || resetting}
-          title="Immediately return drone to base (bypasses ADK)"
-          style={{
-            background: resetting ? 'rgba(0,200,255,0.10)' : 'transparent',
-            border: `1px solid ${resetting ? 'rgba(0,200,255,0.4)' : 'rgba(80,120,200,0.25)'}`,
-            borderRadius: 4,
-            color: (!connected || resetting) ? '#334' : '#4cf',
-            padding: '2px 10px',
-            cursor: (!connected || resetting) ? 'default' : 'pointer',
-            fontFamily: 'Courier New, monospace',
-            fontSize: 11,
-            letterSpacing: 0.5,
-            transition: 'all 0.15s',
-          }}
-        >
-          {resetting ? '↩ RETURNING...' : '↩ RESET TO BASE'}
-        </button>
-      </div>
+          {/* Direct-action bar */}
+          <div style={{
+            display: 'flex',
+            gap: 6,
+            padding: '5px 10px',
+            borderTop: '1px solid rgba(80, 120, 200, 0.15)',
+            alignItems: 'center',
+          }}>
+            <span style={{ color: '#334', fontSize: 10, letterSpacing: 1, marginRight: 2 }}>DIRECT</span>
+            <button
+              onClick={toggleSpeed}
+              disabled={!connected}
+              title={fastMode ? 'Switch to normal speed (5 m/s)' : 'Switch to fast speed (20 m/s)'}
+              style={{
+                background: fastMode ? 'rgba(255, 180, 0, 0.15)' : 'transparent',
+                border: `1px solid ${fastMode ? 'rgba(255,180,0,0.45)' : 'rgba(80,120,200,0.25)'}`,
+                borderRadius: 4,
+                color: !connected ? '#334' : fastMode ? '#ffcc44' : '#5af',
+                padding: '2px 10px',
+                cursor: !connected ? 'default' : 'pointer',
+                fontFamily: 'Courier New, monospace',
+                fontSize: 11,
+                letterSpacing: 0.5,
+                transition: 'all 0.15s',
+              }}
+            >
+              {fastMode ? '⚡ FAST' : '⚡ NORMAL'}
+            </button>
+            <button
+              onClick={handleReset}
+              disabled={!connected || resetting}
+              title="Immediately return drone to base (bypasses ADK)"
+              style={{
+                background: resetting ? 'rgba(0,200,255,0.10)' : 'transparent',
+                border: `1px solid ${resetting ? 'rgba(0,200,255,0.4)' : 'rgba(80,120,200,0.25)'}`,
+                borderRadius: 4,
+                color: (!connected || resetting) ? '#334' : '#4cf',
+                padding: '2px 10px',
+                cursor: (!connected || resetting) ? 'default' : 'pointer',
+                fontFamily: 'Courier New, monospace',
+                fontSize: 11,
+                letterSpacing: 0.5,
+                transition: 'all 0.15s',
+              }}
+            >
+              {resetting ? '↩ RETURNING...' : '↩ RESET TO BASE'}
+            </button>
+          </div>
+        </>
+      )}
 
       {/* Input row */}
       <div style={{ display: 'flex', borderTop: '1px solid rgba(80, 120, 200, 0.2)' }}>
