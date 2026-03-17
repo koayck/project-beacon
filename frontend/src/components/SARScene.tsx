@@ -204,6 +204,7 @@ const SURVIVOR_POSITIONS = WORLD.survivors.map(s => ({ x: s.x, y: s.y, z: s.z })
 
 const SURVIVOR_SENSOR_RANGE = 12.0
 const LOS_SAMPLE_COUNT = 30
+const APPROACH_OFFSET = 2.5
 
 type WindowFace = 'north' | 'south' | 'west' | 'east'
 
@@ -425,6 +426,62 @@ function scannedSurvivorsFromDrone(dronePos: THREE.Vector3): SurvivorPoint[] {
     if (survivorDistance(dronePos, survivor) > SURVIVOR_SENSOR_RANGE) return false
     return survivorVisibleFromDrone(dronePos, survivor)
   })
+}
+
+// ── Approach position computation ─────────────────────────────────────────────
+
+function computeApproachPosition(survivor: SurvivorPoint): SurvivorPoint {
+  const building = findBuildingAt(survivor.x, survivor.y, survivor.z)
+  if (!building) return survivor  // outside — go directly
+
+  const bounds = buildingBounds(building)
+
+  // Find the window closest to the survivor (prefer same floor, then distance)
+  if (building.windows.length > 0) {
+    let bestWindow: SimWindowAperture | null = null
+    let bestDist = Infinity
+
+    for (const w of building.windows) {
+      const windowCenterY = w.sillY + w.height / 2
+      const yDist = Math.abs(survivor.y - windowCenterY)
+      let wx: number, wz: number
+      if (w.face === 'north')      { wx = w.axisCenter; wz = bounds.minZ }
+      else if (w.face === 'south') { wx = w.axisCenter; wz = bounds.maxZ }
+      else if (w.face === 'west')  { wx = bounds.minX;  wz = w.axisCenter }
+      else                         { wx = bounds.maxX;  wz = w.axisCenter }
+
+      const xzDist = Math.sqrt((survivor.x - wx) ** 2 + (survivor.z - wz) ** 2)
+      const totalDist = yDist * 2 + xzDist
+      if (totalDist < bestDist) {
+        bestDist = totalDist
+        bestWindow = w
+      }
+    }
+
+    if (bestWindow) {
+      const wy = bestWindow.sillY + bestWindow.height / 2
+      if (bestWindow.face === 'west')
+        return { x: bounds.minX - APPROACH_OFFSET, y: wy, z: bestWindow.axisCenter }
+      if (bestWindow.face === 'east')
+        return { x: bounds.maxX + APPROACH_OFFSET, y: wy, z: bestWindow.axisCenter }
+      if (bestWindow.face === 'north')
+        return { x: bestWindow.axisCenter, y: wy, z: bounds.minZ - APPROACH_OFFSET }
+      // south
+      return { x: bestWindow.axisCenter, y: wy, z: bounds.maxZ + APPROACH_OFFSET }
+    }
+  }
+
+  // Fallback for windowless buildings — nearest face at survivor height
+  const distToWest  = survivor.x - bounds.minX
+  const distToEast  = bounds.maxX - survivor.x
+  const distToNorth = survivor.z - bounds.minZ
+  const distToSouth = bounds.maxZ - survivor.z
+  const minDist = Math.min(distToWest, distToEast, distToNorth, distToSouth)
+
+  if (minDist === distToWest)       return { x: bounds.minX - APPROACH_OFFSET, y: survivor.y, z: survivor.z }
+  else if (minDist === distToEast)  return { x: bounds.maxX + APPROACH_OFFSET, y: survivor.y, z: survivor.z }
+  else if (minDist === distToNorth) return { x: survivor.x, y: survivor.y, z: bounds.minZ - APPROACH_OFFSET }
+  else                              return { x: survivor.x, y: survivor.y, z: bounds.maxZ + APPROACH_OFFSET }
 }
 
 // ── Scene components ──────────────────────────────────────────────────────────
@@ -1771,7 +1828,7 @@ function DroneMesh({ targetPos, status, hasCargo, nearbyObstacles = 0, nearestOb
   }
 
   // FOV cone: horizontal, points in heading direction, shown during full scan session
-  const SCAN_FOV_HALF_DEG = 60
+  const SCAN_FOV_HALF_DEG = 30
   const SCAN_FOV_RANGE = 3  // metres — thermal camera effective range
   const coneRadius = SCAN_FOV_RANGE * Math.tan((SCAN_FOV_HALF_DEG * Math.PI) / 180)
 
@@ -1782,23 +1839,30 @@ function DroneMesh({ targetPos, status, hasCargo, nearbyObstacles = 0, nearestOb
 
     if (coneRef.current) {
       const headingRad = (headingDegRef.current * Math.PI) / 180
-      const tiltRad = (scanTiltDegRef.current * Math.PI) / 180  // 0=horizontal, -PI/2=down
+      const tiltRad = (scanTiltDegRef.current * Math.PI) / 180
+      const cosT = Math.cos(tiltRad)
+      // Scan direction: heading in XZ, optionally tilted down
+      const scanDirX = Math.sin(headingRad) * cosT
+      const scanDirY = Math.sin(tiltRad)          // negative when tilting down
+      const scanDirZ = -Math.cos(headingRad) * cosT
+
+      // Apex (tip) at drone. Center = drone + scanDir*(RANGE/2) so:
+      //   apex = center - scanDir*(RANGE/2) = drone ✓
       const half = SCAN_FOV_RANGE / 2
-
-      // Scan direction unit vector in 3D (heading + tilt)
-      const scanDirX = Math.sin(headingRad) * Math.cos(tiltRad)
-      const scanDirY = -Math.sin(tiltRad)  // tiltRad negative → scanDirY positive = upward offset... flip
-      const scanDirZ = -Math.cos(headingRad) * Math.cos(tiltRad)
-
-      // Offset center backward along scan direction so apex sits at drone position
       coneRef.current.position.set(
-        lerpPos.current.x - scanDirX * half,
-        lerpPos.current.y - scanDirY * half,
-        lerpPos.current.z - scanDirZ * half,
+        lerpPos.current.x + scanDirX * half,
+        lerpPos.current.y + scanDirY * half,
+        lerpPos.current.z + scanDirZ * half,
       )
-      // Euler: tilt around local X then yaw to heading
-      // rotation.x = tiltRad (negative = nose down), then rotated by heading
-      coneRef.current.rotation.set(tiltRad, Math.PI / 2 - headingRad, -Math.PI / 2)
+      // Rotate ConeGeometry's -Y axis (base direction) to point along scanDir.
+      // setFromUnitVectors is unambiguous — no Euler angle guessing.
+      const baseDir = new THREE.Vector3(scanDirX, scanDirY, scanDirZ)
+      if (baseDir.lengthSq() > 1e-6) {
+        coneRef.current.quaternion.setFromUnitVectors(
+          new THREE.Vector3(0, -1, 0),
+          baseDir.normalize(),
+        )
+      }
       coneRef.current.visible = inScanSessionRef.current
     }
 
@@ -1938,29 +2002,406 @@ function FollowBeaconCamera({ enabled, targetPos, controlsRef }: FollowBeaconCam
 
 // ── Overlays ──────────────────────────────────────────────────────────────────
 
-function MissionLog({ lines }: { lines: string[] }) {
+// MissionLog removed — replaced by ActivityFeed
+
+// ── Intel Card — actionable scan findings ─────────────────────────────────────
+
+function IntelCard({
+  survivors,
+  dronePos,
+  totalSurvivors,
+  deliveringTo,
+  deliveredTo,
+  onSendSupplies,
+  onRetryDelivery,
+}: {
+  survivors: SurvivorPoint[]
+  dronePos: THREE.Vector3
+  totalSurvivors: number
+  deliveringTo: Set<string>
+  deliveredTo: Set<string>
+  onSendSupplies: (survivor: SurvivorPoint) => void
+  onRetryDelivery: (survivor: SurvivorPoint) => void
+}) {
+  const detected = survivors.length
+  const submerged = survivors.filter(s => s.y < FLOOD_LEVEL - 0.2).length
+  const critical = submerged > 0
+  const deliveredCount = deliveredTo.size
+
   return (
     <div style={{
-      position: 'absolute',
-      bottom: 20,
-      left: 20,
       background: 'rgba(0,0,0,0.65)',
-      border: '1px solid #334',
+      border: `1px solid ${critical ? 'rgba(255,80,80,0.5)' : '#334'}`,
+      borderLeft: `3px solid ${critical ? '#cc3333' : '#cc8800'}`,
       borderRadius: 6,
       padding: '10px 14px',
-      color: '#9cf',
-      fontSize: 12,
+      color: '#8899bb',
+      fontSize: 11,
       fontFamily: 'Courier New, monospace',
-      lineHeight: 1.6,
-      maxWidth: 420,
-      pointerEvents: 'none',
+      lineHeight: 1.7,
+      pointerEvents: 'auto',
+      minWidth: 210,
+      maxHeight: 400,
+      overflowY: 'auto',
     }}>
-      {lines.map((l, i) => (
-        <div key={i} style={{ color: l.includes('confirmed') ? '#4f4' : '#9cf' }}>{l}</div>
-      ))}
+      <div style={{ color: '#99b', marginBottom: 6, letterSpacing: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>SCAN INTEL</span>
+        <span style={{
+          color: detected > 0 ? '#ff6' : '#556',
+          fontSize: 10,
+        }}>
+          {detected > 0 ? 'LIVE' : 'NO CONTACT'}
+        </span>
+      </div>
+
+      {/* Summary row */}
+      <div style={{
+        display: 'flex',
+        gap: 12,
+        marginBottom: 8,
+        paddingBottom: 6,
+        borderBottom: '1px solid #334',
+      }}>
+        <div style={{ textAlign: 'center', flex: 1 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: detected > 0 ? '#4f4' : '#556' }}>
+            {detected}
+          </div>
+          <div style={{ fontSize: 9, color: '#667' }}>DETECTED</div>
+        </div>
+        <div style={{ textAlign: 'center', flex: 1 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: '#556' }}>
+            {totalSurvivors - detected}
+          </div>
+          <div style={{ fontSize: 9, color: '#667' }}>UNSCANNED</div>
+        </div>
+        {submerged > 0 && (
+          <div style={{ textAlign: 'center', flex: 1 }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: '#f44' }}>
+              {submerged}
+            </div>
+            <div style={{ fontSize: 9, color: '#f66' }}>SUBMERGED</div>
+          </div>
+        )}
+        {deliveredCount > 0 && (
+          <div style={{ textAlign: 'center', flex: 1 }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: '#4cf' }}>
+              {deliveredCount}
+            </div>
+            <div style={{ fontSize: 9, color: '#4cf' }}>SUPPLIED</div>
+          </div>
+        )}
+      </div>
+
+      {/* Drone position context */}
+      <div style={{ color: '#667', marginBottom: 6, fontSize: 10 }}>
+        SENSOR @ ({dronePos.x.toFixed(1)}, {dronePos.y.toFixed(1)}, {dronePos.z.toFixed(1)}) — {SURVIVOR_SENSOR_RANGE}m range
+      </div>
+
+      {/* Individual survivor entries */}
+      {detected === 0 ? (
+        <div style={{ color: '#556', fontStyle: 'italic', fontSize: 10 }}>
+          No heat signatures in sensor range. Move drone closer to scan targets.
+        </div>
+      ) : (
+        survivors.map((s, i) => {
+          const key = survivorKey(s)
+          const dist = Math.sqrt(
+            (s.x - dronePos.x) ** 2 + (s.y - dronePos.y) ** 2 + (s.z - dronePos.z) ** 2,
+          )
+          const isSubmerged = s.y < FLOOD_LEVEL - 0.2
+          const isDelivering = deliveringTo.has(key)
+          const isDelivered = deliveredTo.has(key)
+          return (
+            <div key={i} style={{
+              padding: '4px 6px',
+              marginBottom: 4,
+              borderRadius: 3,
+              background: isDelivered
+                ? 'rgba(60,200,255,0.10)'
+                : isSubmerged ? 'rgba(255,50,50,0.12)' : 'rgba(60,255,60,0.08)',
+              border: `1px solid ${isDelivered
+                ? 'rgba(60,200,255,0.3)'
+                : isSubmerged ? 'rgba(255,80,80,0.3)' : 'rgba(80,255,80,0.2)'}`,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: isDelivered ? '#4cf' : isSubmerged ? '#f66' : '#6f6' }}>
+                  SIG-{String.fromCharCode(65 + i)}
+                  {isSubmerged && !isDelivered && ' [SUBMERGED]'}
+                  {isDelivered && ' [SUPPLIED]'}
+                </span>
+                <span style={{ color: '#778' }}>{dist.toFixed(1)}m</span>
+              </div>
+              <div style={{ color: '#889', fontSize: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>
+                  ({s.x.toFixed(1)}, {s.y.toFixed(1)}, {s.z.toFixed(1)})
+                  {isSubmerged && !isDelivered && <span style={{ color: '#f44', marginLeft: 6 }}>CRITICAL</span>}
+                </span>
+                {isDelivering ? (
+                  <span style={{ display: 'inline-flex', gap: 3, marginLeft: 6 }}>
+                    <span style={{
+                      border: '1px solid rgba(255,200,0,0.3)',
+                      borderRadius: 3,
+                      background: 'rgba(255,200,0,0.12)',
+                      color: '#ff6',
+                      padding: '1px 6px',
+                      fontSize: 9,
+                      fontFamily: 'Courier New, monospace',
+                    }}>
+                      EN ROUTE
+                    </span>
+                    <button
+                      onClick={() => onRetryDelivery(s)}
+                      style={{
+                        border: '1px solid rgba(255,100,100,0.5)',
+                        borderRadius: 3,
+                        background: 'rgba(255,60,60,0.15)',
+                        color: '#f88',
+                        padding: '1px 6px',
+                        cursor: 'pointer',
+                        fontSize: 9,
+                        fontFamily: 'Courier New, monospace',
+                      }}
+                    >
+                      RETRY
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => onSendSupplies(s)}
+                    disabled={isDelivered}
+                    style={{
+                      marginLeft: 6,
+                      border: `1px solid ${isDelivered ? 'rgba(60,200,255,0.3)' : 'rgba(255,160,0,0.5)'}`,
+                      borderRadius: 3,
+                      background: isDelivered ? 'rgba(60,200,255,0.15)' : 'rgba(255,140,0,0.15)',
+                      color: isDelivered ? '#4cf' : '#fa0',
+                      padding: '1px 6px',
+                      cursor: isDelivered ? 'default' : 'pointer',
+                      fontSize: 9,
+                      fontFamily: 'Courier New, monospace',
+                      opacity: isDelivered ? 0.7 : 1,
+                    }}
+                  >
+                    {isDelivered ? 'DONE' : 'DELIVER'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )
+        })
+      )}
     </div>
   )
 }
+
+// ── Activity Feed — clean, scannable mission timeline ─────────────────────────
+
+interface ActivityItem {
+  id: number
+  icon: string
+  label: string
+  detail?: string
+  ts: number
+  status: 'active' | 'done' | 'error'
+}
+
+let _activityId = 0
+
+function parseEventToActivity(event: import('@/lib/api').AgentStreamEvent): ActivityItem | null {
+  if (event.type === 'tool_call') {
+    const { name, args, agent } = event
+    if (name === 'transfer_to_agent') {
+      const target = String(args.agent_name ?? '').replace(/_/g, ' ')
+      return { id: ++_activityId, icon: '◈', label: `${target}`, ts: Date.now(), status: 'done' }
+    }
+    if (name === 'plan_route') {
+      const x = Number(args.target_x ?? 0).toFixed(0)
+      const z = Number(args.target_z ?? 0).toFixed(0)
+      const y = Number(args.target_y ?? 0).toFixed(0)
+      return { id: ++_activityId, icon: '◇', label: 'Planning route', detail: `→ (${x}, ${y}, ${z})`, ts: Date.now(), status: 'active' }
+    }
+    if (name === 'move_drone_to') {
+      const x = Number(args.x ?? 0).toFixed(1)
+      const z = Number(args.z ?? 0).toFixed(1)
+      const y = Number(args.y ?? 0).toFixed(1)
+      return { id: ++_activityId, icon: '▸', label: 'Moving', detail: `(${x}, ${y}, ${z})`, ts: Date.now(), status: 'active' }
+    }
+    if (name === 'sweep_scan_building') {
+      const x = Number(args.target_x ?? 0).toFixed(0)
+      const z = Number(args.target_z ?? 0).toFixed(0)
+      return { id: ++_activityId, icon: '◉', label: 'Scanning building', detail: `(${x}, ${z})`, ts: Date.now(), status: 'active' }
+    }
+    if (name === 'return_to_base') {
+      return { id: ++_activityId, icon: '⌂', label: 'Returning to base', ts: Date.now(), status: 'active' }
+    }
+    if (name === 'resolve_scan_target') {
+      const x = Number(args.target_x ?? 0).toFixed(0)
+      const z = Number(args.target_z ?? 0).toFixed(0)
+      return { id: ++_activityId, icon: '⊕', label: 'Resolving target', detail: `(${x}, ${z})`, ts: Date.now(), status: 'active' }
+    }
+    if (name === 'pick_next_building') {
+      return { id: ++_activityId, icon: '⊞', label: 'Selecting next building', ts: Date.now(), status: 'active' }
+    }
+    if (name === 'save_scan_result') {
+      return { id: ++_activityId, icon: '✎', label: 'Saving scan results', ts: Date.now(), status: 'active' }
+    }
+    if (name === 'get_scan_results') {
+      return { id: ++_activityId, icon: '⊡', label: 'Compiling report', ts: Date.now(), status: 'active' }
+    }
+    return { id: ++_activityId, icon: '⟡', label: name.replace(/_/g, ' '), detail: `[${agent}]`, ts: Date.now(), status: 'active' }
+  }
+
+  if (event.type === 'text' || event.type === 'final') {
+    const t = event.text
+    const arriveMatch = t.match(/arrived at \(([^)]+)\)/)
+    if (arriveMatch) {
+      return { id: ++_activityId, icon: '✓', label: 'Arrived', detail: `(${arriveMatch[1]})`, ts: Date.now(), status: 'done' }
+    }
+    const sweepMatch = t.match(/SWEEP SCAN COMPLETE/)
+    if (sweepMatch) {
+      const findingsMatch = t.match(/Findings\s*:\s*(.+)/)
+      return { id: ++_activityId, icon: '✓', label: 'Sweep complete', detail: findingsMatch?.[1]?.trim(), ts: Date.now(), status: 'done' }
+    }
+    const areaMatch = t.match(/AREA SCAN COMPLETE.*?(\d+)\s*building/)
+    if (areaMatch) {
+      const totalMatch = t.match(/TOTAL SURVIVORS DETECTED:\s*(\d+)/)
+      return { id: ++_activityId, icon: '◈', label: `Area scan done`, detail: `${areaMatch[1]} bldg · ${totalMatch?.[1] ?? '?'} survivors`, ts: Date.now(), status: 'done' }
+    }
+    const scanTargetMatch = t.match(/SCAN TARGET.*?building at \(x=([^,]+),\s*z=([^)]+)\)/)
+    if (scanTargetMatch) {
+      return { id: ++_activityId, icon: '▶', label: 'Next target', detail: `building (${scanTargetMatch[1]}, ${scanTargetMatch[2]})`, ts: Date.now(), status: 'active' }
+    }
+    if (t.includes('QUEUE_EMPTY')) {
+      return { id: ++_activityId, icon: '✓', label: 'All buildings scanned', ts: Date.now(), status: 'done' }
+    }
+    return null
+  }
+
+  if (event.type === 'error') {
+    return { id: ++_activityId, icon: '✗', label: 'Error', detail: event.text.slice(0, 60), ts: Date.now(), status: 'error' }
+  }
+  if (event.type === 'done') {
+    return { id: ++_activityId, icon: '●', label: 'Agent done', ts: Date.now(), status: 'done' }
+  }
+
+  return null
+}
+
+const ACTIVITY_COLORS = {
+  active: '#5af',
+  done: '#4c8',
+  error: '#f66',
+} as const
+
+function ActivityFeed({ items, busy, onClear }: { items: ActivityItem[]; busy: boolean; onClear: () => void }) {
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [items.length])
+
+  return (
+    <div style={{
+      background: 'rgba(0,0,0,0.65)',
+      border: '1px solid #334',
+      borderLeft: '3px solid #2090b0',
+      borderRadius: 6,
+      padding: '10px 14px',
+      fontFamily: 'Courier New, monospace',
+      fontSize: 11,
+      lineHeight: 1.6,
+      pointerEvents: 'auto',
+      minWidth: 230,
+      maxWidth: 280,
+      maxHeight: 420,
+      overflowY: 'auto',
+    }}>
+      <div style={{
+        color: '#99b',
+        letterSpacing: 1,
+        marginBottom: 8,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+      }}>
+        <span>ACTIVITY</span>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          {busy && <span style={{ color: '#5af', fontSize: 10 }}>LIVE</span>}
+          {items.length > 0 && (
+            <button
+              onClick={onClear}
+              style={{
+                background: 'transparent',
+                border: '1px solid rgba(80,120,200,0.25)',
+                borderRadius: 3,
+                color: '#556',
+                padding: '0px 5px',
+                cursor: 'pointer',
+                fontFamily: 'Courier New, monospace',
+                fontSize: 10,
+                lineHeight: '16px',
+              }}
+              title="Clear activity feed"
+            >
+              CLR
+            </button>
+          )}
+        </div>
+      </div>
+
+      {items.length === 0 ? (
+        <div style={{ color: '#445', fontStyle: 'italic', fontSize: 10 }}>
+          No activity yet. Send a command to begin.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {items.map(item => (
+            <div key={item.id} style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 6,
+              padding: '3px 0',
+              borderBottom: '1px solid rgba(50,55,70,0.4)',
+            }}>
+              <span style={{
+                color: ACTIVITY_COLORS[item.status],
+                flexShrink: 0,
+                width: 14,
+                textAlign: 'center',
+                fontSize: 11,
+              }}>
+                {item.icon}
+              </span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{
+                  color: ACTIVITY_COLORS[item.status],
+                  fontSize: 11,
+                  fontWeight: item.status === 'done' ? 400 : 600,
+                }}>
+                  {item.label}
+                </div>
+                {item.detail && (
+                  <div style={{
+                    color: '#667',
+                    fontSize: 10,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    maxWidth: 220,
+                  }}>
+                    {item.detail}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 
 interface ControlsProps {
   followBeacon: boolean
@@ -1990,6 +2431,7 @@ function Controls({
       right: 16,
       background: selectMode ? 'rgba(30, 16, 0, 0.82)' : 'rgba(0,0,0,0.60)',
       border: selectMode ? '1px solid #ff880066' : '1px solid #334',
+      borderLeft: selectMode ? '3px solid #ff8800' : '3px solid #5a6a7a',
       borderRadius: 6,
       padding: '10px 14px',
       color: '#667',
@@ -2054,7 +2496,7 @@ function Controls({
       >
         {transparentWalls ? 'WALLS: TRANSPARENT' : 'WALLS: SOLID'}
       </button>
-      <button
+      {/* <button
         onClick={onToggleScanRays}
         style={{
           marginTop: 6,
@@ -2071,7 +2513,7 @@ function Controls({
         }}
       >
         {scanRaysEnabled ? 'SCAN RAYS: ON' : 'SCAN RAYS: OFF'}
-      </button>
+      </button> */}
       <div style={{ marginTop: 8, borderTop: '1px solid #334', paddingTop: 6 }}>
         <div style={{ color: '#f84' }}>FLOOD: +{FLOOD_LEVEL.toFixed(1)}m above ground</div>
         <div style={{ color: '#f44', marginTop: 3 }}>
@@ -2096,6 +2538,9 @@ export default function SARScene() {
   const [transparentWalls, setTransparentWalls] = useState(false)
   const [scanRaysEnabled, setScanRaysEnabled] = useState(true)
   const [deliveredTo, setDeliveredTo] = useState<Set<string>>(new Set())
+  const [deliveringTo, setDeliveringTo] = useState<Set<string>>(new Set())
+  const [activities, setActivities] = useState<ActivityItem[]>([])
+  const [agentBusy, setAgentBusy] = useState(false)
   const [hasCargo, setHasCargo] = useState(false)
   const [activeThrow, setActiveThrow] = useState<{ from: THREE.Vector3; to: SurvivorPoint } | null>(null)
   const deliveryTarget = useRef<SurvivorPoint | null>(null)
@@ -2254,6 +2699,50 @@ export default function SARScene() {
   }, [toggleFollowBeacon, selectMode])
 
   const abortRef = useRef<AbortController | null>(null)
+  const pendingDeliveryKey = useRef<string | null>(null)
+
+  // ── Cargo pickup at base ──────────────────────────────────────────────────
+  const BASE_PICKUP_RANGE = 3.0
+
+  useEffect(() => {
+    if (!deliveryTarget.current || cargoPickedUp.current) return
+    if (!pendingDeliveryKey.current) return
+
+    const distToBase = Math.sqrt(
+      dronePos.x ** 2 + dronePos.y ** 2 + dronePos.z ** 2,
+    )
+    if (distToBase < BASE_PICKUP_RANGE) {
+      cargoPickedUp.current = true
+      setHasCargo(true)
+      addLog('📦 Supplies collected from base')
+    }
+  }, [dronePos, addLog])
+
+  // ── Cargo throw trigger ───────────────────────────────────────────────────
+  const APPROACH_ARRIVE_RADIUS = 3.0
+
+  useEffect(() => {
+    const target = deliveryTarget.current
+    const approach = deliveryApproach.current
+    if (!target || !approach || activeThrow || !cargoPickedUp.current) return
+    if (droneStatus === 'MOVING') return
+
+    // Use horizontal (XZ) distance only — the drone may arrive at a higher
+    // altitude than the approach point due to obstacle-avoidance routing, but
+    // it is still positioned correctly for the throw.
+    const distToApproach = Math.sqrt(
+      (dronePos.x - approach.x) ** 2 +
+      (dronePos.z - approach.z) ** 2,
+    )
+    if (distToApproach < APPROACH_ARRIVE_RADIUS) {
+      cargoPickedUp.current = false
+      setHasCargo(false)
+      setActiveThrow({ from: dronePos.clone(), to: target })
+      addLog('📦 Supply thrown to survivor')
+    }
+  }, [dronePos, droneStatus, activeThrow, addLog])
+
+
 
   const handleCommand = useCallback(async (
     prompt: string,
@@ -2262,17 +2751,71 @@ export default function SARScene() {
     const ac = new AbortController()
     abortRef.current = ac
     addLog(`⬆ ${prompt}`)
+    setAgentBusy(true)
+    setActivities(prev => [...prev, { id: ++_activityId, icon: '▹', label: prompt.length > 50 ? prompt.slice(0, 47) + '...' : prompt, ts: Date.now(), status: 'done' }])
     try {
       for await (const event of streamCommand(ASSET_ID, prompt, ac.signal)) {
         onEvent(event)
+        if (event.type === 'tool_result') {
+          setActivities(prev => {
+            const idx = [...prev].reverse().findIndex(a => a.status === 'active')
+            if (idx === -1) return prev
+            const realIdx = prev.length - 1 - idx
+            const updated = [...prev]
+            updated[realIdx] = { ...updated[realIdx], status: event.success ? 'done' : 'error' }
+            return updated
+          })
+        }
+        const activity = parseEventToActivity(event)
+        if (activity) {
+          setActivities(prev => {
+            if (activity.label === 'Moving' && prev.length > 0) {
+              const last = prev[prev.length - 1]
+              if (last.label === 'Moving') {
+                const updated = [...prev]
+                updated[updated.length - 1] = { ...activity, id: last.id }
+                return updated
+              }
+            }
+            return [...prev, activity]
+          })
+        }
+        if (
+          (event.type === 'tool_result' || event.type === 'text') &&
+          event.survivors &&
+          event.survivors.length > 0
+        ) {
+          setDiscoveredSurvivors(prev => {
+            const known = new Set(prev.map(survivorKey))
+            const novel = event.survivors!.filter(s => !known.has(survivorKey(s)))
+            if (novel.length === 0) return prev
+            return [...prev, ...novel]
+          })
+        }
         if (event.type === 'done') addLog('✓ Agent responded')
       }
     } catch (e: unknown) {
       if (e instanceof Error && e.name === 'AbortError') {
         addLog('⚠ Command aborted')
+        setActivities(prev => [...prev, { id: ++_activityId, icon: '✗', label: 'Aborted', ts: Date.now(), status: 'error' }])
       } else {
         throw e
       }
+      const key = pendingDeliveryKey.current
+      if (key) {
+        setDeliveringTo(prev => {
+          const next = new Set(prev)
+          next.delete(key)
+          return next
+        })
+        setHasCargo(false)
+        cargoPickedUp.current = false
+        deliveryTarget.current = null
+        deliveryApproach.current = null
+        pendingDeliveryKey.current = null
+      }
+    } finally {
+      setAgentBusy(false)
     }
   }, [addLog])
 
@@ -2337,6 +2880,11 @@ export default function SARScene() {
     if (!activeThrow) return
     const key = survivorKey(activeThrow.to)
     setDeliveredTo(prev => new Set(prev).add(key))
+    setDeliveringTo(prev => {
+      const next = new Set(prev)
+      next.delete(key)
+      return next
+    })
     deliveryTarget.current = null
     deliveryApproach.current = null
     setActiveThrow(null)
@@ -2355,6 +2903,61 @@ export default function SARScene() {
     () => scannedSurvivorsFromDrone(dronePos),
     [dronePos.x, dronePos.y, dronePos.z],
   )
+
+  const handleSendSupplies = useCallback((survivor: SurvivorPoint) => {
+    const key = survivorKey(survivor)
+    const coords = `(${survivor.x.toFixed(1)}, ${survivor.y.toFixed(1)}, ${survivor.z.toFixed(1)})`
+    const approach = computeApproachPosition(survivor)
+    const approachCoords = `(${approach.x.toFixed(1)}, ${approach.y.toFixed(1)}, ${approach.z.toFixed(1)})`
+
+    setDeliveringTo(prev => new Set(prev).add(key))
+    pendingDeliveryKey.current = key
+    deliveryTarget.current = survivor
+    deliveryApproach.current = approach
+    addLog(`Dispatching supplies to survivor at ${coords}`)
+
+    const isInside = findBuildingAt(survivor.x, survivor.y, survivor.z) !== null
+    const prompt = isInside
+      ? `Deliver emergency supplies to survivor at ${coords}. ` +
+        `First return to base at (0, 0, 0) to collect supplies, ` +
+        `then navigate to the approach position ${approachCoords} outside the building. ` +
+        `Do NOT navigate to the survivor's interior coordinates — the approach position is the drop point.`
+      : `Deliver emergency supplies to survivor at ${coords}. ` +
+        `First return to base at (0, 0, 0) to collect supplies, ` +
+        `then navigate to ${coords} to drop supplies.`
+
+    setPendingScanPrompt(prompt)
+  }, [addLog])
+
+  const handleRetryDelivery = useCallback((survivor: SurvivorPoint) => {
+    const key = survivorKey(survivor)
+    setDeliveringTo(prev => {
+      const next = new Set(prev)
+      next.delete(key)
+      return next
+    })
+    setHasCargo(false)
+    cargoPickedUp.current = false
+    deliveryTarget.current = null
+    deliveryApproach.current = null
+    pendingDeliveryKey.current = null
+    setActiveThrow(null)
+    addLog(`↻ Retrying delivery to survivor at (${survivor.x.toFixed(1)}, ${survivor.y.toFixed(1)}, ${survivor.z.toFixed(1)})`)
+    setTimeout(() => handleSendSupplies(survivor), 0)
+  }, [addLog, handleSendSupplies])
+
+  // Persistent intel — accumulate survivors across all scans
+  const [discoveredSurvivors, setDiscoveredSurvivors] = useState<SurvivorPoint[]>([])
+
+  useEffect(() => {
+    if (scannedSurvivors.length === 0) return
+    setDiscoveredSurvivors(prev => {
+      const known = new Set(prev.map(survivorKey))
+      const novel = scannedSurvivors.filter(s => !known.has(survivorKey(s)))
+      if (novel.length === 0) return prev
+      return [...prev, ...novel]
+    })
+  }, [scannedSurvivors])
 
   return (
     <div style={{
@@ -2387,6 +2990,7 @@ export default function SARScene() {
         {/* Scene */}
         <Ground />
         <GridOverlay />
+        <BasePad />
         <ObstacleBuilding />
         <TargetBuilding transparentWalls={transparentWalls} />
         <BalconyBuilding transparentWalls={transparentWalls} />
@@ -2444,19 +3048,51 @@ export default function SARScene() {
         />
       </Canvas>
 
-      <DroneStatusPanel drones={drones} />
+      <div style={{
+        position: 'absolute',
+        top: 16,
+        left: 16,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        pointerEvents: 'none',
+        maxHeight: 'calc(100% - 140px)',
+      }}>
+        <DroneStatusPanel drones={drones} />
+        <div style={{ pointerEvents: 'auto' }}>
+          <ActivityFeed items={activities} busy={agentBusy} onClear={() => setActivities([])} />
+        </div>
+      </div>
       {!selectMode && <CoordOverlay point={hoverPt} copied={copied} />}
       <CompassLabels northAngleRef={northAngleRef} />
-      <MissionLog lines={log} />
-      <Controls
-        followBeacon={followBeacon}
-        onToggleFollow={toggleFollowBeacon}
-        transparentWalls={transparentWalls}
-        onToggleWalls={toggleWallTransparency}
-        scanRaysEnabled={scanRaysEnabled}
-        onToggleScanRays={toggleScanRays}
-        selectMode={selectMode}
-      />
+      <div style={{
+        position: 'absolute',
+        top: 16,
+        right: 16,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        pointerEvents: 'auto',
+      }}>
+        <Controls
+          followBeacon={followBeacon}
+          onToggleFollow={toggleFollowBeacon}
+          transparentWalls={transparentWalls}
+          onToggleWalls={toggleWallTransparency}
+          scanRaysEnabled={scanRaysEnabled}
+          onToggleScanRays={toggleScanRays}
+          selectMode={selectMode}
+        />
+        <IntelCard
+          survivors={discoveredSurvivors}
+          dronePos={dronePos}
+          totalSurvivors={SURVIVOR_POSITIONS.length}
+          deliveringTo={deliveringTo}
+          deliveredTo={deliveredTo}
+          onSendSupplies={handleSendSupplies}
+          onRetryDelivery={handleRetryDelivery}
+        />
+      </div>
       {showContextMenu && selection && (
         <AreaContextMenu
           selection={selection}
