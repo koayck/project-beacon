@@ -1562,9 +1562,6 @@ function DroneStatusPanel({ drones }: { drones: DroneMap }) {
 
   return (
     <div style={{
-      position: 'absolute',
-      top: 16,
-      left: 16,
       display: 'flex',
       flexDirection: 'column',
       gap: 8,
@@ -2426,9 +2423,6 @@ function Controls({
 
   return (
     <div style={{
-      position: 'absolute',
-      top: 16,
-      right: 16,
       background: selectMode ? 'rgba(30, 16, 0, 0.82)' : 'rgba(0,0,0,0.60)',
       border: selectMode ? '1px solid #ff880066' : '1px solid #334',
       borderLeft: selectMode ? '3px solid #ff8800' : '3px solid #5a6a7a',
