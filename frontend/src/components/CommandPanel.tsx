@@ -309,6 +309,7 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
             height: logHeight,
             transition: 'height 0.2s ease',
             overflowY: 'auto',
+            overflowX: 'hidden',
             padding: '8px 14px',
             display: 'flex',
             flexDirection: 'column',
@@ -327,7 +328,7 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
                     {m.lines[0]}
                   </div>
                 ) : (
-                  <div style={{ color: '#aec', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                  <div style={{ color: '#aec', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6 }}>
                     {m.lines.length === 0 && busy && (
                       <span style={{ color: '#556', fontStyle: 'italic' }}>
                         <Spinner /> LLM inferring{elapsed > 0 ? ` (${elapsed}s)` : '...'}
