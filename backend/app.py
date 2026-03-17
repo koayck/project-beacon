@@ -447,6 +447,12 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                     elif part.function_response:
                         resp = dict(part.function_response.response or {})
                         message = resp.get("message")
+                        # Extract survivors from sweep_scan_building results
+                        raw_survivors = resp.get("unique_survivors_detected", [])
+                        survivors_payload = [
+                            {"x": s["x"], "y": s["y"], "z": s["z"]}
+                            for s in raw_survivors
+                        ] if raw_survivors else []
                         if (
                             sweep_prompt
                             and isinstance(message, str)
@@ -457,7 +463,9 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                             if first_token_time is None:
                                 first_token_time = time.perf_counter()
                             total_chars += len(message)
-                            payload = {"type": "text", "text": message, "agent": event.author}
+                            payload: dict = {"type": "text", "text": message, "agent": event.author}
+                            if survivors_payload:
+                                payload["survivors"] = survivors_payload
                             yield f"data: {json.dumps(payload)}\n\n"
                             continue
                         payload = {
@@ -466,6 +474,8 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                             "success": resp.get("success", True),
                             "result": resp.get("message", str(resp)),
                         }
+                        if survivors_payload:
+                            payload["survivors"] = survivors_payload
                         yield f"data: {json.dumps(payload)}\n\n"
                     elif part.text and part.text.strip():
                         if sweep_prompt and is_structured_sweep_report(part.text):

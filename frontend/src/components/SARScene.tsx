@@ -457,6 +457,65 @@ function scannedSurvivorsFromDrone(dronePos: THREE.Vector3): SurvivorPoint[] {
   })
 }
 
+// Compute an exterior approach position for a survivor inside a building.
+// Aligns with the nearest window so the supply throw passes through it.
+const APPROACH_OFFSET = 4.0
+
+function computeApproachPosition(survivor: SurvivorPoint): SurvivorPoint {
+  const building = findBuildingAt(survivor.x, survivor.y, survivor.z)
+  if (!building) return survivor  // outside — go directly
+
+  const bounds = buildingBounds(building)
+
+  // Find the window closest to the survivor (prefer same floor, then distance)
+  if (building.windows.length > 0) {
+    let bestWindow: SimWindowAperture | null = null
+    let bestDist = Infinity
+
+    for (const w of building.windows) {
+      const windowCenterY = w.sillY + w.height / 2
+      const yDist = Math.abs(survivor.y - windowCenterY)
+      // Window world position on the wall
+      let wx: number, wz: number
+      if (w.face === 'north')      { wx = w.axisCenter; wz = bounds.minZ }
+      else if (w.face === 'south') { wx = w.axisCenter; wz = bounds.maxZ }
+      else if (w.face === 'west')  { wx = bounds.minX;  wz = w.axisCenter }
+      else                         { wx = bounds.maxX;  wz = w.axisCenter }
+
+      const xzDist = Math.sqrt((survivor.x - wx) ** 2 + (survivor.z - wz) ** 2)
+      const totalDist = yDist * 2 + xzDist  // weight Y more to prefer same floor
+      if (totalDist < bestDist) {
+        bestDist = totalDist
+        bestWindow = w
+      }
+    }
+
+    if (bestWindow) {
+      const wy = bestWindow.sillY + bestWindow.height / 2
+      if (bestWindow.face === 'west')
+        return { x: bounds.minX - APPROACH_OFFSET, y: wy, z: bestWindow.axisCenter }
+      if (bestWindow.face === 'east')
+        return { x: bounds.maxX + APPROACH_OFFSET, y: wy, z: bestWindow.axisCenter }
+      if (bestWindow.face === 'north')
+        return { x: bestWindow.axisCenter, y: wy, z: bounds.minZ - APPROACH_OFFSET }
+      // south
+      return { x: bestWindow.axisCenter, y: wy, z: bounds.maxZ + APPROACH_OFFSET }
+    }
+  }
+
+  // Fallback for windowless buildings — nearest face at survivor height
+  const distToWest  = survivor.x - bounds.minX
+  const distToEast  = bounds.maxX - survivor.x
+  const distToNorth = survivor.z - bounds.minZ
+  const distToSouth = bounds.maxZ - survivor.z
+  const minDist = Math.min(distToWest, distToEast, distToNorth, distToSouth)
+
+  if (minDist === distToWest)       return { x: bounds.minX - APPROACH_OFFSET, y: survivor.y, z: survivor.z }
+  else if (minDist === distToEast)  return { x: bounds.maxX + APPROACH_OFFSET, y: survivor.y, z: survivor.z }
+  else if (minDist === distToNorth) return { x: survivor.x, y: survivor.y, z: bounds.minZ - APPROACH_OFFSET }
+  else                              return { x: survivor.x, y: survivor.y, z: bounds.maxZ + APPROACH_OFFSET }
+}
+
 // ── Scene components ──────────────────────────────────────────────────────────
 
 function Ground() {
@@ -792,6 +851,62 @@ function ShophouseBlock({ transparentWalls }: { transparentWalls: boolean }) {
         </mesh>
       ))}
     </>
+  )
+}
+
+// ── Supply crates — dropped at survivor locations after delivery ──────────────
+
+function survivorKey(s: SurvivorPoint): string {
+  return `${s.x.toFixed(1)},${s.y.toFixed(1)},${s.z.toFixed(1)}`
+}
+
+function SupplyCrates({ deliveredTo }: { deliveredTo: Set<string> }) {
+  const crates = useMemo(() => {
+    return SURVIVOR_POSITIONS
+      .filter(s => deliveredTo.has(survivorKey(s)))
+      .map(s => ({ x: s.x, y: s.y, z: s.z }))
+  }, [deliveredTo])
+
+  const groupRef = useRef<THREE.Group>(null)
+
+  useFrame(({ clock }) => {
+    if (!groupRef.current) return
+    const t = clock.elapsedTime
+    groupRef.current.children.forEach((child, i) => {
+      // Gentle hover bob
+      child.position.y = crates[i].y - 0.6 + Math.sin(t * 1.5 + i * 2.1) * 0.08
+      child.rotation.y = t * 0.4 + i * 1.2
+    })
+  })
+
+  if (crates.length === 0) return null
+
+  return (
+    <group ref={groupRef}>
+      {crates.map((pos, i) => (
+        <group key={i} position={[pos.x, pos.y - 0.6, pos.z]}>
+          {/* Main crate body */}
+          <mesh castShadow>
+            <boxGeometry args={[0.5, 0.4, 0.5]} />
+            <meshStandardMaterial color="#ff8800" emissive="#cc5500" emissiveIntensity={0.4} />
+          </mesh>
+          {/* Cross straps */}
+          <mesh position={[0, 0.01, 0]}>
+            <boxGeometry args={[0.52, 0.06, 0.12]} />
+            <meshStandardMaterial color="#ffffff" emissive="#aaaaaa" emissiveIntensity={0.3} />
+          </mesh>
+          <mesh position={[0, 0.01, 0]}>
+            <boxGeometry args={[0.12, 0.06, 0.52]} />
+            <meshStandardMaterial color="#ffffff" emissive="#aaaaaa" emissiveIntensity={0.3} />
+          </mesh>
+          {/* Glow ring on ground */}
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.19, 0]}>
+            <ringGeometry args={[0.35, 0.5, 16]} />
+            <meshBasicMaterial color="#ff8800" transparent opacity={0.25} />
+          </mesh>
+        </group>
+      ))}
+    </group>
   )
 }
 
@@ -1377,19 +1492,64 @@ function CompassLabels({ northAngleRef }: { northAngleRef: MutableRefObject<numb
   )
 }
 
+// ── Supply throw animation ───────────────────────────────────────────────────
+
+const THROW_DURATION = 1.2  // seconds for supply to fly from drone to survivor
+const BASE_PICKUP_RADIUS = 4.0  // how close to base before cargo appears
+
+interface SupplyThrowProps {
+  from: THREE.Vector3
+  to: SurvivorPoint
+  onComplete: () => void
+}
+
+function SupplyThrow({ from, to, onComplete }: SupplyThrowProps) {
+  const meshRef = useRef<THREE.Mesh>(null)
+  const progress = useRef(0)
+  const startPos = useRef(from.clone())
+
+  useFrame((_, delta) => {
+    if (!meshRef.current) return
+    progress.current += delta / THROW_DURATION
+    const t = Math.min(progress.current, 1)
+
+    // Lerp X/Z linearly, add an arc on Y
+    const x = startPos.current.x + (to.x - startPos.current.x) * t
+    const z = startPos.current.z + (to.z - startPos.current.z) * t
+    // Parabolic arc: peaks halfway — kept low so the supply fits through windows
+    const arc = 4 * t * (1 - t) * 1.2  // max +1.2m at midpoint
+    const y = startPos.current.y + (to.y - startPos.current.y) * t + arc
+
+    meshRef.current.position.set(x, y, z)
+    meshRef.current.rotation.x += delta * 5
+    meshRef.current.rotation.z += delta * 3
+
+    if (t >= 1) onComplete()
+  })
+
+  return (
+    <mesh ref={meshRef} position={startPos.current.toArray()}>
+      <boxGeometry args={[0.35, 0.28, 0.35]} />
+      <meshStandardMaterial color="#ff8800" emissive="#cc5500" emissiveIntensity={0.5} />
+    </mesh>
+  )
+}
+
 // ── Drone (telemetry-driven position with smooth lerp) ────────────────────────
 
 interface DroneProps {
   targetPos: THREE.Vector3
   status: string
+  hasCargo: boolean
   nearbyObstacles?: number
   nearestObstacleDist?: number
   survivorsInRange?: number
 }
 
-function DroneMesh({ targetPos, status, nearbyObstacles = 0, nearestObstacleDist = 999, survivorsInRange = 0 }: DroneProps) {
+function DroneMesh({ targetPos, status, hasCargo, nearbyObstacles = 0, nearestObstacleDist = 999, survivorsInRange = 0 }: DroneProps) {
   const meshRef = useRef<THREE.Mesh>(null)
   const coneRef = useRef<THREE.Mesh>(null)
+  const cargoRef = useRef<THREE.Mesh>(null)
   const lerpPos = useRef(DRONE_START.clone())
 
   // FOV cone: points downward from drone, color encodes situation
@@ -1414,6 +1574,13 @@ function DroneMesh({ targetPos, status, nearbyObstacles = 0, nearestObstacleDist
       mat.color.setHex(coneColor)
     }
 
+    // Cargo block hangs underneath drone
+    if (cargoRef.current) {
+      cargoRef.current.position.copy(lerpPos.current)
+      cargoRef.current.position.y -= 0.55
+      cargoRef.current.visible = hasCargo
+    }
+
     const mat = meshRef.current.material as THREE.MeshStandardMaterial
     if (status === 'BLOCKED') {
       mat.color.setHex(0xff2200)
@@ -1435,6 +1602,11 @@ function DroneMesh({ targetPos, status, nearbyObstacles = 0, nearestObstacleDist
       <mesh ref={meshRef} position={DRONE_START.toArray()}>
         <boxGeometry args={[0.6, 0.6, 0.6]} />
         <meshStandardMaterial color="#00ffff" emissive="#00aaaa" emissiveIntensity={0.3} />
+      </mesh>
+      {/* Cargo block — hangs below drone when carrying supplies */}
+      <mesh ref={cargoRef} position={DRONE_START.toArray()} visible={false}>
+        <boxGeometry args={[0.4, 0.3, 0.4]} />
+        <meshStandardMaterial color="#ff8800" emissive="#cc5500" emissiveIntensity={0.4} />
       </mesh>
       {/* Downward-facing FOV cone */}
       <mesh ref={coneRef} position={DRONE_START.toArray()} rotation={[Math.PI, 0, 0]}>
@@ -1512,6 +1684,164 @@ function MissionLog({ lines }: { lines: string[] }) {
   )
 }
 
+// ── Intel Card — actionable scan findings ────────────────────────────────────
+
+function IntelCard({
+  survivors,
+  dronePos,
+  totalSurvivors,
+  deliveringTo,
+  deliveredTo,
+  onSendSupplies,
+}: {
+  survivors: SurvivorPoint[]
+  dronePos: THREE.Vector3
+  totalSurvivors: number
+  deliveringTo: Set<string>
+  deliveredTo: Set<string>
+  onSendSupplies: (survivor: SurvivorPoint) => void
+}) {
+  const detected = survivors.length
+  const submerged = survivors.filter(s => s.y < FLOOD_LEVEL - 0.2).length
+  const critical = submerged > 0
+  const deliveredCount = deliveredTo.size
+
+  return (
+    <div style={{
+      background: 'rgba(0,0,0,0.65)',
+      border: `1px solid ${critical ? 'rgba(255,80,80,0.5)' : '#334'}`,
+      borderRadius: 6,
+      padding: '10px 14px',
+      color: '#8899bb',
+      fontSize: 11,
+      fontFamily: 'Courier New, monospace',
+      lineHeight: 1.7,
+      pointerEvents: 'auto',
+      minWidth: 210,
+      maxHeight: 400,
+      overflowY: 'auto',
+    }}>
+      <div style={{ color: '#99b', marginBottom: 6, letterSpacing: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>SCAN INTEL</span>
+        <span style={{
+          color: detected > 0 ? '#ff6' : '#556',
+          fontSize: 10,
+        }}>
+          {detected > 0 ? 'LIVE' : 'NO CONTACT'}
+        </span>
+      </div>
+
+      {/* Summary row */}
+      <div style={{
+        display: 'flex',
+        gap: 12,
+        marginBottom: 8,
+        paddingBottom: 6,
+        borderBottom: '1px solid #334',
+      }}>
+        <div style={{ textAlign: 'center', flex: 1 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: detected > 0 ? '#4f4' : '#556' }}>
+            {detected}
+          </div>
+          <div style={{ fontSize: 9, color: '#667' }}>DETECTED</div>
+        </div>
+        <div style={{ textAlign: 'center', flex: 1 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: '#556' }}>
+            {totalSurvivors - detected}
+          </div>
+          <div style={{ fontSize: 9, color: '#667' }}>UNSCANNED</div>
+        </div>
+        {submerged > 0 && (
+          <div style={{ textAlign: 'center', flex: 1 }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: '#f44' }}>
+              {submerged}
+            </div>
+            <div style={{ fontSize: 9, color: '#f66' }}>SUBMERGED</div>
+          </div>
+        )}
+        {deliveredCount > 0 && (
+          <div style={{ textAlign: 'center', flex: 1 }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: '#4cf' }}>
+              {deliveredCount}
+            </div>
+            <div style={{ fontSize: 9, color: '#4cf' }}>SUPPLIED</div>
+          </div>
+        )}
+      </div>
+
+      {/* Drone position context */}
+      <div style={{ color: '#667', marginBottom: 6, fontSize: 10 }}>
+        SENSOR @ ({dronePos.x.toFixed(1)}, {dronePos.y.toFixed(1)}, {dronePos.z.toFixed(1)}) — {SURVIVOR_SENSOR_RANGE}m range
+      </div>
+
+      {/* Individual survivor entries */}
+      {detected === 0 ? (
+        <div style={{ color: '#556', fontStyle: 'italic', fontSize: 10 }}>
+          No heat signatures in sensor range. Move drone closer to scan targets.
+        </div>
+      ) : (
+        survivors.map((s, i) => {
+          const key = survivorKey(s)
+          const dist = Math.sqrt(
+            (s.x - dronePos.x) ** 2 + (s.y - dronePos.y) ** 2 + (s.z - dronePos.z) ** 2,
+          )
+          const isSubmerged = s.y < FLOOD_LEVEL - 0.2
+          const isDelivering = deliveringTo.has(key)
+          const isDelivered = deliveredTo.has(key)
+          return (
+            <div key={i} style={{
+              padding: '4px 6px',
+              marginBottom: 4,
+              borderRadius: 3,
+              background: isDelivered
+                ? 'rgba(60,200,255,0.10)'
+                : isSubmerged ? 'rgba(255,50,50,0.12)' : 'rgba(60,255,60,0.08)',
+              border: `1px solid ${isDelivered
+                ? 'rgba(60,200,255,0.3)'
+                : isSubmerged ? 'rgba(255,80,80,0.3)' : 'rgba(80,255,80,0.2)'}`,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: isDelivered ? '#4cf' : isSubmerged ? '#f66' : '#6f6' }}>
+                  SIG-{String.fromCharCode(65 + i)}
+                  {isSubmerged && !isDelivered && ' [SUBMERGED]'}
+                  {isDelivered && ' [SUPPLIED]'}
+                </span>
+                <span style={{ color: '#778' }}>{dist.toFixed(1)}m</span>
+              </div>
+              <div style={{ color: '#889', fontSize: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>
+                  ({s.x.toFixed(1)}, {s.y.toFixed(1)}, {s.z.toFixed(1)})
+                  {isSubmerged && !isDelivered && <span style={{ color: '#f44', marginLeft: 6 }}>CRITICAL</span>}
+                </span>
+                <button
+                  onClick={() => onSendSupplies(s)}
+                  disabled={isDelivering || isDelivered}
+                  style={{
+                    marginLeft: 6,
+                    border: `1px solid ${isDelivered ? 'rgba(60,200,255,0.3)' : isDelivering ? 'rgba(255,200,0,0.3)' : 'rgba(255,160,0,0.5)'}`,
+                    borderRadius: 3,
+                    background: isDelivered
+                      ? 'rgba(60,200,255,0.15)'
+                      : isDelivering ? 'rgba(255,200,0,0.12)' : 'rgba(255,140,0,0.15)',
+                    color: isDelivered ? '#4cf' : isDelivering ? '#ff6' : '#fa0',
+                    padding: '1px 6px',
+                    cursor: isDelivering || isDelivered ? 'default' : 'pointer',
+                    fontSize: 9,
+                    fontFamily: 'Courier New, monospace',
+                    opacity: isDelivered ? 0.7 : 1,
+                  }}
+                >
+                  {isDelivered ? 'DONE' : isDelivering ? 'EN ROUTE...' : 'DELIVER'}
+                </button>
+              </div>
+            </div>
+          )
+        })
+      )}
+    </div>
+  )
+}
+
 interface ControlsProps {
   followBeacon: boolean
   onToggleFollow: () => void
@@ -1535,9 +1865,6 @@ function Controls({
 
   return (
     <div style={{
-      position: 'absolute',
-      top: 16,
-      right: 16,
       background: selectMode ? 'rgba(30, 16, 0, 0.82)' : 'rgba(0,0,0,0.60)',
       border: selectMode ? '1px solid #ff880066' : '1px solid #334',
       borderRadius: 6,
@@ -1645,6 +1972,13 @@ export default function SARScene() {
   const [followBeacon, setFollowBeacon] = useState(false)
   const [transparentWalls, setTransparentWalls] = useState(false)
   const [scanRaysEnabled, setScanRaysEnabled] = useState(true)
+  const [deliveringTo, setDeliveringTo] = useState<Set<string>>(new Set())
+  const [deliveredTo, setDeliveredTo] = useState<Set<string>>(new Set())
+  // ── Cargo / throw state ────────────────────────────────────────────────────
+  const [hasCargo, setHasCargo] = useState(false)
+  const [activeThrow, setActiveThrow] = useState<{ from: THREE.Vector3; to: SurvivorPoint } | null>(null)
+  const deliveryTarget = useRef<SurvivorPoint | null>(null)  // survivor we're delivering to
+  const deliveryApproach = useRef<SurvivorPoint | null>(null) // approach pos (outside window)
   // ── Area selection state ─────────────────────────────────────────────────────
   const [selectMode, setSelectMode]       = useState(false)
   const [dragStart, setDragStart]         = useState<THREE.Vector3 | null>(null)
@@ -1745,6 +2079,69 @@ export default function SARScene() {
     }
   }, [telemetry?.status])
 
+  // ── Cargo pickup at base ───────────────────────────────────────────────
+  // When a delivery is pending and the drone returns near base, "pick up"
+  // the supplies so the orange block appears under the drone.
+  const BASE_PICKUP_RANGE = 3.0
+  const cargoPickedUp = useRef(false)
+
+  useEffect(() => {
+    // Only trigger when there's a pending delivery and cargo hasn't been picked up yet
+    if (!deliveryTarget.current || cargoPickedUp.current) return
+    if (!pendingDeliveryKey.current) return
+
+    const distToBase = Math.sqrt(
+      dronePos.x ** 2 + dronePos.y ** 2 + dronePos.z ** 2,
+    )
+    if (distToBase < BASE_PICKUP_RANGE) {
+      cargoPickedUp.current = true
+      setHasCargo(true)
+      addLog('📦 Supplies collected from base')
+    }
+  }, [dronePos, addLog])
+
+  // ── Cargo throw trigger ─────────────────────────────────────────────────
+  // Only throw when the drone has stopped at the approach position (outside
+  // the window).  Using a tight radius around the approach point prevents
+  // premature throws at intermediate waypoints that happen to be within
+  // SURVIVOR_SENSOR_RANGE of the survivor.
+  const APPROACH_ARRIVE_RADIUS = 3.0
+
+  useEffect(() => {
+    const target = deliveryTarget.current
+    const approach = deliveryApproach.current
+    if (!target || !approach || activeThrow || !cargoPickedUp.current) return
+    // Only throw when the drone has stopped moving (arrived at destination)
+    if (droneStatus === 'MOVING') return
+
+    const distToApproach = Math.sqrt(
+      (dronePos.x - approach.x) ** 2 +
+      (dronePos.y - approach.y) ** 2 +
+      (dronePos.z - approach.z) ** 2,
+    )
+    if (distToApproach < APPROACH_ARRIVE_RADIUS) {
+      cargoPickedUp.current = false
+      setHasCargo(false)
+      setActiveThrow({ from: dronePos.clone(), to: target })
+      addLog('📦 Supply thrown to survivor')
+    }
+  }, [dronePos, droneStatus, activeThrow, addLog])
+
+  const handleThrowComplete = useCallback(() => {
+    if (!activeThrow) return
+    const key = survivorKey(activeThrow.to)
+    setDeliveredTo(prev => new Set(prev).add(key))
+    setDeliveringTo(prev => {
+      const next = new Set(prev)
+      next.delete(key)
+      return next
+    })
+    deliveryTarget.current = null
+    deliveryApproach.current = null
+    setActiveThrow(null)
+    addLog('✓ Supply delivered to survivor')
+  }, [activeThrow, addLog])
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
@@ -1790,6 +2187,7 @@ export default function SARScene() {
   }, [toggleFollowBeacon, selectMode])
 
   const abortRef = useRef<AbortController | null>(null)
+  const pendingDeliveryKey = useRef<string | null>(null)
 
   const handleCommand = useCallback(async (
     prompt: string,
@@ -1801,6 +2199,21 @@ export default function SARScene() {
     try {
       for await (const event of streamCommand(ASSET_ID, prompt, ac.signal)) {
         onEvent(event)
+        // Propagate server-detected survivors into discoveredSurvivors
+        if (
+          (event.type === 'tool_result' || event.type === 'text') &&
+          event.survivors &&
+          event.survivors.length > 0
+        ) {
+          setDiscoveredSurvivors(prev => {
+            const known = new Set(prev.map(survivorKey))
+            const novel = event.survivors!.filter(
+              s => !known.has(survivorKey(s)),
+            )
+            if (novel.length === 0) return prev
+            return [...prev, ...novel]
+          })
+        }
         if (event.type === 'done') addLog('✓ Agent responded')
       }
     } catch (e: unknown) {
@@ -1808,6 +2221,20 @@ export default function SARScene() {
         addLog('⚠ Command aborted')
       } else {
         throw e
+      }
+      // Clear delivery state on failure/abort
+      const key = pendingDeliveryKey.current
+      if (key) {
+        setDeliveringTo(prev => {
+          const next = new Set(prev)
+          next.delete(key)
+          return next
+        })
+        setHasCargo(false)
+        cargoPickedUp.current = false
+        deliveryTarget.current = null
+        deliveryApproach.current = null
+        pendingDeliveryKey.current = null
       }
     }
   }, [addLog])
@@ -1876,10 +2303,51 @@ export default function SARScene() {
     setShowContextMenu(false)
   }, [])
 
+  const handleSendSupplies = useCallback((survivor: SurvivorPoint) => {
+    const key = survivorKey(survivor)
+    const coords = `(${survivor.x.toFixed(1)}, ${survivor.y.toFixed(1)}, ${survivor.z.toFixed(1)})`
+    const approach = computeApproachPosition(survivor)
+    const approachCoords = `(${approach.x.toFixed(1)}, ${approach.y.toFixed(1)}, ${approach.z.toFixed(1)})`
+
+    setDeliveringTo(prev => new Set(prev).add(key))
+    pendingDeliveryKey.current = key
+    deliveryTarget.current = survivor
+    deliveryApproach.current = approach
+    // Cargo visibility is deferred — cargoPickedUp stays false until drone
+    // returns near base, where the useEffect below flips it on.
+    addLog(`Dispatching supplies to survivor at ${coords}`)
+
+    const isInside = findBuildingAt(survivor.x, survivor.y, survivor.z) !== null
+    const prompt = isInside
+      ? `Deliver emergency supplies to survivor at ${coords}. ` +
+        `First return to base at (0, 0, 0) to collect supplies, ` +
+        `then navigate to the approach position ${approachCoords} outside the building. ` +
+        `Do NOT navigate to the survivor's interior coordinates — the approach position is the drop point.`
+      : `Deliver emergency supplies to survivor at ${coords}. ` +
+        `First return to base at (0, 0, 0) to collect supplies, ` +
+        `then navigate to ${coords} to drop supplies.`
+
+    // Route through CommandPanel so the user sees the prompt + streaming response
+    setPendingScanPrompt(prompt)
+  }, [addLog])
+
   const scannedSurvivors = useMemo(
     () => scannedSurvivorsFromDrone(dronePos),
     [dronePos.x, dronePos.y, dronePos.z],
   )
+
+  // Persistent intel — accumulate survivors across all scans
+  const [discoveredSurvivors, setDiscoveredSurvivors] = useState<SurvivorPoint[]>([])
+
+  useEffect(() => {
+    if (scannedSurvivors.length === 0) return
+    setDiscoveredSurvivors(prev => {
+      const known = new Set(prev.map(survivorKey))
+      const novel = scannedSurvivors.filter(s => !known.has(survivorKey(s)))
+      if (novel.length === 0) return prev
+      return [...prev, ...novel]
+    })
+  }, [scannedSurvivors])
 
   return (
     <div style={{
@@ -1942,30 +2410,57 @@ export default function SARScene() {
         <DroneMesh
           targetPos={dronePos}
           status={droneStatus}
+          hasCargo={hasCargo}
           nearbyObstacles={telemetry?.nearby_obstacles}
           nearestObstacleDist={telemetry?.nearest_obstacle_dist}
           survivorsInRange={telemetry?.survivors_in_range}
         />
+        {activeThrow && (
+          <SupplyThrow
+            from={activeThrow.from}
+            to={activeThrow.to}
+            onComplete={handleThrowComplete}
+          />
+        )}
         <SurvivorScanRays
           enabled={scanRaysEnabled}
           dronePos={dronePos}
           survivors={scannedSurvivors}
         />
+        <SupplyCrates deliveredTo={deliveredTo} />
       </Canvas>
 
       <DroneStatusPanel drones={drones} />
       {!selectMode && <CoordOverlay point={hoverPt} copied={copied} />}
       <CompassLabels northAngleRef={northAngleRef} />
       <MissionLog lines={log} />
-      <Controls
-        followBeacon={followBeacon}
-        onToggleFollow={toggleFollowBeacon}
-        transparentWalls={transparentWalls}
-        onToggleWalls={toggleWallTransparency}
-        scanRaysEnabled={scanRaysEnabled}
-        onToggleScanRays={toggleScanRays}
-        selectMode={selectMode}
-      />
+      <div style={{
+        position: 'absolute',
+        top: 16,
+        right: 16,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        pointerEvents: 'auto',
+      }}>
+        <Controls
+          followBeacon={followBeacon}
+          onToggleFollow={toggleFollowBeacon}
+          transparentWalls={transparentWalls}
+          onToggleWalls={toggleWallTransparency}
+          scanRaysEnabled={scanRaysEnabled}
+          onToggleScanRays={toggleScanRays}
+          selectMode={selectMode}
+        />
+        <IntelCard
+          survivors={discoveredSurvivors}
+          dronePos={dronePos}
+          totalSurvivors={SURVIVOR_POSITIONS.length}
+          deliveringTo={deliveringTo}
+          deliveredTo={deliveredTo}
+          onSendSupplies={handleSendSupplies}
+        />
+      </div>
       {showContextMenu && selection && (
         <AreaContextMenu
           selection={selection}
