@@ -1,7 +1,7 @@
 'use client'
 
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { Line, OrbitControls, PerspectiveCamera } from '@react-three/drei'
+import { Line, OrbitControls, PerspectiveCamera, Text } from '@react-three/drei'
 import { useRef, useState, useEffect, useMemo, useCallback, type RefObject, type MutableRefObject } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
@@ -851,6 +851,194 @@ function ShophouseBlock({ transparentWalls }: { transparentWalls: boolean }) {
         </mesh>
       ))}
     </>
+  )
+}
+
+// ── Base landing pad at origin ────────────────────────────────────────────────
+
+function BasePad() {
+  const groupRef = useRef<THREE.Group>(null)
+  const ringsRef = useRef<THREE.Group>(null)
+  const scanRef = useRef<THREE.Mesh>(null)
+  const beaconRefs = useRef<THREE.Mesh[]>([])
+
+  const PAD_RADIUS = 5
+  const PAD_HEIGHT = 0.12
+  const PYLON_HEIGHT = 2.2
+  const PYLON_RADIUS = 0.15
+  const NUM_PULSE_RINGS = 3
+
+  useFrame(({ clock }) => {
+    const t = clock.elapsedTime
+
+    // Rotate the scan ring slowly (z-axis after the -PI/2 X rotation lays it flat)
+    if (scanRef.current) {
+      scanRef.current.rotation.set(-Math.PI / 2, 0, t * 0.6)
+    }
+
+    // Pulse the beacon pylons
+    beaconRefs.current.forEach((mesh, i) => {
+      if (!mesh) return
+      const phase = t * 2.0 + i * (Math.PI / 2)
+      const pulse = 0.4 + 0.6 * Math.abs(Math.sin(phase))
+      ;(mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = pulse
+    })
+
+    // Animate expanding pulse rings
+    if (ringsRef.current) {
+      ringsRef.current.children.forEach((child, i) => {
+        const mesh = child as THREE.Mesh
+        const phase = (t * 0.5 + i * (1.0 / NUM_PULSE_RINGS)) % 1.0
+        const scale = 0.3 + phase * 1.0
+        mesh.scale.set(scale, 1, scale)
+        ;(mesh.material as THREE.MeshStandardMaterial).opacity = 0.35 * (1.0 - phase)
+      })
+    }
+  })
+
+  // Corner pylon positions (square arrangement just inside pad edge)
+  const pylonOffset = PAD_RADIUS * 0.72
+  const pylonPositions: [number, number, number][] = [
+    [-pylonOffset, 0, -pylonOffset],
+    [ pylonOffset, 0, -pylonOffset],
+    [-pylonOffset, 0,  pylonOffset],
+    [ pylonOffset, 0,  pylonOffset],
+  ]
+
+  return (
+    <group ref={groupRef} position={[0, 0.04, 0]}>
+      {/* Main octagonal platform */}
+      <mesh position={[0, PAD_HEIGHT / 2, 0]}>
+        <cylinderGeometry args={[PAD_RADIUS, PAD_RADIUS, PAD_HEIGHT, 8]} />
+        <meshStandardMaterial color="#1a1d24" roughness={0.7} metalness={0.3} />
+      </mesh>
+
+      {/* Raised inner ring — darker deck */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, PAD_HEIGHT + 0.02, 0]}>
+        <ringGeometry args={[2.6, 3.4, 32]} />
+        <meshStandardMaterial
+          color="#0e1118"
+          emissive="#1a3a5a"
+          emissiveIntensity={0.15}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      {/* Inner cross markings — tactical crosshair */}
+      {[0, Math.PI / 2].map((rot, i) => (
+        <mesh key={`cross-${i}`} position={[0, PAD_HEIGHT + 0.03, 0]} rotation={[-Math.PI / 2, rot, 0]}>
+          <planeGeometry args={[4.8, 0.12]} />
+          <meshStandardMaterial
+            color="#2a5a7a"
+            emissive="#3a8abf"
+            emissiveIntensity={0.5}
+            side={THREE.DoubleSide}
+            transparent
+            opacity={0.8}
+          />
+        </mesh>
+      ))}
+
+      {/* Centre pip — glowing beacon dot */}
+      <mesh position={[0, PAD_HEIGHT + 0.06, 0]}>
+        <cylinderGeometry args={[0.35, 0.35, 0.06, 16]} />
+        <meshStandardMaterial
+          color="#00ccff"
+          emissive="#00ccff"
+          emissiveIntensity={1.2}
+        />
+      </mesh>
+
+      {/* Concentric ring markings on deck */}
+      {[1.6, 3.8].map((r, i) => (
+        <mesh key={`ring-${i}`} rotation={[-Math.PI / 2, 0, 0]} position={[0, PAD_HEIGHT + 0.025, 0]}>
+          <ringGeometry args={[r - 0.04, r + 0.04, 48]} />
+          <meshStandardMaterial
+            color="#1e4060"
+            emissive="#2060a0"
+            emissiveIntensity={0.3}
+            side={THREE.DoubleSide}
+            transparent
+            opacity={0.7}
+          />
+        </mesh>
+      ))}
+
+      {/* Edge ring — bright outline */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, PAD_HEIGHT + 0.025, 0]}>
+        <ringGeometry args={[PAD_RADIUS - 0.08, PAD_RADIUS + 0.02, 8]} />
+        <meshStandardMaterial
+          color="#2a4a6a"
+          emissive="#3070a0"
+          emissiveIntensity={0.4}
+          side={THREE.DoubleSide}
+          transparent
+          opacity={0.6}
+        />
+      </mesh>
+
+      {/* Animated scan arc — a partial ring that rotates */}
+      <mesh ref={scanRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, PAD_HEIGHT + 0.04, 0]}>
+        <ringGeometry args={[PAD_RADIUS - 0.3, PAD_RADIUS + 0.15, 32, 1, 0, Math.PI * 0.4]} />
+        <meshStandardMaterial
+          color="#00ddff"
+          emissive="#00ddff"
+          emissiveIntensity={0.9}
+          side={THREE.DoubleSide}
+          transparent
+          opacity={0.55}
+        />
+      </mesh>
+
+
+      {/* Diagonal corner marks — chevron-style tick marks */}
+      {[0, Math.PI / 2, Math.PI, Math.PI * 1.5].map((angle, i) => {
+        const dist = PAD_RADIUS * 0.55
+        const cx = Math.cos(angle + Math.PI / 4) * dist
+        const cz = Math.sin(angle + Math.PI / 4) * dist
+        return (
+          <mesh
+            key={`tick-${i}`}
+            position={[cx, PAD_HEIGHT + 0.03, cz]}
+            rotation={[-Math.PI / 2, angle + Math.PI / 4, 0]}
+          >
+            <planeGeometry args={[1.2, 0.08]} />
+            <meshStandardMaterial
+              color="#2a5a7a"
+              emissive="#3a8abf"
+              emissiveIntensity={0.4}
+              side={THREE.DoubleSide}
+              transparent
+              opacity={0.7}
+            />
+          </mesh>
+        )
+      })}
+
+      {/* "BASE" label on the deck */}
+      <Text
+        position={[0, PAD_HEIGHT + 0.04, 2.0]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        fontSize={1.1}
+        letterSpacing={0.25}
+        color="#3a8abf"
+        anchorX="center"
+        anchorY="middle"
+        fontWeight="bold"
+      >
+        BASE
+        <meshStandardMaterial
+          color="#2a6a9a"
+          emissive="#3a8abf"
+          emissiveIntensity={0.5}
+          transparent
+          opacity={0.85}
+        />
+      </Text>
+
+      {/* Point light for ambient base glow */}
+      <pointLight position={[0, 1.5, 0]} color="#1a6090" intensity={2.5} distance={12} decay={2} />
+    </group>
   )
 }
 
@@ -2380,6 +2568,7 @@ export default function SARScene() {
         {/* Scene */}
         <Ground />
         <GridOverlay />
+        <BasePad />
         <ObstacleBuilding />
         <TargetBuilding transparentWalls={transparentWalls} />
         <BalconyBuilding transparentWalls={transparentWalls} />
