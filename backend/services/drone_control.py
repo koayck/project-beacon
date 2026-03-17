@@ -130,12 +130,16 @@ async def _wait_until_waypoint_reached(
     timeout_s: float = 60.0,
     poll_s: float = 0.2,
     blocked_retries: int = 2,
+    exclude_building_id: int | None = None,
 ) -> dict:
     """
     Poll drone status until it reaches a waypoint, is blocked, or times out.
 
     On BLOCKED, re-plans from the drone's current position to the target waypoint
     up to ``blocked_retries`` times.
+
+    ``exclude_building_id`` is forwarded to ``plan_route`` on re-plan so that the
+    building being scanned is not treated as a full obstacle during sweep recovery.
     """
     client = grpc_client
     elapsed = 0.0
@@ -143,7 +147,10 @@ async def _wait_until_waypoint_reached(
         status = await client.get_status(asset_id)
 
         if status.get("status") == "BLOCKED" and blocked_retries > 0:
-            route = await plan_route(asset_id, x, z, y)
+            route = await plan_route(
+                asset_id, x, z, y,
+                exclude_building_id=exclude_building_id,
+            )
             if "error" not in route:
                 for wp in route["waypoints"]:
                     await client.move_to(
@@ -162,6 +169,7 @@ async def _wait_until_waypoint_reached(
                         timeout_s=timeout_s,
                         poll_s=poll_s,
                         blocked_retries=0,
+                        exclude_building_id=exclude_building_id,
                     )
                     if not sub["ok"]:
                         return sub
@@ -818,6 +826,10 @@ def plan_building_vertical_sweep(
     # Ascending floor rings.
     _current_corner = _start_corner
     _cw = True  # start clockwise; serpentine alternates per floor
+    # Track the last emitted (x, z) so inter-floor transitions can be checked
+    # for collisions.  Initialised to the start corner; updated after each ring.
+    _last_rx: float = corners[_start_corner][0]
+    _last_rz: float = corners[_start_corner][1]
 
     for level_y in floor_levels:
         levels.append(level_y)
@@ -842,6 +854,32 @@ def plan_building_vertical_sweep(
                 p_min_x=p_min_x,
             )
             prev_rx, prev_rz = corners[_current_corner]
+
+            # ── Inter-floor transit check ─────────────────────────────────
+            # The previous ring may have ended at a 4th-face window waypoint
+            # that lies outside the current ring's start corner.  The direct
+            # diagonal from that position to this ring's first waypoint can
+            # re-enter the scanned building.  _route_sweep_segment excludes the
+            # scanned building from its check, so we add a separate zero-margin
+            # check for it here and insert a climb/cruise transit if needed.
+            if ring_items:
+                first_rx, first_rz, _ = ring_items[0]
+                # Check whether the path from the previous floor's last emitted
+                # position to the first item of this ring clips any building,
+                # including the scanned building (margin=0).
+                inter_blockers = WORLD.obstacles_in_path(
+                    _last_rx, level_y, _last_rz,
+                    first_rx, level_y, first_rz,
+                    samples=30, margin=0.0,
+                )
+                if inter_blockers:
+                    over_y = round(max(b.max_y for b in inter_blockers) + 3.0, 2)
+                    over_y = max(over_y, round(rooftop_y, 2))
+                    waypoints.append({"x": round(_last_rx, 2), "y": over_y, "z": round(_last_rz, 2),
+                                      "level_y": rooftop_y, "reason": "inter-floor climb", "transit": True})
+                    waypoints.append({"x": round(first_rx, 2), "y": over_y, "z": round(first_rz, 2),
+                                      "level_y": rooftop_y, "reason": "inter-floor cruise", "transit": True})
+
             for rx, rz, reason in ring_items:
                 for extra in _route_sweep_segment(prev_rx, level_y, prev_rz, rx, level_y, rz, building.id, rooftop_y):
                     waypoints.append({**extra, "level_y": rooftop_y})
@@ -856,6 +894,7 @@ def plan_building_vertical_sweep(
                 )
                 prev_rx, prev_rz = rx, rz
             _current_corner = end_corner
+            _last_rx, _last_rz = prev_rx, prev_rz  # track last emitted position
             _cw = not _cw  # alternate direction for next floor
 
         else:
@@ -1088,6 +1127,7 @@ async def sweep_scan_building(
 
         wait_result = await _wait_until_waypoint_reached(
             asset_id, wp["x"], wp["y"], wp["z"],
+            exclude_building_id=building_id,
         )
         if not wait_result.get("ok", False):
             return {
