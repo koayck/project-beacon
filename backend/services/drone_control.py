@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from backend.grpc.client import DroneGrpcClient
@@ -703,27 +704,29 @@ def plan_building_vertical_sweep(
     # window at a given level are simply skipped.
     for level_y in floor_levels:
         levels.append(level_y)
-        level_windows = {w["face"]: w for w in above_flood if round(w["y"], 2) == level_y}
+        # Group windows by face, preserving ALL windows per face (not just the
+        # last one).  Buildings like the shophouse have multiple windows on the
+        # same face at the same floor — each one needs its own scan waypoint.
+        level_windows: dict[str, list[dict]] = defaultdict(list)
+        for w in above_flood:
+            if round(w["y"], 2) == level_y:
+                level_windows[w["face"]].append(w)
 
         # Ring: NW → [north] → NE → [east] → SE → [south] → SW → [west] → NW
         # NW corner may be adjusted east to avoid an adjacent building.
         ring: list[tuple[float, float, str]] = [
             (nw_x, nw_z, "perimeter NW"),
         ]
-        if "north" in level_windows:
-            ww = level_windows["north"]
+        for ww in level_windows.get("north", []):
             ring.append((ww["x"], ww["z"], f"window scan north floor {ww['floor']}"))
         ring.append((ne_x, ne_z, "perimeter NE"))
-        if "east" in level_windows:
-            ww = level_windows["east"]
+        for ww in level_windows.get("east", []):
             ring.append((ww["x"], ww["z"], f"window scan east floor {ww['floor']}"))
         ring.append((se_x, se_z, "perimeter SE"))
-        if "south" in level_windows:
-            ww = level_windows["south"]
+        for ww in level_windows.get("south", []):
             ring.append((ww["x"], ww["z"], f"window scan south floor {ww['floor']}"))
         ring.append((sw_x, sw_z, "perimeter SW"))
-        if "west" in level_windows:
-            ww = level_windows["west"]
+        for ww in level_windows.get("west", []):
             ring.append((ww["x"], ww["z"], f"window scan west floor {ww['floor']}"))
         # When NW was pushed east, add a "west-face stop" before closing the ring
         # so the drone hugs the west face safely and then turns NE to reach NW.
@@ -1082,13 +1085,31 @@ async def sweep_scan_building(
                 entry["closest_distance"] = distance
                 entry["direction"] = det.get("direction")
 
+    # Filter to survivors inside or adjacent to the target building.
+    # Without this, survivors from nearby buildings within sensor range
+    # (e.g. a balcony survivor 11 m away) get attributed to the wrong scan.
+    _BUILDING_MARGIN = 2.0  # metres beyond footprint to still claim ownership
+    bld = plan["building"]
     unique_survivors_detected = sorted(
-        survivor_detection_index.values(),
+        (
+            entry
+            for entry in survivor_detection_index.values()
+            if (
+                isinstance(entry.get("x"), (int, float))
+                and isinstance(entry.get("z"), (int, float))
+                and bld["min_x"] - _BUILDING_MARGIN <= entry["x"] <= bld["max_x"] + _BUILDING_MARGIN
+                and bld["min_z"] - _BUILDING_MARGIN <= entry["z"] <= bld["max_z"] + _BUILDING_MARGIN
+            )
+        ),
         key=lambda row: int(row["id"]),
     )
-    # Use whichever signal is stronger: unique survivor IDs or per-waypoint in-range count.
-    # This avoids false zeroes in summary when IDs are unavailable but detections exist.
-    reported_survivor_count = max(len(unique_survivors_detected), max_survivors_seen)
+    # After building-proximity filtering, the unique list is authoritative.
+    # Fall back to per-waypoint in-range count only when no IDs were resolved.
+    reported_survivor_count = (
+        len(unique_survivors_detected)
+        if survivor_detection_index
+        else max_survivors_seen
+    )
     final_status = await client.get_status(asset_id)
     latest_sensor_summary = waypoint_reports[-1]["sensor_summary"] if waypoint_reports else ""
     message = _build_sweep_scan_report(
