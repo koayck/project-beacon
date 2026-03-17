@@ -1,49 +1,28 @@
 """
-World model — Python mirror of the SARScene.tsx scene data.
+World model — loaded from shared/world.json.
 Single source of truth for building AABBs, survivor positions,
 window apertures, trees, parks, and flood level used by the vision system and
 collision avoidance.
 """
 from __future__ import annotations
 
+import json as _json
 import math
+import pathlib as _pathlib
 from dataclasses import dataclass, field
 from typing import Literal, NamedTuple
 
+# ── Load shared/world.json once at import time ────────────────────────────────
+_WORLD_JSON = _json.loads(
+    (_pathlib.Path(__file__).parents[2] / "shared" / "world.json").read_text()
+)
+_S = _WORLD_JSON["scene"]
 
-# ── Flood ─────────────────────────────────────────────────────────────────────
-FLOOD_LEVEL: float = 1.4  # metres above Y=0
-BUILDING_PROXIMITY_MARGIN_M: float = 2.0  # edge distance to consider "near" a building
-FLOOR_HEIGHT_M: float = 3.0
-FLOOR_SLAB_THICKNESS_M: float = 0.2
-WINDOW_SCAN_STANDOFF_M: float = 4.0
-
-# ── Scene geometry (mirrors SARScene.tsx constants) ───────────────────────────
-# Buildings: (cx, cz, w, d, h)  — centre X/Z, width, depth, height
-# Target building at (-15, -20) — 4 floors, 12 m tall
-# Obstacle at (-7, -10) — solid block on the direct route from base (0,0,0) to target
-_RAW_BUILDINGS: list[tuple[float, float, float, float, float]] = [
-    (-15, -20, 8, 8, 12),   # target building
-    ( -7, -10, 6, 5, 10),   # obstacle on direct route (0,0,0) → (-15,0,-20)
-    ( 20, -20, 6, 6,  9),   # balcony building (3 floors, exterior balcony on south face)
-    ( 12, -27, 10, 8, 9),   # twin shophouse block (3 floors, windows on south face)
-    (-23, -28, 10, 10, 21), # NW tower (7 floors), SE corner overlaps NW corner of target
-]
-
-# Survivor positions: (x, y, z) — inside target building, floors 2/3/4
-# survY(n) = (n-1)*3.0 + 0.65
-_RAW_SURVIVORS: list[tuple[float, float, float]] = [
-    (-16.5, 3.65, -19.0),   # floor 2 — target building
-    (-14.5, 6.65, -20.5),   # floor 3 — target building
-    (-13.5, 9.65, -21.0),   # floor 4 — target building
-    ( 20.0, 6.65, -16.0),   # floor 3 — balcony building, on exterior balcony (outside AABB)
-    (  9.5, 3.65, -27.0),   # floor 2 — shophouse A, visible through south window
-    ( 14.5, 6.65, -27.0),   # floor 3 — shophouse B, visible through south window
-    (-19.0,  3.65, -27.5),  # floor 2 — NW tower, inside near east window  (cx+5-1, survY(2), cz+0.5)
-    (-23.0, 12.65, -22.0),  # floor 5 — NW tower, on south balcony         (cx, survY(5), cz+5)
-]
-
-_RAW_TREES: list[tuple[float, float]] = []
+FLOOD_LEVEL: float                 = _S["flood_level_m"]
+BUILDING_PROXIMITY_MARGIN_M: float = _S["building_proximity_margin_m"]
+FLOOR_HEIGHT_M: float              = _S["floor_height_m"]
+FLOOR_SLAB_THICKNESS_M: float      = _S["floor_slab_thickness_m"]
+WINDOW_SCAN_STANDOFF_M: float      = _S["window_scan_standoff_m"]
 
 
 # ── Dataclasses ───────────────────────────────────────────────────────────────
@@ -349,102 +328,35 @@ class WorldModel:
 
 
 def _build_world() -> WorldModel:
-    def _target_windows(cx: float, cz: float) -> tuple[WindowAperture, ...]:
+    buildings: list[Building] = []
+    for b in _WORLD_JSON["buildings"]:
+        cx, cz = float(b["cx"]), float(b["cz"])
         windows: list[WindowAperture] = []
-        layout: tuple[tuple[int, WindowFace, float], ...] = (
-            (1, "west", 0.0),
-            (2, "north", -1.5),
-            (3, "east", -0.5),
-            (4, "south", 1.5),
-        )
-        window_width = 2.0
-        window_height = 1.6
-        for floor, face, offset in layout:
-            sill_y = (floor - 1) * 3.0 + 0.4
-            axis_center = cx + offset if face in ("north", "south") else cz + offset
-            windows.append(
-                WindowAperture(
-                    face=face,
-                    axis_center=axis_center,
-                    sill_y=sill_y,
-                    width=window_width,
-                    height=window_height,
-                )
-            )
-        return tuple(windows)
+        for w in b["windows"]:
+            face: WindowFace = w["face"]
+            sill_y = (w["floor"] - 1) * FLOOR_HEIGHT_M + w["sill"]
+            axis_center = cx + w["offset"] if face in ("north", "south") else cz + w["offset"]
+            windows.append(WindowAperture(
+                face=face,
+                axis_center=axis_center,
+                sill_y=sill_y,
+                width=w["width"],
+                height=w["height"],
+            ))
+        buildings.append(Building(
+            id=b["id"],
+            cx=cx, cz=cz,
+            w=float(b["w"]), d=float(b["d"]), h=float(b["h"]),
+            windows=tuple(windows),
+        ))
 
-    def _shophouse_windows(cx: float, cz: float) -> tuple[WindowAperture, ...]:
-        windows: list[WindowAperture] = []
-        layout: tuple[tuple[int, WindowFace, float], ...] = (
-            (2, "south", -2.5),
-            (2, "south",  2.5),
-            (3, "south", -2.5),
-            (3, "south",  2.5),
-        )
-        window_width = 1.6
-        window_height = 1.4
-        for floor, face, offset in layout:
-            sill_y = (floor - 1) * 3.0 + 0.5
-            axis_center = cx + offset if face in ("north", "south") else cz + offset
-            windows.append(
-                WindowAperture(
-                    face=face,
-                    axis_center=axis_center,
-                    sill_y=sill_y,
-                    width=window_width,
-                    height=window_height,
-                )
-            )
-        return tuple(windows)
-
-    def _nw_tower_windows(cx: float, cz: float) -> tuple[WindowAperture, ...]:
-        windows: list[WindowAperture] = []
-        layout: tuple[tuple[int, WindowFace, float], ...] = (
-            (2, "east",  0.5),
-            (4, "south", -1.5),
-            (6, "north",  2.0),
-            (7, "west",  -1.0),
-        )
-        window_width = 1.8
-        window_height = 1.6
-        for floor, face, offset in layout:
-            sill_y = (floor - 1) * 3.0 + 0.4
-            axis_center = cx + offset if face in ("north", "south") else cz + offset
-            windows.append(
-                WindowAperture(
-                    face=face,
-                    axis_center=axis_center,
-                    sill_y=sill_y,
-                    width=window_width,
-                    height=window_height,
-                )
-            )
-        return tuple(windows)
-
-    buildings = [
-        Building(
-            id=i,
-            cx=cx,
-            cz=cz,
-            w=w,
-            d=d,
-            h=h,
-            windows=(
-                _target_windows(cx, cz) if i == 0
-                else _shophouse_windows(cx, cz) if i == 3
-                else _nw_tower_windows(cx, cz) if i == 4
-                else ()
-            ),
-        )
-        for i, (cx, cz, w, d, h) in enumerate(_RAW_BUILDINGS)
-    ]
     survivors = [
-        Survivor(id=i, x=x, y=y, z=z)
-        for i, (x, y, z) in enumerate(_RAW_SURVIVORS)
+        Survivor(id=i, x=float(s["x"]), y=float(s["y"]), z=float(s["z"]))
+        for i, s in enumerate(_WORLD_JSON["survivors"])
     ]
     trees = [
-        Tree(id=i, x=x, z=z)
-        for i, (x, z) in enumerate(_RAW_TREES)
+        Tree(id=i, x=float(t["x"]), z=float(t["z"]))
+        for i, t in enumerate(_WORLD_JSON.get("trees", []))
     ]
     return WorldModel(buildings=buildings, survivors=survivors, trees=trees)
 
