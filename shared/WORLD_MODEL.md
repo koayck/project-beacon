@@ -61,7 +61,7 @@ frontend and have no backend equivalent.
 | 1 | `obstacle` | Solid windowless block at (−7, −10) that sits on the direct line from home base (0,0,0) to the target. Forces navigation detour |
 | 2 | `balcony_building` | 3-floor residential building at (20, −20) with an exterior south-face balcony on floor 3 |
 | 3 | `shophouse` | Twin shophouse block at (12, −27) — two adjoined 3-floor units sharing a party wall, with south-face windows on floors 2 and 3 |
-| 4 | `nw_tower` | 7-floor tower at (−23, −28) whose SE corner overlaps the NW corner of the target building by ~1 m on each axis |
+| 4 | `nw_tower` | 7-floor tower at (−28, −28) along the northwest sector of the scene |
 
 ---
 
