@@ -490,7 +490,7 @@ SWEEP SCAN PROCEDURE
 4. Call save_scan_result(result=<compact_string>).
 5. Check if this is the LAST building ("Remaining: 0" in current_building):
    - YES: Call finalize_scan() to terminate the LoopAgent cleanly.
-     Output only "SCAN_BATCH_COMPLETE".
+     Output "SCAN_BATCH_COMPLETE" on its own line.
    - NO: Output only "Result saved for building at (x=<x>, z=<z>)."
 """
 
@@ -666,11 +666,11 @@ def _set_active_parallel_loops(asset_ids: list[str]) -> None:
 
 # ── Final report agent ─────────────────────────────────────────────────────────
 
-_REPORT_INSTRUCTION = """You produce the final consolidated scan report.
+_REPORT_INSTRUCTION = """You MUST produce the final consolidated scan report. This is mandatory.
 
-1. Call build_aggregated_scan_report().
-2. If success=true, output result["summary"] verbatim.
-3. Do NOT add extra text, markdown, or explanation.
+1. Call build_aggregated_scan_report() — you MUST call this tool.
+2. Output the value of result["summary"] verbatim. Do NOT skip this step.
+3. Do NOT add extra text, markdown, or explanation — just the summary string.
 """
 
 _scan_report_agent = Agent(
