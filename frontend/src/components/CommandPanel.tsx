@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import type { AgentStreamEvent } from '@/lib/api'
-import { setDroneSpeed, resetDroneToBase } from '@/lib/api'
+import { setFleetSpeed, recallFleet } from '@/lib/api'
 
 interface AgentMessage {
   role: 'user' | 'agent'
@@ -23,10 +23,10 @@ interface Props {
 }
 
 const QUICK_ACTIONS = [
-  { label: 'SCAN TARGET', prompt: 'Scan the target building for survivors', color: '#ffaa44', border: 'rgba(255,170,0,0.35)', bg: 'rgba(255,170,0,0.08)' },
-  { label: 'SURVEY', prompt: 'Survey the perimeter of the area', color: '#4cf', border: 'rgba(0,200,255,0.35)', bg: 'rgba(0,200,255,0.08)' },
-  { label: 'STATUS', prompt: 'Report current mission status', color: '#6c6', border: 'rgba(100,200,100,0.35)', bg: 'rgba(100,200,100,0.08)' },
-  { label: 'RTB', prompt: 'Return the drone to base', color: '#99f', border: 'rgba(130,130,255,0.35)', bg: 'rgba(130,130,255,0.08)' },
+  { label: 'SCAN TARGET', prompt: 'Scan the target building for survivors using all available drones', color: '#ffaa44', border: 'rgba(255,170,0,0.35)', bg: 'rgba(255,170,0,0.08)' },
+  { label: 'SURVEY', prompt: 'Survey the perimeter of the area using all available drones', color: '#4cf', border: 'rgba(0,200,255,0.35)', bg: 'rgba(0,200,255,0.08)' },
+  { label: 'STATUS', prompt: 'Report current mission status for all drones', color: '#6c6', border: 'rgba(100,200,100,0.35)', bg: 'rgba(100,200,100,0.08)' },
+  { label: 'RTB', prompt: 'Recall all drones to base', color: '#99f', border: 'rgba(130,130,255,0.35)', bg: 'rgba(130,130,255,0.08)', direct: true },
 ] as const
 
 function formatToolCall(name: string, args: Record<string, unknown>, agent: string): string {
@@ -137,21 +137,21 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
     const next = !fastMode
     setFastMode(next)
     try {
-      await setDroneSpeed(assetId, next ? 20.0 : 5.0)
+      await setFleetSpeed(next ? 20.0 : 5.0)
     } catch {
       setFastMode(!next) // revert on failure
     }
-  }, [assetId, connected, fastMode])
+  }, [connected, fastMode])
 
   const handleReset = useCallback(async () => {
     if (!connected || resetting) return
     setResetting(true)
     try {
-      await resetDroneToBase(assetId)
+      await recallFleet()
     } finally {
       setResetting(false)
     }
-  }, [assetId, connected, resetting])
+  }, [connected, resetting])
 
   const submit = async (directPrompt?: string) => {
     const text = directPrompt ?? input.trim()
@@ -369,7 +369,7 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
             {QUICK_ACTIONS.map(action => (
               <button
                 key={action.label}
-                onClick={() => submit(action.prompt)}
+                onClick={() => 'direct' in action && action.direct ? handleReset() : submit(action.prompt)}
                 disabled={!connected || busy}
                 title={action.prompt}
                 style={{
@@ -421,7 +421,7 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
             <button
               onClick={handleReset}
               disabled={!connected || resetting}
-              title="Immediately return drone to base (bypasses ADK)"
+              title="Immediately return all drones to base (bypasses ADK)"
               style={{
                 background: resetting ? 'rgba(0,200,255,0.10)' : 'transparent',
                 border: `1px solid ${resetting ? 'rgba(0,200,255,0.4)' : 'rgba(80,120,200,0.25)'}`,
