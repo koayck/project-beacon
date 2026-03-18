@@ -56,6 +56,67 @@ _DOCKER_NETWORK = "beacon-net"
 _mcp_http_app = beacon_mcp.http_app(path="/", transport="streamable-http")
 
 
+def _first_exception_message(exc: BaseException) -> str:
+    """Return the first concrete nested exception message for ExceptionGroup errors."""
+    current: BaseException = exc
+    while isinstance(current, BaseExceptionGroup) and current.exceptions:
+        next_exc = current.exceptions[0]
+        if isinstance(next_exc, BaseException):
+            current = next_exc
+        else:
+            break
+    return f"{type(current).__name__}: {current}"
+
+
+def _extract_survivor_coords(payload: object) -> list[dict[str, float]]:
+    """Extract unique survivor coordinates from nested tool responses."""
+    seen: set[tuple[float, float, float]] = set()
+    survivors: list[dict[str, float]] = []
+    survivor_collection_keys = {
+        "unique_survivors_detected",
+        "detected_survivors",
+        "detected_survivors_within_scan_radius",
+        "survivors_visible",
+        "survivors",
+    }
+
+    def _add_point(candidate: object) -> None:
+        if not isinstance(candidate, dict):
+            return
+        x = candidate.get("x")
+        y = candidate.get("y")
+        z = candidate.get("z")
+        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)) or not isinstance(z, (int, float)):
+            return
+        key = (round(float(x), 3), round(float(y), 3), round(float(z), 3))
+        if key in seen:
+            return
+        seen.add(key)
+        survivors.append({"x": key[0], "y": key[1], "z": key[2]})
+
+    def _walk(node: object, from_survivor_collection: bool = False) -> None:
+        if isinstance(node, dict):
+            if from_survivor_collection or (
+                node.get("object_type") == "survivor"
+                or "submerged" in node
+                or "distance" in node
+            ):
+                _add_point(node)
+            for key, value in node.items():
+                if key == "objects" and isinstance(value, list):
+                    for obj in value:
+                        if isinstance(obj, dict) and obj.get("object_type") == "survivor":
+                            _add_point(obj)
+                _walk(value, key in survivor_collection_keys)
+            return
+        if isinstance(node, list):
+            for item in node:
+                _walk(item, from_survivor_collection)
+
+    _walk(payload)
+    return survivors
+
+
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
     global _adk_runner
@@ -403,7 +464,9 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                 ):
                     await queue.put(("event", event))
             except Exception as exc:
-                await queue.put(("error", exc))
+                err_text = _first_exception_message(exc)
+                logging.getLogger(__name__).exception("ADK stream error: %s", err_text)
+                await queue.put(("error", err_text))
             finally:
                 await queue.put(("end", None))
 
@@ -447,12 +510,7 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                     elif part.function_response:
                         resp = dict(part.function_response.response or {})
                         message = resp.get("message")
-                        # Extract survivors from sweep_scan_building results
-                        raw_survivors = resp.get("unique_survivors_detected", [])
-                        survivors_payload = [
-                            {"x": s["x"], "y": s["y"], "z": s["z"]}
-                            for s in raw_survivors
-                        ] if raw_survivors else []
+                        survivors_payload = _extract_survivor_coords(resp)
                         if (
                             sweep_prompt
                             and isinstance(message, str)
