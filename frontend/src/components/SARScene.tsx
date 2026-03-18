@@ -1932,7 +1932,7 @@ function DroneMesh({ targetPos, status, hasCargo, nearbyObstacles = 0, nearestOb
             <div style={{
               color: '#00ffff',
               fontFamily: 'Courier New, monospace',
-              fontSize: '11px',
+              fontSize: '48px',
               fontWeight: 'bold',
               whiteSpace: 'nowrap',
               background: 'rgba(0, 16, 24, 0.82)',
@@ -2741,14 +2741,16 @@ export default function SARScene() {
   const handleCommand = useCallback(async (
     prompt: string,
     onEvent: (e: AgentStreamEvent) => void,
+    assetIdOverride?: string,
   ): Promise<void> => {
     const ac = new AbortController()
     abortRef.current = ac
     addLog(`⬆ ${prompt}`)
     setAgentBusy(true)
     setActivities(prev => [...prev, { id: ++_activityId, icon: '▹', label: prompt.length > 50 ? prompt.slice(0, 47) + '...' : prompt, ts: Date.now(), status: 'done' }])
+    const effectiveAssetId = assetIdOverride ?? ASSET_ID
     try {
-      for await (const event of streamCommand(ASSET_ID, prompt, ac.signal)) {
+      for await (const event of streamCommand(effectiveAssetId, prompt, ac.signal)) {
         onEvent(event)
         if (event.type === 'tool_result') {
           setActivities(prev => {
@@ -2821,6 +2823,7 @@ export default function SARScene() {
   // We store a pending prompt and pass it to CommandPanel via the externalPrompt
   // prop so the command appears in its input, then auto-submits.
   const [pendingScanPrompt, setPendingScanPrompt] = useState<string | null>(null)
+  const [pendingScanAssetId, setPendingScanAssetId] = useState<string | null>(null)
 
   const handleAreaScan = useCallback(() => {
     if (!selection) return
@@ -2866,7 +2869,9 @@ export default function SARScene() {
     setDragEnd(null)
     setSelection(null)
     setShowContextMenu(false)
-    // Inject prompt into CommandPanel
+    // Inject prompt into CommandPanel; use "auto" asset for multi-building so the
+    // fleet assigner picks the closest available drones.
+    setPendingScanAssetId(buildingNames.length > 1 ? 'auto' : null)
     setPendingScanPrompt(prompt)
   }, [selection, addLog])
 
@@ -3102,7 +3107,11 @@ export default function SARScene() {
         onCommand={handleCommand}
         onStop={handleStop}
         externalPrompt={pendingScanPrompt}
-        onExternalPromptConsumed={() => setPendingScanPrompt(null)}
+        externalAssetId={pendingScanAssetId}
+        onExternalPromptConsumed={() => {
+          setPendingScanPrompt(null)
+          setPendingScanAssetId(null)
+        }}
       />
     </div>
   )

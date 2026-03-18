@@ -1050,45 +1050,40 @@ async def sweep_scan_building(
     Execute a full-height-above-water perimeter sweep scan around a building.
     """
     client = grpc_client
-    # Always fetch status: needed for approach-aware sweep planning regardless
-    # of whether target_x / target_z were explicitly provided.
+    # Fetch status so default target can fall back to current drone position.
     status = await client.get_status(asset_id)
-    approach_x: float = status["x"]
-    approach_z: float = status["z"]
     if target_x is None:
-        target_x = approach_x
+        target_x = status["x"]
     if target_z is None:
-        target_z = approach_z
+        target_z = status["z"]
 
-    plan = plan_building_vertical_sweep(
+    preplan = plan_building_vertical_sweep(
         target_x=target_x,
         target_z=target_z,
         level_step=level_step,
         standoff=standoff,
-        approach_x=approach_x,
-        approach_z=approach_z,
     )
-    if not plan.get("matched_building", False):
+    if not preplan.get("matched_building", False):
         return {
             "asset_id": asset_id,
-            "error": plan.get("error", "No building found for sweep scan"),
-            "input": plan.get("input", {"x": target_x, "z": target_z}),
+            "error": preplan.get("error", "No building found for sweep scan"),
+            "input": preplan.get("input", {"x": target_x, "z": target_z}),
         }
-    if "error" in plan:
+    if "error" in preplan:
         return {
             "asset_id": asset_id,
-            "error": plan["error"],
-            "building": plan.get("building"),
-            "flood_level": plan.get("flood_level"),
+            "error": preplan["error"],
+            "building": preplan.get("building"),
+            "flood_level": preplan.get("flood_level"),
         }
 
     waypoint_reports: list[dict] = []
-    rooftop = plan["rooftop_position"]
-    building_cx: float = plan["building"]["center_x"]
-    building_cz: float = plan["building"]["center_z"]
+    rooftop = preplan["rooftop_position"]
+    building_cx: float = preplan["building"]["center_x"]
+    building_cz: float = preplan["building"]["center_z"]
 
     # ── Step 2: Navigate to top of building using plan_route ───────────
-    building_id = plan["building"]["id"]
+    building_id = preplan["building"]["id"]
     route = await plan_route(
         asset_id=asset_id,
         target_x=rooftop["x"],
@@ -1126,6 +1121,77 @@ async def sweep_scan_building(
                 "status": wait_result.get("status"),
                 "completed_waypoints": 0,
             }
+
+    # Rebuild the sweep plan from rooftop approach so pathing is consistent
+    # regardless of where the drone started before rooftop transit.
+    plan = plan_building_vertical_sweep(
+        target_x=target_x,
+        target_z=target_z,
+        level_step=level_step,
+        standoff=standoff,
+        approach_x=rooftop["x"],
+        approach_z=rooftop["z"],
+    )
+    if not plan.get("matched_building", False):
+        return {
+            "asset_id": asset_id,
+            "error": plan.get("error", "No building found for sweep scan"),
+            "input": plan.get("input", {"x": target_x, "z": target_z}),
+        }
+    if "error" in plan:
+        return {
+            "asset_id": asset_id,
+            "error": plan["error"],
+            "building": plan.get("building"),
+            "flood_level": plan.get("flood_level"),
+        }
+    rooftop = plan["rooftop_position"]
+    building_cx = plan["building"]["center_x"]
+    building_cz = plan["building"]["center_z"]
+    building_id = plan["building"]["id"]
+
+    # Ensure the first sweep waypoint is reached via routed movement too; a direct
+    # lateral rooftop move can be blocked for tightly-packed buildings (e.g. NW tower).
+    if plan["waypoints"]:
+        first_wp = plan["waypoints"][0]
+        transition_route = await plan_route(
+            asset_id=asset_id,
+            target_x=first_wp["x"],
+            target_z=first_wp["z"],
+            target_y=first_wp["y"],
+            exclude_building_id=building_id,
+        )
+        if "error" in transition_route:
+            return {
+                "asset_id": asset_id,
+                "error": "Sweep start blocked — cannot reach first scan waypoint",
+                "route_error": transition_route["error"],
+                "route_obstacles": transition_route.get("obstacles", []),
+                "completed_waypoints": 0,
+            }
+        for move_wp in transition_route.get("waypoints", []):
+            move_result = await client.move_to(
+                asset_id, move_wp["x"], move_wp["y"], move_wp["z"],
+                get_drone_speed(asset_id),
+            )
+            if not move_result.get("success", True):
+                return {
+                    "asset_id": asset_id,
+                    "error": "Failed while routing to first sweep waypoint",
+                    "move_result": move_result,
+                    "completed_waypoints": 0,
+                }
+            wait_result = await _wait_until_waypoint_reached(
+                asset_id, move_wp["x"], move_wp["y"], move_wp["z"],
+                exclude_building_id=building_id,
+            )
+            if not wait_result.get("ok", False):
+                return {
+                    "asset_id": asset_id,
+                    "error": wait_result.get("error", "Could not reach first sweep waypoint"),
+                    "status": wait_result.get("status"),
+                    "completed_waypoints": 0,
+                }
 
     # ── Steps 3-4: Sweep floor rings + rooftop ────────────────────────
     # Waypoints come from plan_building_vertical_sweep.  Most are perimeter
@@ -1660,6 +1726,202 @@ def plan_sweep_pattern(
         x += spacing
         direction *= -1
     return {"waypoints": waypoints, "count": len(waypoints)}
+
+
+async def assign_fleet_to_buildings(buildings: list[dict]) -> dict:
+    """
+    Assign the closest available drones to buildings using greedy nearest-first matching.
+
+    For each building the nearest IDLE drone with battery > 20% is selected.
+    Returns assignments (drone→building pairs), any unassigned buildings (more buildings
+    than eligible drones), and idle drones that were not needed.
+    """
+    if not buildings:
+        return {"assignments": [], "unassigned_buildings": [], "idle_drones": []}
+
+    client = grpc_client
+    asset_ids = client.registered_asset_ids()
+    if not asset_ids:
+        return {
+            "error": "No drones uplinked.",
+            "suggestion": "Use /uplink to connect a drone first.",
+            "assignments": [],
+            "unassigned_buildings": buildings,
+        }
+
+    statuses = await asyncio.gather(
+        *[client.get_status(aid) for aid in asset_ids],
+        return_exceptions=True,
+    )
+
+    eligible: list[dict] = []
+    for status in statuses:
+        if isinstance(status, Exception):
+            continue
+        if status.get("battery", 0) <= 20:
+            continue
+        if status.get("status", "") != "IDLE":
+            continue
+        eligible.append(status)
+
+    if not eligible:
+        busy = [s for s in statuses if not isinstance(s, Exception)]
+        return {
+            "error": "No eligible drones available (all busy or low battery).",
+            "suggestion": f"{len(busy)} drone(s) registered but none are IDLE with battery > 20%.",
+            "assignments": [],
+            "unassigned_buildings": buildings,
+        }
+
+    # Greedy nearest-first: repeatedly pick the globally closest (drone, building) pair.
+    remaining_drones = list(eligible)
+    remaining_buildings = list(buildings)
+    assignments: list[dict] = []
+
+    while remaining_buildings and remaining_drones:
+        best_drone: dict | None = None
+        best_building: dict | None = None
+        best_dist = float("inf")
+        for drone in remaining_drones:
+            for building in remaining_buildings:
+                dist = math.sqrt(
+                    (drone["x"] - building["x"]) ** 2 + (drone["z"] - building["z"]) ** 2
+                )
+                if dist < best_dist:
+                    best_dist = dist
+                    best_drone = drone
+                    best_building = building
+
+        if best_drone is None or best_building is None:
+            break
+
+        assignments.append(
+            {
+                "asset_id": best_drone["asset_id"],
+                "building": best_building,
+                "distance_m": round(best_dist, 1),
+            }
+        )
+        remaining_drones = [d for d in remaining_drones if d["asset_id"] != best_drone["asset_id"]]
+        remaining_buildings = [b for b in remaining_buildings if b is not best_building]
+
+    return {
+        "assignments": assignments,
+        "unassigned_buildings": remaining_buildings,
+        "idle_drones": [d["asset_id"] for d in remaining_drones],
+        "total_assigned": len(assignments),
+    }
+
+
+async def parallel_fleet_scan(
+    assignments: list[dict],
+    unassigned_buildings: list[dict] | None = None,
+) -> dict:
+    """
+    Execute sweep scans for all drone-building assignments concurrently.
+
+    After the parallel first batch, any unassigned buildings are scanned
+    sequentially by the first assignment's drone (fallback for when fewer
+    drones than buildings are available).
+    """
+    if not assignments:
+        return {"error": "No assignments provided.", "results": [], "total_survivors": 0}
+
+    async def _scan_one(asset_id: str, building: dict) -> dict:
+        result = await sweep_scan_building(
+            asset_id=asset_id,
+            target_x=building["x"],
+            target_z=building["z"],
+        )
+        return {"asset_id": asset_id, "building": building, "scan_result": result}
+
+    batch = await asyncio.gather(
+        *[_scan_one(a["asset_id"], a["building"]) for a in assignments],
+        return_exceptions=True,
+    )
+
+    all_results: list[dict] = []
+    for i, result in enumerate(batch):
+        if isinstance(result, Exception):
+            all_results.append(
+                {
+                    "asset_id": assignments[i]["asset_id"],
+                    "building": assignments[i]["building"],
+                    "scan_result": {"error": str(result)},
+                }
+            )
+        else:
+            all_results.append(result)
+
+    # Sequential fallback: unassigned buildings handled by first assignment's drone.
+    if unassigned_buildings:
+        fallback_aid = assignments[0]["asset_id"]
+        for building in unassigned_buildings:
+            result = await sweep_scan_building(
+                asset_id=fallback_aid,
+                target_x=building["x"],
+                target_z=building["z"],
+            )
+            all_results.append({"asset_id": fallback_aid, "building": building, "scan_result": result})
+
+    # Build consolidated report.
+    total_survivors = 0
+    building_summaries: list[str] = []
+    for result in all_results:
+        scan = result["scan_result"]
+        building = result["building"]
+        if "error" in scan:
+            building_summaries.append(
+                f"Building at (x={building['x']}, z={building['z']}) [{result['asset_id']}]: "
+                f"SCAN ERROR — {scan['error']}"
+            )
+        else:
+            count: int = scan.get("reported_survivor_count", 0)
+            levels = scan.get("level_count", "?")
+            waypoints = scan.get("waypoint_count", "?")
+            total_survivors += count
+            line = (
+                f"Building at (x={building['x']:.1f}, z={building['z']:.1f}) [{result['asset_id']}]: "
+                f"{count} survivor(s) across {levels} level(s). Waypoints: {waypoints}."
+            )
+            unique_survivors: list[dict] = scan.get("unique_survivors_detected", [])
+            if unique_survivors:
+                survivor_lines = []
+                for survivor in unique_survivors:
+                    submerged_tag = " [SUBMERGED — CRITICAL]" if survivor.get("submerged") else ""
+                    survivor_lines.append(
+                        f"  - Survivor {survivor['id']}: "
+                        f"({survivor['x']}, {survivor['y']}, {survivor['z']}){submerged_tag}"
+                    )
+                if any(survivor.get("submerged") for survivor in unique_survivors):
+                    submerged_count = sum(1 for survivor in unique_survivors if survivor.get("submerged"))
+                    line += f" [CRITICAL: {submerged_count} submerged]"
+                line += "\n" + "\n".join(survivor_lines)
+            building_summaries.append(line)
+
+    total_buildings = len(all_results)
+    divider = "═" * 39
+    thin_divider = "─" * 39
+    total_line = (
+        "No heat signatures detected across all scanned buildings."
+        if total_survivors == 0
+        else f"TOTAL SURVIVORS DETECTED: {total_survivors}"
+    )
+    summary = (
+        f"{divider}\n"
+        f"  AREA SCAN COMPLETE — {total_buildings} building(s)\n"
+        f"{divider}\n"
+        + "\n".join(building_summaries)
+        + f"\n{thin_divider}\n{total_line}\n{divider}"
+    )
+
+    return {
+        "success": True,
+        "results": all_results,
+        "total_buildings_scanned": total_buildings,
+        "total_survivors": total_survivors,
+        "summary": summary,
+    }
 
 
 async def deploy_swarm(asset_ids: list[str], formation: str = "spread") -> dict:
