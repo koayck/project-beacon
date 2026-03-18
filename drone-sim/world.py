@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 FLOOD_LEVEL: float = 1.4
-SURVIVOR_RANGE: float = 12.0
+SURVIVOR_RANGE: float = 3.0
 FLOOR_HEIGHT: float = 3.0
 FLOOR_SLAB_THICKNESS: float = 0.2
 
