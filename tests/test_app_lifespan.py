@@ -32,6 +32,16 @@ async def test_app_lifespan_closes_adk_runner(monkeypatch: pytest.MonkeyPatch) -
     def fake_grpc_close_all() -> None:
         call_order.append("grpc_close_all")
 
+    class FakeAutoRecallMonitor:
+        def __init__(self, *args, **kwargs) -> None:
+            call_order.append("auto_recall_init")
+
+        def start(self) -> None:
+            call_order.append("auto_recall_start")
+
+        async def stop(self) -> None:
+            call_order.append("auto_recall_stop")
+
     class FakeRunner:
         def __init__(self, *args, **kwargs) -> None:
             call_order.append("runner_init")
@@ -45,6 +55,7 @@ async def test_app_lifespan_closes_adk_runner(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(app_module.asset_repo, "list_all", fake_list_assets)
     monkeypatch.setattr(app_module.udp_listener, "stop", fake_udp_stop)
     monkeypatch.setattr(app_module.grpc_client, "close_all", fake_grpc_close_all)
+    monkeypatch.setattr(app_module, "AutoRecallMonitor", FakeAutoRecallMonitor)
     monkeypatch.setattr(app_module, "Runner", FakeRunner)
     monkeypatch.setitem(
         sys.modules,
@@ -59,4 +70,6 @@ async def test_app_lifespan_closes_adk_runner(monkeypatch: pytest.MonkeyPatch) -
 
     assert app_module._adk_runner is None
     assert "runner_close" in call_order
+    assert "auto_recall_start" in call_order
+    assert "auto_recall_stop" in call_order
     assert call_order.index("runner_close") < call_order.index("grpc_close_all")

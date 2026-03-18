@@ -51,6 +51,12 @@ export interface FleetDrone {
   grpc_port: number | null
 }
 
+export interface AutoRecallConfig {
+  enabled: boolean
+  battery_threshold: number
+  cooldown_seconds: number
+}
+
 export async function uplink(assetId: string): Promise<UplinkResponse> {
   const res = await fetch(`${BASE}/uplink/${assetId}`, { method: 'POST' })
   if (!res.ok) throw new Error(`Uplink failed: ${res.status}`)
@@ -76,6 +82,12 @@ export async function scan(): Promise<{ discovered: DiscoveredDrone[] }> {
 export async function getFleet(): Promise<{ fleet: FleetDrone[]; count: number; active_count: number }> {
   const res = await fetch(`${BASE}/fleet`)
   if (!res.ok) throw new Error(`Fleet lookup failed: ${res.status}`)
+  return res.json()
+}
+
+export async function getAutoRecallConfig(): Promise<AutoRecallConfig> {
+  const res = await fetch(`${BASE}/config/auto-recall`)
+  if (!res.ok) throw new Error(`Auto-recall config lookup failed: ${res.status}`)
   return res.json()
 }
 
