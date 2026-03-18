@@ -152,7 +152,7 @@ async def sweep_scan_building_tool(
     asset_id: str,
     target_x: float | None = None,
     target_z: float | None = None,
-    scan_radius: float = 12.0,
+    scan_radius: float = 3.0,
     level_step: float = 3.0,
     standoff: float = 2.0,
 ) -> dict:

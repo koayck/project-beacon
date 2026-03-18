@@ -36,7 +36,7 @@ def _sim_survivor_ids(x: float, y: float, z: float) -> list[int]:
 
 
 def test_backend_and_sim_use_same_survivor_range():
-    assert SURVIVOR_RANGE == 12.0
+    assert SURVIVOR_RANGE == 3.0
     assert SIM_WORLD.SURVIVOR_RANGE == SURVIVOR_RANGE
 
 
@@ -50,12 +50,12 @@ def test_through_wall_is_not_detected():
 
 
 def test_through_window_is_detected():
-    # East of target building, aligned to the floor-3 east facade window aperture.
-    x, y, z = -7.0, 6.65, -20.5
+    # East of NW tower, aligned to floor-2 east window and within survivor range.
+    x, y, z = -17.5, 3.65, -27.5
     backend_ids = _backend_survivor_ids(x, y, z)
     sim_ids = _sim_survivor_ids(x, y, z)
-    assert 1 in backend_ids
-    assert 1 in sim_ids
+    assert 6 in backend_ids
+    assert 6 in sim_ids
 
 
 def test_floor_slab_blocks_cross_floor_visibility():
@@ -83,10 +83,10 @@ def test_outdoor_survivor_range_requires_los_and_matches_sim():
     backend_world_model.WORLD.survivors.append(backend_extra)
     SIM_WORLD.SURVIVORS.append(sim_extra)
     try:
-        blocked_backend = _backend_survivor_ids(-2.0, 5.0, -2.0)   # obstacle building blocks LOS
-        clear_backend = _backend_survivor_ids(-12.0, 5.0, -2.0)    # clear LOS, still in range
+        blocked_backend = _backend_survivor_ids(-2.0, 5.0, -2.0)   # blocked/out-of-range
+        clear_backend = _backend_survivor_ids(-12.5, 5.0, -10.0)   # clear LOS, still in range
         blocked_sim = _sim_survivor_ids(-2.0, 5.0, -2.0)
-        clear_sim = _sim_survivor_ids(-12.0, 5.0, -2.0)
+        clear_sim = _sim_survivor_ids(-12.5, 5.0, -10.0)
 
         assert 999 not in blocked_backend
         assert 999 in clear_backend
