@@ -4,10 +4,12 @@ from fastmcp import FastMCP
 
 from backend.services.fleet import discover_fleet, ensure_uplink
 from backend.services.drone_control import (
+    assign_fleet_to_buildings,
     find_buildings_in_area,
     get_drone_status,
     get_drone_view,
     move_drone_to,
+    parallel_fleet_scan,
     plan_route,
     resolve_scan_target,
     return_to_base,
@@ -179,3 +181,27 @@ def find_buildings_in_area_tool(
     Use before an area scan loop to discover which buildings need to be scanned.
     """
     return find_buildings_in_area(center_x, center_z, radius, drone_x, drone_z)
+
+
+@beacon_mcp.tool(name="assign_fleet_to_buildings")
+async def assign_fleet_to_buildings_tool(buildings: list[dict]) -> dict:
+    """
+    Assign the closest available IDLE drones to a list of buildings using greedy
+    nearest-first matching. Returns assignments (drone→building), unassigned buildings
+    (when fewer drones than buildings), and idle drones that were not needed.
+    """
+    return await assign_fleet_to_buildings(buildings)
+
+
+@beacon_mcp.tool(name="parallel_fleet_scan")
+async def parallel_fleet_scan_tool(
+    assignments: list[dict],
+    unassigned_buildings: list[dict] | None = None,
+) -> dict:
+    """
+    Execute sweep scans for multiple drone-building assignments concurrently.
+    Unassigned buildings are handled sequentially by the first drone after the
+    parallel batch completes. Returns a consolidated report with per-building
+    survivor counts and a formatted summary.
+    """
+    return await parallel_fleet_scan(assignments, unassigned_buildings)

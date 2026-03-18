@@ -192,7 +192,7 @@ def _assert_container_running(container_name: str) -> None:
 
 def _build_agent_prompt(req: CommandRequest) -> str:
     prompt_parts: list[str] = []
-    if req.asset_id:
+    if req.asset_id and req.asset_id.upper() not in ("AUTO", ""):
         prompt_parts.append(
             f"Preferred asset: {req.asset_id}. Use it if it is active and suitable, "
             "but discover the fleet first before committing to it."

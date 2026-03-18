@@ -15,10 +15,11 @@ interface Props {
   connected: boolean
   uplinked: boolean
   battery: number | null
-  onCommand: (prompt: string, onEvent: (e: AgentStreamEvent) => void) => Promise<void>
+  onCommand: (prompt: string, onEvent: (e: AgentStreamEvent) => void, assetIdOverride?: string) => Promise<void>
   onStop?: () => void
   externalPrompt?: string | null
   onExternalPromptConsumed?: () => void
+  externalAssetId?: string | null
 }
 
 const QUICK_ACTIONS = [
@@ -49,7 +50,7 @@ function messagesToText(messages: AgentMessage[]): string {
     .join('\n\n')
 }
 
-export default function CommandPanel({ assetId, connected, uplinked, battery, onCommand, onStop, externalPrompt, onExternalPromptConsumed }: Props) {
+export default function CommandPanel({ assetId, connected, uplinked, battery, onCommand, onStop, externalPrompt, onExternalPromptConsumed, externalAssetId }: Props) {
   const [input, setInput]       = useState('')
   const [busy, setBusy]         = useState(false)
   const [elapsed, setElapsed]   = useState(0)
@@ -97,7 +98,7 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
           setTtft(event.ttft_ms)
           setTps(event.tps)
         }
-      }).catch(err => {
+      }, externalAssetId ?? undefined).catch(err => {
         appendAgentLine(`Error: ${err}`)
       }).finally(() => {
         setBusy(false)
@@ -543,4 +544,3 @@ function Spinner() {
   }, [])
   return <span style={{ marginRight: 4, color: '#6af' }}>{frames[i]}</span>
 }
-
