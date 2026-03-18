@@ -72,8 +72,9 @@ const W2_FOG: [number, number] = [160, 450]
 const W2_BUILDINGS = [...(WORLD2.buildings as WorldBuilding[])].sort((a, b) => a.id - b.id)
 const W2_SURVIVORS = WORLD2.survivors.map(s => ({ x: s.x, y: s.y, z: s.z }))
 
-// Drone start position
-const DRONE_START = new THREE.Vector3(13, 1, 13)
+// Drone start position — Y matches pad surface (1.8m platform + 0.12m pad)
+const BASE_Y = 2.0
+const DRONE_START = new THREE.Vector3(0, BASE_Y, 0)
 
 const FOLLOW_CAMERA_OFFSET = new THREE.Vector3(18, 14, 18)
 
@@ -2399,7 +2400,7 @@ export default function SARScene() {
     const t = drones[deliveryDroneId.current]
     if (!t) return
 
-    const distToBase = Math.sqrt(t.x ** 2 + t.y ** 2 + t.z ** 2)
+    const distToBase = Math.sqrt(t.x ** 2 + (t.y - BASE_Y) ** 2 + t.z ** 2)
     if (distToBase < BASE_PICKUP_RANGE) {
       cargoPickedUp.current = true
       setHasCargo(true)
@@ -2638,11 +2639,11 @@ export default function SARScene() {
     const isInside = findBuildingAt(simBuildings, survivor.x, survivor.y, survivor.z) !== null
     const prompt = isInside
       ? `Deliver emergency supplies to survivor at ${coords}. ` +
-        `First return to base at (0, 0, 0) to collect supplies, ` +
+        `First return to base at (0, 2, 0) to collect supplies, ` +
         `then navigate to the approach position ${approachCoords} outside the building. ` +
         `Do NOT navigate to the survivor's interior coordinates — the approach position is the drop point.`
       : `Deliver emergency supplies to survivor at ${coords}. ` +
-        `First return to base at (0, 0, 0) to collect supplies, ` +
+        `First return to base at (0, 2, 0) to collect supplies, ` +
         `then navigate to ${coords} to drop supplies.`
 
     setPendingScanPrompt(prompt)

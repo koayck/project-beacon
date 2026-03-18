@@ -436,7 +436,7 @@ _building_picker_agent = Agent(
 
 _NAV_INSTRUCTION = """You are a navigation specialist for autonomous drones.
 
-COORDINATES: X=East, Y=Up, Z=South. Origin (0,0,0) = home pad.
+COORDINATES: X=East, Y=Up, Z=South. Home pad at (0, 2, 0).
 
 Your target for this iteration is in state["current_building"]. Parse the asset_id,
 x, and z from it (e.g. "Navigate BEACON-01 to building at (x=-15.0, z=-20.0). Height: 12m.").
@@ -557,7 +557,7 @@ def _make_asset_scan_loop(asset_id: str) -> LoopAgent:
 
     nav_instruction = f"""You are a navigation specialist for autonomous drones.
 
-COORDINATES: X=East, Y=Up, Z=South. Origin (0,0,0) = home pad.
+COORDINATES: X=East, Y=Up, Z=South. Home pad at (0, 2, 0).
 
 Your target for this iteration is in state["{current_key}"]. Parse the asset_id,
 x, and z from it (e.g. "Navigate BEACON-01 to building at (x=-15.0, z=-20.0). Height: 12m.").
