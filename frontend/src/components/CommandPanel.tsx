@@ -202,38 +202,38 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
   return (
     <div style={{
       position: 'absolute',
-      bottom: 20,
+      bottom: 16,
       left: '50%',
       transform: 'translateX(-50%)',
       width: panelWidth,
       transition: 'width 0.2s ease',
-      background: 'rgba(8, 10, 20, 0.88)',
-      border: '1px solid rgba(80, 120, 200, 0.35)',
+      background: 'linear-gradient(135deg, rgba(6,8,16,0.92), rgba(4,6,14,0.88))',
+      border: '1px solid rgba(60,100,180,0.2)',
       borderRadius: 8,
-      fontFamily: 'Courier New, monospace',
-      fontSize: 12,
-      backdropFilter: 'blur(6px)',
-      boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
+      fontFamily: "'Courier New', monospace",
+      fontSize: 14,
+      backdropFilter: 'blur(14px)',
+      boxShadow: '0 8px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(100,150,255,0.05)',
     }}>
       {/* Primary header row — identity + actions */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        padding: '7px 14px 4px',
+        padding: '8px 14px 4px',
       }}>
         {/* Status dot */}
         <span style={{
-          width: 8, height: 8, borderRadius: '50%',
+          width: 7, height: 7, borderRadius: '50%',
           background: connected ? '#33ff88' : uplinked ? '#ffcc66' : '#ff4444',
-          boxShadow: connected ? '0 0 6px #33ff88' : uplinked ? '0 0 6px #ffcc66' : '0 0 6px #ff4444',
+          boxShadow: connected ? '0 0 8px #33ff88' : uplinked ? '0 0 8px #ffcc66' : '0 0 8px #ff4444',
           flexShrink: 0,
         }} />
-        <span style={{ color: connected ? '#33ff88' : uplinked ? '#ffcc66' : '#ff6666', fontWeight: 'bold', letterSpacing: 1 }}>
-          COMMANDER
+        <span style={{ color: connected ? '#33ff88' : uplinked ? '#ffcc66' : '#ff6666', fontWeight: 'bold', letterSpacing: 1.5, fontSize: 13 }}>
+          {assetId}
         </span>
-        <span style={{ color: '#445' }}>
-          {connected ? 'LIVE' : uplinked ? 'REGISTERED / OFFLINE' : 'OFFLINE'}
+        <span style={{ color: '#6a7a8a', fontSize: 12 }}>
+          {connected ? 'CONNECTED' : uplinked ? 'REGISTERED / OFFLINE' : 'OFFLINE'}
         </span>
 
         {/* Action buttons — push right */}
@@ -274,26 +274,26 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
         alignItems: 'center',
         gap: 12,
         padding: '0 14px 6px',
-        borderBottom: '1px solid rgba(80, 120, 200, 0.2)',
-        fontSize: 10,
+        borderBottom: '1px solid rgba(60,100,180,0.12)',
+        fontSize: 12,
       }}>
-        <span style={{ color: '#336' }}>ADK / Qwen3.5</span>
+        <span style={{ color: '#5a6a7a' }}>ADK / Qwen3.5</span>
 
         {battery !== null && (
           <span style={{ color: battery > 30 ? '#88cc66' : '#ff9933' }}>
-            ⚡ {battery.toFixed(0)}%
+            BAT {battery.toFixed(0)}%
           </span>
         )}
 
         {ttft !== null && (
           <span style={{ color: '#5af' }} title="Time to First Token">
-            <span style={{ color: '#446' }}>TTFT </span>
+            <span style={{ color: '#5a6a7a' }}>TTFT </span>
             {ttft < 1000 ? `${ttft}ms` : `${(ttft / 1000).toFixed(1)}s`}
           </span>
         )}
         {tps !== null && (
           <span style={{ color: '#5af' }} title="Tokens per Second">
-            <span style={{ color: '#446' }}>TPS </span>{tps}
+            <span style={{ color: '#5a6a7a' }}>TPS </span>{tps}
           </span>
         )}
 
@@ -317,7 +317,7 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
             gap: 6,
           }}>
             {messages.length === 0 && (
-              <div style={{ color: '#334', fontStyle: 'italic', marginTop: 4 }}>
+              <div style={{ color: '#5a6a7a', fontStyle: 'italic', marginTop: 4 }}>
                 {connected ? 'Type a natural language command...' : 'Waiting for backend connection...'}
               </div>
             )}
@@ -325,13 +325,13 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
               <div key={m.ts} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                 {m.role === 'user' ? (
                   <div style={{ color: '#6af', alignSelf: 'flex-end' }}>
-                    <span style={{ color: '#445', marginRight: 6 }}>YOU</span>
+                    <span style={{ color: '#6a7a8a', marginRight: 6 }}>YOU</span>
                     {m.lines[0]}
                   </div>
                 ) : (
                   <div style={{ color: '#aec', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6 }}>
                     {m.lines.length === 0 && busy && (
-                      <span style={{ color: '#556', fontStyle: 'italic' }}>
+                      <span style={{ color: '#7a8a9a', fontStyle: 'italic' }}>
                         <Spinner /> LLM inferring{elapsed > 0 ? ` (${elapsed}s)` : '...'}
                       </span>
                     )}
@@ -361,11 +361,11 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
             display: 'flex',
             gap: 5,
             padding: '5px 10px',
-            borderTop: '1px solid rgba(80, 120, 200, 0.15)',
+            borderTop: '1px solid rgba(60,100,180,0.1)',
             alignItems: 'center',
             flexWrap: 'wrap',
           }}>
-            <span style={{ color: '#556', fontSize: 10, letterSpacing: 1, marginRight: 2 }}>QUICK</span>
+            <span style={{ color: '#7a8a9a', fontSize: 12, letterSpacing: 1, marginRight: 2 }}>QUICK</span>
             {QUICK_ACTIONS.map(action => (
               <button
                 key={action.label}
@@ -380,7 +380,7 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
                   padding: '2px 8px',
                   cursor: (!connected || busy) ? 'default' : 'pointer',
                   fontFamily: 'Courier New, monospace',
-                  fontSize: 10,
+                  fontSize: 12,
                   letterSpacing: 0.5,
                   transition: 'all 0.15s',
                 }}
@@ -395,10 +395,10 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
             display: 'flex',
             gap: 6,
             padding: '5px 10px',
-            borderTop: '1px solid rgba(80, 120, 200, 0.15)',
+            borderTop: '1px solid rgba(60,100,180,0.1)',
             alignItems: 'center',
           }}>
-            <span style={{ color: '#334', fontSize: 10, letterSpacing: 1, marginRight: 2 }}>DIRECT</span>
+            <span style={{ color: '#5a6a7a', fontSize: 12, letterSpacing: 1, marginRight: 2 }}>DIRECT</span>
             <button
               onClick={toggleSpeed}
               disabled={!connected}
@@ -411,12 +411,12 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
                 padding: '2px 10px',
                 cursor: !connected ? 'default' : 'pointer',
                 fontFamily: 'Courier New, monospace',
-                fontSize: 11,
+                fontSize: 13,
                 letterSpacing: 0.5,
                 transition: 'all 0.15s',
               }}
             >
-              {fastMode ? '⚡ FAST' : '⚡ NORMAL'}
+              {fastMode ? 'FAST' : 'NORMAL'}
             </button>
             <button
               onClick={handleReset}
@@ -430,19 +430,19 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
                 padding: '2px 10px',
                 cursor: (!connected || resetting) ? 'default' : 'pointer',
                 fontFamily: 'Courier New, monospace',
-                fontSize: 11,
+                fontSize: 13,
                 letterSpacing: 0.5,
                 transition: 'all 0.15s',
               }}
             >
-              {resetting ? '↩ RETURNING...' : '↩ RESET TO BASE'}
+              {resetting ? 'RETURNING...' : 'RESET TO BASE'}
             </button>
           </div>
         </>
       )}
 
       {/* Input row */}
-      <div style={{ display: 'flex', borderTop: '1px solid rgba(80, 120, 200, 0.2)' }}>
+      <div style={{ display: 'flex', borderTop: '1px solid rgba(60,100,180,0.12)' }}>
         <input
           value={input}
           onChange={e => setInput(e.target.value)}
@@ -456,8 +456,8 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
             outline: 'none',
             color: '#cde',
             padding: '9px 14px',
-            fontFamily: 'Courier New, monospace',
-            fontSize: 12,
+            fontFamily: "'Courier New', monospace",
+            fontSize: 14,
             opacity: (busy || !connected) ? 0.4 : 1,
           }}
         />
@@ -472,12 +472,12 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
               color: '#f66',
               padding: '0 16px',
               cursor: 'pointer',
-              fontFamily: 'Courier New, monospace',
-              fontSize: 12,
+              fontFamily: "'Courier New', monospace",
+              fontSize: 14,
               letterSpacing: 1,
             }}
           >
-            ■ STOP
+            STOP
           </button>
         ) : (
           <button
@@ -486,12 +486,12 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
             style={{
               background: 'transparent',
               border: 'none',
-              borderLeft: '1px solid rgba(80, 120, 200, 0.2)',
+              borderLeft: '1px solid rgba(60, 100, 180, 0.2)',
               color: (!connected || !input.trim()) ? '#334' : '#4af',
               padding: '0 16px',
               cursor: (!connected || !input.trim()) ? 'default' : 'pointer',
-              fontFamily: 'Courier New, monospace',
-              fontSize: 12,
+              fontFamily: "'Courier New', monospace",
+              fontSize: 14,
               letterSpacing: 1,
             }}
           >
@@ -518,15 +518,15 @@ function HeaderBtn({ onClick, title, disabled = false, active = false, children 
       disabled={disabled}
       title={title}
       style={{
-        background: active ? 'rgba(50,200,100,0.15)' : 'transparent',
-        border: `1px solid ${active ? '#33cc6655' : 'rgba(80,120,200,0.25)'}`,
+        background: active ? 'rgba(50,200,100,0.12)' : 'rgba(15,20,30,0.5)',
+        border: `1px solid ${active ? 'rgba(50,200,100,0.3)' : 'rgba(50,70,120,0.25)'}`,
         borderRadius: 4,
-        color: disabled ? '#334' : active ? '#4c8' : '#5af',
+        color: disabled ? '#2a3040' : active ? '#4c8' : '#5580aa',
         padding: '1px 7px',
         cursor: disabled ? 'default' : 'pointer',
-        fontFamily: 'Courier New, monospace',
-        fontSize: 12,
-        lineHeight: '18px',
+        fontFamily: "'Courier New', monospace",
+        fontSize: 14,
+        lineHeight: '20px',
         transition: 'color 0.15s, background 0.15s',
       }}
     >
