@@ -28,6 +28,13 @@ THERMAL_TOOLS = [
 SWARM_TOOLS = [
     "deploy_swarm",
     "recall_swarm",
+    "discover_fleet",
+]
+
+FLEET_TOOLS = [
+    "assign_fleet_to_buildings",
+    "parallel_fleet_scan",
+    "discover_fleet",
 ]
 
 
