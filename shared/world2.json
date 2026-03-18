@@ -100,7 +100,7 @@
     { "x": -28.0, "y":  3.65, "z":  14.0, "note": "floor 2 — market hall, upper level near east window" },
     { "x":  18.0, "y":  3.65, "z":  28.0, "note": "floor 2 — residential block, south window" },
     { "x":  20.0, "y":  9.65, "z":  31.0, "note": "floor 4 — residential block, on south balcony" },
-    { "x": -35.0, "y": 18.65, "z": -14.0, "note": "floor 7 — commercial tower, on south balcony" },
+    { "x": -35.0, "y": 18.65, "z": -22.0, "note": "floor 7 — commercial tower, on south balcony" },
     { "x":  11.5, "y":  3.65, "z": -7.0, "note": "floor 2 — corner shophouse, south window" }
   ],
   "trees": []
