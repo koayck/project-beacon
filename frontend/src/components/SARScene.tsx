@@ -7,7 +7,7 @@ import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import CommandPanel from './CommandPanel'
 import { useTelemetry, type DroneMap } from '@/lib/ws'
-import { uplink, streamCommand, healthCheck, getFleet, type AgentStreamEvent } from '@/lib/api'
+import { uplink, streamCommand, healthCheck, getFleet, getAutoRecallConfig, resetDroneToBase, type AgentStreamEvent } from '@/lib/api'
 import WORLD from '@shared/world.json'
 import { BasePad, GridOverlay, Ground, MissionBuildings, SurvivorScanRays, Survivors } from './sar-scene/SceneStructures'
 
@@ -2059,6 +2059,7 @@ function Controls({
 
 const ASSET_ID = 'BEACON-01'
 const WS_URL   = 'ws://localhost:8000/ws/telemetry'
+const AUTO_RECALL_UI_DELAY_MS = 5000
 
 export default function SARScene() {
   const [log, setLog]       = useState<string[]>(['Connecting to backend...'])
@@ -2077,6 +2078,12 @@ export default function SARScene() {
   const deliveryTarget = useRef<SurvivorPoint | null>(null)
   const deliveryApproach = useRef<SurvivorPoint | null>(null)
   const [routeArrived, setRouteArrived] = useState(false)
+  const [autoRecallThreshold, setAutoRecallThreshold] = useState<number | null>(null)
+  const [autoRecallPrompt, setAutoRecallPrompt] = useState<{ assetId: string; battery: number } | null>(null)
+  const [autoRecallCountdown, setAutoRecallCountdown] = useState(5)
+  const autoRecallDismissedRef = useRef<Set<string>>(new Set())
+  const autoRecallTriggeredRef = useRef<Set<string>>(new Set())
+  const autoRecallInFlightRef = useRef<Set<string>>(new Set())
   // ── Area selection state ─────────────────────────────────────────────────────
   const [selectMode, setSelectMode]       = useState(false)
   const [dragStart, setDragStart]         = useState<THREE.Vector3 | null>(null)
@@ -2110,6 +2117,30 @@ export default function SARScene() {
     setLog(prev => [...prev.slice(-6), msg])
   }, [])
 
+  const executeAutoRecall = useCallback(async (assetId: string, batteryPct: number) => {
+    setAutoRecallPrompt(current => (current?.assetId === assetId ? null : current))
+    autoRecallDismissedRef.current.add(assetId)
+    autoRecallTriggeredRef.current.add(assetId)
+    autoRecallInFlightRef.current.add(assetId)
+    addLog(`⚠ ${assetId} battery ${batteryPct.toFixed(1)}% — auto recall initiated`)
+    try {
+      await resetDroneToBase(assetId)
+      addLog(`⌂ ${assetId} returning to base`)
+    } catch {
+      autoRecallTriggeredRef.current.delete(assetId)
+      addLog(`⚠ Auto recall failed for ${assetId}`)
+    } finally {
+      autoRecallInFlightRef.current.delete(assetId)
+    }
+  }, [addLog])
+
+  const cancelAutoRecall = useCallback(() => {
+    if (!autoRecallPrompt) return
+    autoRecallDismissedRef.current.add(autoRecallPrompt.assetId)
+    setAutoRecallPrompt(null)
+    addLog(`⏸ Auto recall cancelled for ${autoRecallPrompt.assetId}`)
+  }, [autoRecallPrompt, addLog])
+
   const toggleFollowBeacon = useCallback(() => {
     setFollowBeacon(prev => {
       const next = !prev
@@ -2142,6 +2173,12 @@ export default function SARScene() {
       if (!ok || !mounted) {
         addLog('⚠ Backend offline — start FastAPI sidecar')
         return
+      }
+      try {
+        const config = await getAutoRecallConfig()
+        if (mounted) setAutoRecallThreshold(config.battery_threshold)
+      } catch {
+        addLog('⚠ Failed to load auto-recall config')
       }
       let fleet: Awaited<ReturnType<typeof getFleet>>
       try {
@@ -2665,6 +2702,58 @@ export default function SARScene() {
           onScan={handleAreaScan}
           onClose={handleSelectionClose}
         />
+      )}
+      {autoRecallPrompt && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'rgba(2, 4, 10, 0.55)',
+          zIndex: 40,
+          pointerEvents: 'auto',
+        }}>
+          <div style={{
+            width: 420,
+            background: 'linear-gradient(135deg, rgba(20,7,7,0.96), rgba(12,3,3,0.95))',
+            border: '1px solid rgba(255, 90, 90, 0.5)',
+            borderLeft: '3px solid #ff4d4d',
+            borderRadius: 8,
+            padding: '14px 16px',
+            boxShadow: '0 12px 48px rgba(0,0,0,0.55)',
+            fontFamily: "'Courier New', monospace",
+            color: '#ffd2d2',
+          }}>
+            <div style={{ color: '#ff8a8a', fontWeight: 700, letterSpacing: 1.2, marginBottom: 8 }}>
+              LOW BATTERY AUTO RECALL
+            </div>
+            <div style={{ fontSize: 13, lineHeight: 1.5, color: '#ffb1b1' }}>
+              {autoRecallPrompt.assetId} is IDLE at {autoRecallPrompt.battery.toFixed(1)}% battery.
+            </div>
+            <div style={{ marginTop: 6, fontSize: 12, color: '#ff8a8a' }}>
+              Auto recall in {autoRecallCountdown}s unless cancelled.
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+              <button
+                onClick={cancelAutoRecall}
+                style={{
+                  background: 'rgba(255,70,70,0.12)',
+                  border: '1px solid rgba(255,110,110,0.45)',
+                  borderRadius: 4,
+                  color: '#ffd2d2',
+                  padding: '4px 12px',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  fontSize: 12,
+                  letterSpacing: 0.6,
+                }}
+              >
+                CANCEL
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       <CommandPanel
         assetId={ASSET_ID}

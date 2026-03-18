@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import subprocess
 import time
@@ -43,6 +44,7 @@ from backend.services.drone_control import (
     set_drone_speed,
     list_all_drones,
 )
+from backend.services.auto_recall import AutoRecallMonitor
 
 import logging
 
@@ -52,10 +54,20 @@ logging.basicConfig(
 )
 
 _adk_runner: Runner | None = None
+_auto_recall_monitor: AutoRecallMonitor | None = None
 
 _ASSET_ID_PATTERN = re.compile(r"^BEACON-(\d+)$")
 _DOCKER_IMAGE = "project-beacon-drone-sim"
 _DOCKER_NETWORK = "beacon-net"
+_AUTO_RECALL_ENABLED = os.environ.get("AUTO_RECALL_ENABLED", "false").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+_AUTO_RECALL_BATTERY_THRESHOLD = float(
+    os.environ.get("AUTO_RECALL_BATTERY_THRESHOLD", "10")
+)
+_AUTO_RECALL_COOLDOWN_SECONDS = float(
+    os.environ.get("AUTO_RECALL_COOLDOWN_SECONDS", "60")
+)
 
 
 _mcp_http_app = beacon_mcp.http_app(path="/", transport="streamable-http")
@@ -124,10 +136,22 @@ def _extract_survivor_coords(payload: object) -> list[dict[str, float]]:
 
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
-    global _adk_runner
+    global _adk_runner, _auto_recall_monitor
 
     await init_db()
-    await udp_listener.start(on_update=ws_broadcaster.broadcast)
+    _auto_recall_monitor = AutoRecallMonitor(
+        enabled=_AUTO_RECALL_ENABLED,
+        battery_threshold=_AUTO_RECALL_BATTERY_THRESHOLD,
+        cooldown_seconds=_AUTO_RECALL_COOLDOWN_SECONDS,
+    )
+    _auto_recall_monitor.start()
+
+    def _on_telemetry_update(payload: dict) -> None:
+        ws_broadcaster.broadcast(payload)
+        if _auto_recall_monitor is not None:
+            _auto_recall_monitor.handle_telemetry(payload)
+
+    await udp_listener.start(on_update=_on_telemetry_update)
     await restore_registered_connections()
 
     # from backend.tools.drone_commands import set_client as _set_drone_cmd_client
@@ -155,6 +179,9 @@ async def app_lifespan(app: FastAPI):
             await _adk_runner.close()
             _adk_runner = None
         await udp_listener.stop()
+        if _auto_recall_monitor is not None:
+            await _auto_recall_monitor.stop()
+            _auto_recall_monitor = None
         grpc_client.close_all()
 
 
@@ -270,6 +297,15 @@ def _build_agent_prompt(req: CommandRequest) -> str:
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/config/auto-recall")
+async def auto_recall_config() -> dict:
+    return {
+        "enabled": _AUTO_RECALL_ENABLED,
+        "battery_threshold": _AUTO_RECALL_BATTERY_THRESHOLD,
+        "cooldown_seconds": _AUTO_RECALL_COOLDOWN_SECONDS,
+    }
 
 
 @app.post("/drone/{asset_id}/speed")
