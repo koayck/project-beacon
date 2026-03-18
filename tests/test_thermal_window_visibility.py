@@ -51,7 +51,7 @@ def test_through_wall_is_not_detected():
 
 def test_through_window_is_detected():
     # East of NW tower, aligned to floor-2 east window and within survivor range.
-    x, y, z = -17.5, 3.65, -27.5
+    x, y, z = -22.5, 3.65, -27.5
     backend_ids = _backend_survivor_ids(x, y, z)
     sim_ids = _sim_survivor_ids(x, y, z)
     assert 6 in backend_ids

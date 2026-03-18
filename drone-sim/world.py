@@ -30,7 +30,7 @@ _RAW_BUILDINGS = [
     ( -7, -10, 6, 5, 10),   # obstacle on direct route (0,0,0) → (-15,0,-20)
     ( 20, -20, 6, 6,  9),   # balcony building (3 floors, exterior balcony on south face)
     ( 12, -27, 10, 8, 9),   # twin shophouse block (3 floors, windows on south face)
-    (-23, -28, 10, 10, 21), # NW tower (7 floors), SE corner overlaps NW corner of target
+    (-28, -28, 10, 10, 21), # NW tower (7 floors), shifted west by 10m from prior position
 ]
 
 # (x, y, z) — inside the target building, one per floor (floors 2, 3, 4)
@@ -42,8 +42,8 @@ _RAW_SURVIVORS = [
     ( 20.0,  6.65, -16.0),  # floor 3 — balcony building, on exterior balcony (outside AABB)
     (  9.5,  3.65, -27.0),  # floor 2 — shophouse A, visible through south window
     ( 14.5,  6.65, -27.0),  # floor 3 — shophouse B, visible through south window
-    (-19.0,  3.65, -27.5),  # floor 2 — NW tower, inside near east window
-    (-23.0, 12.65, -22.0),  # floor 5 — NW tower, on south balcony (outside AABB)
+    (-24.0,  3.65, -27.5),  # floor 2 — NW tower, inside near east window
+    (-28.0, 12.65, -22.0),  # floor 5 — NW tower, on south balcony (outside AABB)
 ]
 
 
