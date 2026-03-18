@@ -7,7 +7,7 @@ import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import CommandPanel from './CommandPanel'
 import { useTelemetry, type DroneMap } from '@/lib/ws'
-import { uplink, streamCommand, healthCheck, getFleet, type AgentStreamEvent } from '@/lib/api'
+import { uplink, streamCommand, healthCheck, getFleet, switchWorld, type AgentStreamEvent } from '@/lib/api'
 import WORLD from '@shared/world.json'
 import WORLD2 from '@shared/world2.json'
 import { BasePad, GridOverlay, Ground, MissionBuildings, SurvivorScanRays, Survivors } from './sar-scene/SceneStructures'
@@ -395,6 +395,12 @@ function computeApproachPosition(simBuildings: SimBuilding[], survivor: Survivor
     let bestDist = Infinity
 
     for (const w of building.windows) {
+      // For 'top' apertures, approach from above — always prefer this for balconies
+      if (w.face === 'top') {
+        bestWindow = w
+        bestDist = 0
+        break
+      }
       const windowCenterY = w.sillY + w.height / 2
       const yDist = Math.abs(survivor.y - windowCenterY)
       let wx: number, wz: number
@@ -412,6 +418,10 @@ function computeApproachPosition(simBuildings: SimBuilding[], survivor: Survivor
     }
 
     if (bestWindow) {
+      if (bestWindow.face === 'top') {
+        // Approach from above the balcony enclosure — hover over the survivor
+        return { x: survivor.x, y: building.h + APPROACH_OFFSET, z: survivor.z }
+      }
       const wy = bestWindow.sillY + bestWindow.height / 2
       if (bestWindow.face === 'west')
         return { x: bounds.minX - APPROACH_OFFSET, y: wy, z: bestWindow.axisCenter }
@@ -2207,6 +2217,11 @@ const WS_URL   = 'ws://localhost:8000/ws/telemetry'
 export default function SARScene() {
   const [activeWorld, setActiveWorld] = useState<1 | 2>(1)
 
+  const handleWorldChange = useCallback((world: 1 | 2) => {
+    setActiveWorld(world)
+    switchWorld(world).catch(() => {})  // notify backend + drones
+  }, [])
+
   // ── Per-world derived data ──────────────────────────────────────────────────
   const worldBuildings = activeWorld === 1 ? W1_BUILDINGS : W2_BUILDINGS
   const simBuildings   = activeWorld === 1 ? W1_SIM_BUILDINGS : W2_SIM_BUILDINGS
@@ -2782,7 +2797,7 @@ export default function SARScene() {
         floodLevel={FLOOD_LEVEL}
         survivors={survivorPositions}
         activeWorld={activeWorld}
-        onWorldChange={setActiveWorld}
+        onWorldChange={handleWorldChange}
       />
 
       {/* Left panel — Mission Log */}
