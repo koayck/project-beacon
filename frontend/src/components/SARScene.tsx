@@ -1,7 +1,7 @@
 'use client'
 
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { Line, OrbitControls, PerspectiveCamera, Text, Html } from '@react-three/drei'
+import { Line, OrbitControls, PerspectiveCamera, Html } from '@react-three/drei'
 import { useRef, useState, useEffect, useMemo, useCallback, type RefObject, type MutableRefObject } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
@@ -9,8 +9,39 @@ import CommandPanel from './CommandPanel'
 import { useTelemetry, type DroneMap } from '@/lib/ws'
 import { uplink, streamCommand, healthCheck, getFleet, type AgentStreamEvent } from '@/lib/api'
 import WORLD from '@shared/world.json'
+import { BasePad, GridOverlay, Ground, MissionBuildings, SurvivorScanRays, Survivors } from './sar-scene/SceneStructures'
 
 // ── Constants (from shared/world.json) ────────────────────────────────────────
+
+type WindowFace = 'north' | 'south' | 'west' | 'east'
+
+interface WorldWindowLayout {
+  floor: number
+  face: WindowFace
+  offset: number
+  width: number
+  height: number
+  sill: number
+}
+
+interface WorldBalconyLayout {
+  floor: number
+  face: WindowFace
+  depth: number
+  width: number
+}
+
+interface WorldBuilding {
+  id: number
+  name: string
+  cx: number
+  cz: number
+  w: number
+  d: number
+  h: number
+  windows: WorldWindowLayout[]
+  balcony: WorldBalconyLayout | null
+}
 
 const GRID_CELLS  = 50
 const GRID_SPACING = 2
@@ -24,54 +55,7 @@ const span    = GRID_CELLS * GRID_SPACING           // 100
 const slabY   = (n: number) => (n - 1) * FLOOR_H
 const survY   = (n: number) => slabY(n) + FLOOR_T / 2 + SURV_HOVER
 
-// Building 0 — target (4-floor SAR target)
-const _b0            = WORLD.buildings[0]
-const TARGET_BX      = _b0.cx
-const TARGET_BZ      = _b0.cz
-const FLOOR_W        = _b0.w
-const FLOOR_D        = _b0.d
-const NUM_FLOORS     = Math.round(_b0.h / FLOOR_H)
-const total_h        = NUM_FLOORS * FLOOR_H
-const TARGET_WINDOW_LAYOUT  = _b0.windows
-const TARGET_WINDOW_WIDTH   = _b0.windows[0].width
-const TARGET_WINDOW_HEIGHT  = _b0.windows[0].height
-const TARGET_WINDOW_SILL    = _b0.windows[0].sill
-
-// Building 1 — obstacle (solid block on direct route base → target)
-const _b1  = WORLD.buildings[1]
-const OBS_X = _b1.cx,  OBS_Z = _b1.cz
-const OBS_W = _b1.w,   OBS_D = _b1.d,  OBS_H = _b1.h
-
-// Building 2 — balcony building (3-floor residential, south balcony floor 3)
-const _b2              = WORLD.buildings[2]
-const BAL_X = _b2.cx,  BAL_Z = _b2.cz
-const BAL_W = _b2.w,   BAL_D = _b2.d,  BAL_H = _b2.h
-const _b2bal           = _b2.balcony!
-const BAL_BALCONY_FLOOR = _b2bal.floor
-const BAL_BALCONY_DEPTH = _b2bal.depth
-const BAL_BALCONY_WIDTH = _b2bal.width
-
-// Building 3 — twin shophouse (3-floor, windows on south face floors 2 & 3)
-const _b3               = WORLD.buildings[3]
-const SHOP_X = _b3.cx,  SHOP_Z = _b3.cz
-const SHOP_W = _b3.w,   SHOP_D = _b3.d,  SHOP_H = _b3.h
-const SHOP_WINDOW_LAYOUT = _b3.windows
-const SHOP_WINDOW_WIDTH  = _b3.windows[0].width
-const SHOP_WINDOW_HEIGHT = _b3.windows[0].height
-const SHOP_WINDOW_SILL   = _b3.windows[0].sill
-
-// Building 4 — NW tower (7-floor, SE corner overlaps NW corner of target by ~1 m)
-const _b4              = WORLD.buildings[4]
-const NW_X = _b4.cx,   NW_Z = _b4.cz
-const NW_W = _b4.w,    NW_D = _b4.d,   NW_H = _b4.h
-const NW_WINDOW_LAYOUT  = _b4.windows
-const NW_WINDOW_WIDTH   = _b4.windows[0].width
-const NW_WINDOW_HEIGHT  = _b4.windows[0].height
-const NW_WINDOW_SILL    = _b4.windows[0].sill
-const _b4bal            = _b4.balcony!
-const NW_BALCONY_FLOOR  = _b4bal.floor
-const NW_BALCONY_DEPTH  = _b4bal.depth
-const NW_BALCONY_WIDTH  = _b4bal.width
+const WORLD_BUILDINGS = [...(WORLD.buildings as WorldBuilding[])].sort((a, b) => a.id - b.id)
 
 // Drone start position
 const DRONE_START = new THREE.Vector3(13, 1, 13)
@@ -80,133 +64,12 @@ const DRONE_START = new THREE.Vector3(13, 1, 13)
 const CAM_POS: [number, number, number] = [45, 95, 70]
 const FOLLOW_CAMERA_OFFSET = new THREE.Vector3(18, 14, 18)
 
-// ── Colour palette ────────────────────────────────────────────────────────────
-
-const C_GROUND    = '#1e1e22'
-const C_ROAD      = '#2c2c32'
-const C_LINE      = '#D7CDA5'
-const C_PARK      = '#286C34'
-const C_GRID_MAJ  = '#363a40'
-const C_GRID_MIN  = '#26282e'
-const C_TRUNK     = '#5F4126'
-const C_LEAF      = '#267632'
-const C_SLAB      = '#94A2AF'
-const C_GLASS     = '#7DBCE1'
-const C_GLASSBAND = '#AAD2F0'
-const C_CANAL     = '#1a4a7a'
-
-// ── City buildings: [cx, cz, w, d, h, bodyHex, roofHex] ──────────────────────
-const CITY_BUILDINGS = [
-  // ── Inner core (original) ────────────────────────────────────────────────
-  [-14,-12, 8, 8,20, '#466291', '#5A76A5'],
-  [ 14,-10, 7, 9,14, '#BCA580', '#CDB691'],
-  [-16, 10, 9, 7, 9, '#C6B696', '#D4C6A8'],
-  [ 16, 14, 7, 8,24, '#303E52', '#445266'],
-  [  0,-20,14, 6, 7, '#B2AFA5', '#C0BEB4'],
-  [-22,  2, 7, 7,16, '#52769E', '#668AB2'],
-  [ 20,  0, 9, 8,12, '#A86C48', '#B9805A'],
-  [  0, 22,10, 9,15, '#465562', '#5A6976'],
-  [  8,-15, 5, 5,22, '#34486E', '#485C82'],
-  [ -8, 17, 8, 6,10, '#BEAF91', '#D0C0A2'],
-  [-10, -8, 4, 4,30, '#263658', '#38486C'],
-  [ 10,  8, 6, 6,11, '#98765A', '#A8876C'],
-  [ -6,-18, 6, 6,18, '#374E76', '#4B628A'],
-  [ 18, -6, 5, 8,16, '#768A98', '#8A9EAC'],
-  [-18, -4, 8, 5, 8, '#CDBEA0', '#DACDAF'],
-  [  5,-10, 4, 4,12, '#588250', '#6C9664'],
-  [-12, 14, 6, 5,14, '#94483E', '#A55A4E'],
-  [ 15,  5, 5, 7,19, '#3C5070', '#506484'],
-  [-20, 18, 6, 6,10, '#628E73', '#76A287'],
-  [  6, 18, 7, 5, 8, '#B2946E', '#C3A580'],
-  // ── Thai shophouse strip (N edge) ────────────────────────────────────────
-  [-32,-27, 6, 4,10, '#D4A87C', '#C49870'],
-  [-24,-27, 6, 4,10, '#C89E74', '#B88E64'],
-  [-16,-27, 6, 4,12, '#D0A882', '#C09876'],
-  [  0,-27, 8, 4, 8, '#BCA880', '#ACA070'],
-  // [16,-27] removed — replaced by functional ShophouseBlock
-  [ 24,-27, 6, 4,10, '#C8A47A', '#B89468'],
-  [ 32,-27, 6, 4,10, '#CCA882', '#BC9870'],
-  // ── Western tower cluster ────────────────────────────────────────────────
-  [-32,  0,10, 8,14, '#C46040', '#B45030'],
-  [-38,-14, 8, 6,20, '#3A5878', '#4A688A'],
-  [-38, 14, 9, 7, 6, '#D0C8A8', '#C0B898'],
-  [-44, -6, 7, 7,16, '#5A8496', '#6A94A6'],
-  [-44,  8, 6, 6,10, '#9A7860', '#AA8870'],
-  // ── Eastern district ─────────────────────────────────────────────────────
-  [ 30,-20, 9, 8,18, '#4A6E9E', '#5A7EAE'],
-  [ 38,-14, 7, 7,26, '#303848', '#404858'],
-  [ 30, -6, 6, 8,12, '#A87E58', '#B88E68'],
-  [ 38,  4, 8, 6, 8, '#C0B090', '#D0C0A0'],
-  [ 30, 14, 7, 9,22, '#46607E', '#56708E'],
-  [ 38, 22, 6, 6,14, '#888060', '#989070'],
-  [ 30, 30, 9, 7, 9, '#C0785A', '#D0886A'],
-  // ── Southern district ────────────────────────────────────────────────────
-  [-24, 30,10, 8, 7, '#A8C490', '#B8D4A0'],
-  [ -8, 30, 7, 7,16, '#5A4A7E', '#6A5A8E'],
-  [  8, 30, 8, 6,13, '#B86848', '#C87858'],
-  [ 24, 30, 7, 8,20, '#304858', '#405868'],
-  // ── Wat / temple district (NW quadrant) ──────────────────────────────────
-  [-30,-40,20,14, 5, '#F0EAD0', '#E4DEC4'],  // temple courtyard
-  [-26,-38, 8, 8,22, '#D4A020', '#EAB830'],  // main prang  (gold spire)
-  [-36,-38, 6, 6,14, '#C89820', '#DCA820'],  // side prang
-  [-30,-44,14, 4, 6, '#EEE8C8', '#E0DAB8'],  // boundary wall
-  [-20,-42, 6, 8, 8, '#F4EED8', '#E8E0C8'],  // temple hall
-  // ── Modern CBD (NE quadrant) ─────────────────────────────────────────────
-  [ 30,-38,12,12,40, '#2A3C58', '#384C68'],  // tallest skyscraper
-  [ 42,-38, 8, 8,32, '#36507A', '#46608A'],
-  [ 42,-26, 7, 7,24, '#3E5E82', '#4E6E92'],
-  [ 30,-50,14, 8, 8, '#A0A8B0', '#B0B8C0'],  // CBD podium
-  // ── Market / low-rise (SE of centre) ─────────────────────────────────────
-  [ -8,-38, 8, 6, 5, '#C8A060', '#D8B070'],
-  [  4,-38, 7, 5, 5, '#C09050', '#D0A060'],
-  [ 14,-38, 6, 6, 6, '#B88840', '#C89850'],
-  [-16,-46, 9, 7, 4, '#C8B888', '#D8C898'],
-  [  0,-46, 8, 6, 5, '#C0B070', '#D0C080'],
-  [ 14,-46, 7, 7, 6, '#B8A860', '#C8B870'],
-] as const
-
-// ── Trees: [x, z] ─────────────────────────────────────────────────────────────
-const TREE_XZ = [
-  // original park clusters
-  [-4,5],[-5,8],[-8,5],[-7,9],[-9,8],[-5,6],
-  [9,-9],[12,-13],[13,-10],[10,-13],
-  [-14,-4],[-17,-8],[-15,-8],
-  [4,3],[4,-3],[-4,3],[-4,-3],
-  [10,3],[10,-3],[-10,3],[-10,-3],[16,3],[16,-3],
-  // avenues along secondary roads
-  [-28,-5],[-28,5],[-28,12],[-28,-12],
-  [28,-5],[28,5],[28,12],[28,-12],
-  [-5,-28],[-12,-28],[5,-28],[12,-28],
-  [-5,28],[-12,28],[5,28],[12,28],
-  // temple gardens
-  [-24,-36],[-34,-36],[-24,-42],[-34,-42],[-20,-44],
-  // canal bank (west)
-  [-46,20],[-46,10],[-46,0],[-46,-10],[-46,-20],[-46,-30],
-  // outer ring scattered
-  [-40,0],[-40,18],[-40,-18],[40,0],[40,18],[40,-18],
-  [0,-44],[0,44],[-44,28],[44,-28],
-] as const
-
-// ── Parks: [cx, cz, w, d] ─────────────────────────────────────────────────────
-const PARKS = [
-  [-7,  7,  9, 9],
-  [11,-11,  7, 7],
-  [-16, -6, 6, 6],
-  [-30,  8, 12,10],
-  [ 28, 24, 14,10],
-  [-20,-34, 10, 8],
-  [  0, 36, 20, 8],
-  [-44,  0,  8,16],
-] as const
-
 // ── Survivor positions (from shared/world.json) ───────────────────────────────
 const SURVIVOR_POSITIONS = WORLD.survivors.map(s => ({ x: s.x, y: s.y, z: s.z }))
 
 const SURVIVOR_SENSOR_RANGE = 3.0
 const LOS_SAMPLE_COUNT = 30
 const APPROACH_OFFSET = 2.5
-
-type WindowFace = 'north' | 'south' | 'west' | 'east'
 
 interface SimWindowAperture {
   face: WindowFace
@@ -218,6 +81,7 @@ interface SimWindowAperture {
 
 interface SimBuilding {
   id: number
+  name: string
   cx: number
   cz: number
   w: number
@@ -232,37 +96,30 @@ interface SurvivorPoint {
   z: number
 }
 
-const TARGET_BUILDING_WINDOWS: SimWindowAperture[] = TARGET_WINDOW_LAYOUT.map((w) => ({
-  face: w.face as WindowFace,
-  axisCenter: (w.face === 'north' || w.face === 'south') ? TARGET_BX + w.offset : TARGET_BZ + w.offset,
-  sillY: (w.floor - 1) * FLOOR_H + w.sill,
-  width: w.width,
-  height: w.height,
+const SIM_BUILDINGS: SimBuilding[] = WORLD_BUILDINGS.map((building) => ({
+  id: building.id,
+  name: building.name,
+  cx: building.cx,
+  cz: building.cz,
+  w: building.w,
+  d: building.d,
+  h: building.h,
+  windows: building.windows.map((window) => ({
+    face: window.face,
+    axisCenter: (window.face === 'north' || window.face === 'south')
+      ? building.cx + window.offset
+      : building.cz + window.offset,
+    sillY: (window.floor - 1) * FLOOR_H + window.sill,
+    width: window.width,
+    height: window.height,
+  })),
 }))
 
-const SHOPHOUSE_WINDOWS: SimWindowAperture[] = SHOP_WINDOW_LAYOUT.map((w) => ({
-  face: w.face as WindowFace,
-  axisCenter: (w.face === 'north' || w.face === 'south') ? SHOP_X + w.offset : SHOP_Z + w.offset,
-  sillY: (w.floor - 1) * FLOOR_H + w.sill,
-  width: w.width,
-  height: w.height,
-}))
-
-const NW_BUILDING_WINDOWS: SimWindowAperture[] = NW_WINDOW_LAYOUT.map((w) => ({
-  face: w.face as WindowFace,
-  axisCenter: (w.face === 'north' || w.face === 'south') ? NW_X + w.offset : NW_Z + w.offset,
-  sillY: (w.floor - 1) * FLOOR_H + w.sill,
-  width: w.width,
-  height: w.height,
-}))
-
-const SIM_BUILDINGS: SimBuilding[] = [
-  { id: 0, cx: TARGET_BX, cz: TARGET_BZ, w: FLOOR_W, d: FLOOR_D, h: total_h, windows: TARGET_BUILDING_WINDOWS },
-  { id: 1, cx: OBS_X, cz: OBS_Z, w: OBS_W, d: OBS_D, h: OBS_H, windows: [] },
-  { id: 2, cx: BAL_X, cz: BAL_Z, w: BAL_W, d: BAL_D, h: BAL_H, windows: [] },
-  { id: 3, cx: SHOP_X, cz: SHOP_Z, w: SHOP_W, d: SHOP_D, h: SHOP_H, windows: SHOPHOUSE_WINDOWS },
-  { id: 4, cx: NW_X, cz: NW_Z, w: NW_W, d: NW_D, h: NW_H, windows: NW_BUILDING_WINDOWS },
-]
+function buildingPromptName(building: SimBuilding): string {
+  const normalized = (building.name || '').trim().replace(/[_-]+/g, ' ')
+  if (normalized.length > 0) return normalized
+  return `building ${building.id}`
+}
 
 function buildingBounds(b: SimBuilding) {
   return {
@@ -484,534 +341,6 @@ function computeApproachPosition(survivor: SurvivorPoint): SurvivorPoint {
   else                              return { x: survivor.x, y: survivor.y, z: bounds.maxZ + APPROACH_OFFSET }
 }
 
-// ── Scene components ──────────────────────────────────────────────────────────
-
-function Ground() {
-  return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
-      <planeGeometry args={[span, span]} />
-      <meshStandardMaterial color={C_GROUND} />
-    </mesh>
-  )
-}
-
-function Roads() {
-  return (
-    <>
-      {/* Main E-W road (width 7) */}
-      <mesh position={[0, 0.02, 0]}>
-        <boxGeometry args={[span, 0.01, 7]} />
-        <meshStandardMaterial color={C_ROAD} />
-      </mesh>
-      {/* Main N-S road (width 7) */}
-      <mesh position={[0, 0.02, 0]}>
-        <boxGeometry args={[7, 0.01, span]} />
-        <meshStandardMaterial color={C_ROAD} />
-      </mesh>
-      {/* Secondary E-W roads */}
-      {([-28, 28] as number[]).map(z => (
-        <mesh key={`ew${z}`} position={[0, 0.02, z]}>
-          <boxGeometry args={[span, 0.01, 4]} />
-          <meshStandardMaterial color={C_ROAD} />
-        </mesh>
-      ))}
-      {/* Secondary N-S roads */}
-      {([-28, 28] as number[]).map(x => (
-        <mesh key={`ns${x}`} position={[x, 0.02, 0]}>
-          <boxGeometry args={[4, 0.01, span]} />
-          <meshStandardMaterial color={C_ROAD} />
-        </mesh>
-      ))}
-      {/* Tertiary roads */}
-      {([-14, 14] as number[]).map(z => (
-        <mesh key={`t-ew${z}`} position={[0, 0.02, z]}>
-          <boxGeometry args={[span, 0.01, 3]} />
-          <meshStandardMaterial color={C_ROAD} />
-        </mesh>
-      ))}
-      {([-14, 14] as number[]).map(x => (
-        <mesh key={`t-ns${x}`} position={[x, 0.02, 0]}>
-          <boxGeometry args={[3, 0.01, span]} />
-          <meshStandardMaterial color={C_ROAD} />
-        </mesh>
-      ))}
-      {/* Centre lane markings */}
-      <mesh position={[0, 0.03, 0]}>
-        <boxGeometry args={[span, 0.01, 0.14]} />
-        <meshStandardMaterial color={C_LINE} />
-      </mesh>
-      <mesh position={[0, 0.03, 0]}>
-        <boxGeometry args={[0.14, 0.01, span]} />
-        <meshStandardMaterial color={C_LINE} />
-      </mesh>
-    </>
-  )
-}
-
-function Canal() {
-  return (
-    <mesh position={[-47, 0.06, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-      <planeGeometry args={[6, span]} />
-      <meshStandardMaterial color={C_CANAL} transparent opacity={0.9} depthWrite={false} />
-    </mesh>
-  )
-}
-
-function Parks() {
-  return (
-    <>
-      {PARKS.map(([px, pz, pw, pd], i) => (
-        <mesh key={i} position={[px, 0.02, pz]}>
-          <boxGeometry args={[pw, 0.01, pd]} />
-          <meshStandardMaterial color={C_PARK} />
-        </mesh>
-      ))}
-    </>
-  )
-}
-
-function GridOverlay() {
-  return (
-    <gridHelper
-      args={[span, GRID_CELLS, C_GRID_MAJ, C_GRID_MIN]}
-      position={[0, 0.01, 0]}
-    />
-  )
-}
-
-function Trees() {
-  return (
-    <>
-      {TREE_XZ.map(([tx, tz], i) => (
-        <group key={i}>
-          <mesh position={[tx, 0.8, tz]}>
-            <boxGeometry args={[0.18, 1.6, 0.18]} />
-            <meshStandardMaterial color={C_TRUNK} />
-          </mesh>
-          <mesh position={[tx, 2.1, tz]}>
-            <sphereGeometry args={[0.5, 8, 6]} />
-            <meshStandardMaterial color={C_LEAF} />
-          </mesh>
-        </group>
-      ))}
-    </>
-  )
-}
-
-function CityBuildings() {
-  return (
-    <>
-      {CITY_BUILDINGS.map(([cx, cz, w, d, h, bodyColor, roofColor], i) => (
-        <group key={i}>
-          <mesh position={[cx, h / 2, cz]}>
-            <boxGeometry args={[w, h, d]} />
-            <meshStandardMaterial color={bodyColor} />
-          </mesh>
-          <mesh position={[cx, h + 0.08, cz]}>
-            <boxGeometry args={[w, 0.16, d]} />
-            <meshStandardMaterial color={roofColor} />
-          </mesh>
-          {h >= 14 && Array.from({ length: Math.floor(h / FLOOR_H) - 1 }, (_, fi) => (
-            <mesh key={fi} position={[cx, (fi + 1) * FLOOR_H, cz]}>
-              <boxGeometry args={[w * 0.92, 0.28, d * 0.92]} />
-              <meshStandardMaterial color={C_GLASSBAND} transparent opacity={0.45} depthWrite={false} />
-            </mesh>
-          ))}
-        </group>
-      ))}
-    </>
-  )
-}
-
-function TargetBuilding({ transparentWalls }: { transparentWalls: boolean }) {
-  const hw = FLOOR_W / 2
-  const hd = FLOOR_D / 2
-  const windowYCenter = (floor: number) =>
-    (floor - 1) * FLOOR_H + TARGET_WINDOW_SILL + TARGET_WINDOW_HEIGHT / 2
-
-  const wallPanels = [
-    { pos: [TARGET_BX,      total_h / 2, TARGET_BZ - hd] as [number, number, number], size: [FLOOR_W, total_h, 0.14] as [number, number, number] },
-    { pos: [TARGET_BX,      total_h / 2, TARGET_BZ + hd] as [number, number, number], size: [FLOOR_W, total_h, 0.14] as [number, number, number] },
-    { pos: [TARGET_BX - hw, total_h / 2, TARGET_BZ]      as [number, number, number], size: [0.14, total_h, FLOOR_D] as [number, number, number] },
-    { pos: [TARGET_BX + hw, total_h / 2, TARGET_BZ]      as [number, number, number], size: [0.14, total_h, FLOOR_D] as [number, number, number] },
-  ]
-
-  const windowPanels = TARGET_WINDOW_LAYOUT.map(({ floor, face, offset }) => {
-    const y = windowYCenter(floor)
-    if (face === 'north') {
-      return {
-        key: `${face}-${floor}`,
-        pos: [TARGET_BX + offset, y, TARGET_BZ - hd - 0.07] as [number, number, number],
-        size: [TARGET_WINDOW_WIDTH, TARGET_WINDOW_HEIGHT, 0.10] as [number, number, number],
-      }
-    }
-    if (face === 'south') {
-      return {
-        key: `${face}-${floor}`,
-        pos: [TARGET_BX + offset, y, TARGET_BZ + hd + 0.07] as [number, number, number],
-        size: [TARGET_WINDOW_WIDTH, TARGET_WINDOW_HEIGHT, 0.10] as [number, number, number],
-      }
-    }
-    if (face === 'west') {
-      return {
-        key: `${face}-${floor}`,
-        pos: [TARGET_BX - hw - 0.07, y, TARGET_BZ + offset] as [number, number, number],
-        size: [0.10, TARGET_WINDOW_HEIGHT, TARGET_WINDOW_WIDTH] as [number, number, number],
-      }
-    }
-    return {
-      key: `${face}-${floor}`,
-      pos: [TARGET_BX + hw + 0.07, y, TARGET_BZ + offset] as [number, number, number],
-      size: [0.10, TARGET_WINDOW_HEIGHT, TARGET_WINDOW_WIDTH] as [number, number, number],
-    }
-  })
-
-  return (
-    <>
-      {Array.from({ length: NUM_FLOORS + 1 }, (_, n) => (
-        <mesh key={n} position={[TARGET_BX, n * FLOOR_H, TARGET_BZ]}>
-          <boxGeometry args={[FLOOR_W, FLOOR_T, FLOOR_D]} />
-          <meshStandardMaterial color={C_SLAB} />
-        </mesh>
-      ))}
-      {wallPanels.map(({ pos, size }, i) => (
-        <mesh key={i} position={pos}>
-          <boxGeometry args={size} />
-          <meshStandardMaterial
-            color={transparentWalls ? '#7d9ab1' : '#5f6b77'}
-            transparent={transparentWalls}
-            opacity={transparentWalls ? 0.22 : 1}
-            depthWrite={!transparentWalls}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-      ))}
-      {windowPanels.map(({ key, pos, size }) => (
-        <mesh key={key} position={pos}>
-          <boxGeometry args={size} />
-          <meshStandardMaterial color={C_GLASS} transparent opacity={0.2} depthWrite={false} side={THREE.DoubleSide} />
-        </mesh>
-      ))}
-    </>
-  )
-}
-
-function ObstacleBuilding() {
-  return (
-    <mesh position={[OBS_X, OBS_H / 2, OBS_Z]}>
-      <boxGeometry args={[OBS_W, OBS_H, OBS_D]} />
-      <meshStandardMaterial color="#5a4a3a" />
-    </mesh>
-  )
-}
-
-function BalconyBuilding({ transparentWalls }: { transparentWalls: boolean }) {
-  const hw = BAL_W / 2
-  const hd = BAL_D / 2
-  const balconyY = (BAL_BALCONY_FLOOR - 1) * FLOOR_H
-  const numFloors = Math.round(BAL_H / FLOOR_H)
-
-  const wallPanels = [
-    { pos: [BAL_X, BAL_H / 2, BAL_Z - hd] as [number, number, number], size: [BAL_W, BAL_H, 0.14] as [number, number, number] },
-    { pos: [BAL_X, BAL_H / 2, BAL_Z + hd] as [number, number, number], size: [BAL_W, BAL_H, 0.14] as [number, number, number] },
-    { pos: [BAL_X - hw, BAL_H / 2, BAL_Z] as [number, number, number], size: [0.14, BAL_H, BAL_D] as [number, number, number] },
-    { pos: [BAL_X + hw, BAL_H / 2, BAL_Z] as [number, number, number], size: [0.14, BAL_H, BAL_D] as [number, number, number] },
-  ]
-
-  return (
-    <>
-      {/* Floor slabs */}
-      {Array.from({ length: numFloors + 1 }, (_, n) => (
-        <mesh key={n} position={[BAL_X, n * FLOOR_H, BAL_Z]}>
-          <boxGeometry args={[BAL_W, FLOOR_T, BAL_D]} />
-          <meshStandardMaterial color={C_SLAB} />
-        </mesh>
-      ))}
-      {/* Walls */}
-      {wallPanels.map(({ pos, size }, i) => (
-        <mesh key={i} position={pos}>
-          <boxGeometry args={size} />
-          <meshStandardMaterial
-            color={transparentWalls ? '#9ab1a8' : '#7a8a72'}
-            transparent={transparentWalls}
-            opacity={transparentWalls ? 0.22 : 1}
-            depthWrite={!transparentWalls}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-      ))}
-      {/* Balcony platform — protrudes from south face on floor 3 */}
-      <mesh position={[BAL_X, balconyY, BAL_Z + hd + BAL_BALCONY_DEPTH / 2]}>
-        <boxGeometry args={[BAL_BALCONY_WIDTH, FLOOR_T, BAL_BALCONY_DEPTH]} />
-        <meshStandardMaterial color={C_SLAB} />
-      </mesh>
-      {/* Balcony railing — front */}
-      <mesh position={[BAL_X, balconyY + 0.5, BAL_Z + hd + BAL_BALCONY_DEPTH]}>
-        <boxGeometry args={[BAL_BALCONY_WIDTH, 1.0, 0.08]} />
-        <meshStandardMaterial color="#5a6a5a" />
-      </mesh>
-      {/* Balcony railing — sides */}
-      <mesh position={[BAL_X - BAL_BALCONY_WIDTH / 2, balconyY + 0.5, BAL_Z + hd + BAL_BALCONY_DEPTH / 2]}>
-        <boxGeometry args={[0.08, 1.0, BAL_BALCONY_DEPTH]} />
-        <meshStandardMaterial color="#5a6a5a" />
-      </mesh>
-      <mesh position={[BAL_X + BAL_BALCONY_WIDTH / 2, balconyY + 0.5, BAL_Z + hd + BAL_BALCONY_DEPTH / 2]}>
-        <boxGeometry args={[0.08, 1.0, BAL_BALCONY_DEPTH]} />
-        <meshStandardMaterial color="#5a6a5a" />
-      </mesh>
-    </>
-  )
-}
-
-function ShophouseBlock({ transparentWalls }: { transparentWalls: boolean }) {
-  const hw = SHOP_W / 2
-  const hd = SHOP_D / 2
-  const numFloors = Math.round(SHOP_H / FLOOR_H)
-  const windowYCenter = (floor: number) =>
-    (floor - 1) * FLOOR_H + SHOP_WINDOW_SILL + SHOP_WINDOW_HEIGHT / 2
-
-  const wallPanels = [
-    { pos: [SHOP_X, SHOP_H / 2, SHOP_Z - hd] as [number, number, number], size: [SHOP_W, SHOP_H, 0.14] as [number, number, number] },
-    { pos: [SHOP_X, SHOP_H / 2, SHOP_Z + hd] as [number, number, number], size: [SHOP_W, SHOP_H, 0.14] as [number, number, number] },
-    { pos: [SHOP_X - hw, SHOP_H / 2, SHOP_Z] as [number, number, number], size: [0.14, SHOP_H, SHOP_D] as [number, number, number] },
-    { pos: [SHOP_X + hw, SHOP_H / 2, SHOP_Z] as [number, number, number], size: [0.14, SHOP_H, SHOP_D] as [number, number, number] },
-  ]
-
-  return (
-    <>
-      {/* Floor slabs */}
-      {Array.from({ length: numFloors + 1 }, (_, n) => (
-        <mesh key={n} position={[SHOP_X, n * FLOOR_H, SHOP_Z]}>
-          <boxGeometry args={[SHOP_W, FLOOR_T, SHOP_D]} />
-          <meshStandardMaterial color={C_SLAB} />
-        </mesh>
-      ))}
-      {/* Walls */}
-      {wallPanels.map(({ pos, size }, i) => (
-        <mesh key={i} position={pos}>
-          <boxGeometry args={size} />
-          <meshStandardMaterial
-            color={transparentWalls ? '#b1a08a' : '#C49870'}
-            transparent={transparentWalls}
-            opacity={transparentWalls ? 0.22 : 1}
-            depthWrite={!transparentWalls}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-      ))}
-      {/* Party wall divider */}
-      <mesh position={[SHOP_X, SHOP_H / 2, SHOP_Z]}>
-        <boxGeometry args={[0.14, SHOP_H, SHOP_D]} />
-        <meshStandardMaterial color="#8a7a6a" />
-      </mesh>
-      {/* Windows on south face (floors 2 & 3) */}
-      {SHOP_WINDOW_LAYOUT.map(({ floor, offset }, i) => (
-        <mesh key={i} position={[SHOP_X + offset, windowYCenter(floor), SHOP_Z + hd + 0.07]}>
-          <boxGeometry args={[SHOP_WINDOW_WIDTH, SHOP_WINDOW_HEIGHT, 0.10]} />
-          <meshStandardMaterial color={C_GLASS} transparent opacity={0.2} depthWrite={false} side={THREE.DoubleSide} />
-        </mesh>
-      ))}
-      {/* Shopfront awnings on ground floor */}
-      {[-2.5, 2.5].map((offset, i) => (
-        <mesh key={`awning-${i}`} position={[SHOP_X + offset, 2.6, SHOP_Z + hd + 0.6]} rotation={[-0.4, 0, 0]}>
-          <boxGeometry args={[4, 0.06, 1.2]} />
-          <meshStandardMaterial color="#c44830" />
-        </mesh>
-      ))}
-    </>
-  )
-}
-
-// ── Base landing pad at origin ────────────────────────────────────────────────
-
-function BasePad() {
-  const groupRef = useRef<THREE.Group>(null)
-  const ringsRef = useRef<THREE.Group>(null)
-  const scanRef = useRef<THREE.Mesh>(null)
-  const beaconRefs = useRef<THREE.Mesh[]>([])
-
-  const PAD_RADIUS = 5
-  const PAD_HEIGHT = 0.12
-  const PYLON_HEIGHT = 2.2
-  const PYLON_RADIUS = 0.15
-  const NUM_PULSE_RINGS = 3
-
-  useFrame(({ clock }) => {
-    const t = clock.elapsedTime
-
-    // Rotate the scan ring slowly (z-axis after the -PI/2 X rotation lays it flat)
-    if (scanRef.current) {
-      scanRef.current.rotation.set(-Math.PI / 2, 0, t * 0.6)
-    }
-
-    // Pulse the beacon pylons
-    beaconRefs.current.forEach((mesh, i) => {
-      if (!mesh) return
-      const phase = t * 2.0 + i * (Math.PI / 2)
-      const pulse = 0.4 + 0.6 * Math.abs(Math.sin(phase))
-      ;(mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = pulse
-    })
-
-    // Animate expanding pulse rings
-    if (ringsRef.current) {
-      ringsRef.current.children.forEach((child, i) => {
-        const mesh = child as THREE.Mesh
-        const phase = (t * 0.5 + i * (1.0 / NUM_PULSE_RINGS)) % 1.0
-        const scale = 0.3 + phase * 1.0
-        mesh.scale.set(scale, 1, scale)
-        ;(mesh.material as THREE.MeshStandardMaterial).opacity = 0.35 * (1.0 - phase)
-      })
-    }
-  })
-
-  // Corner pylon positions (square arrangement just inside pad edge)
-  const pylonOffset = PAD_RADIUS * 0.72
-  const pylonPositions: [number, number, number][] = [
-    [-pylonOffset, 0, -pylonOffset],
-    [ pylonOffset, 0, -pylonOffset],
-    [-pylonOffset, 0,  pylonOffset],
-    [ pylonOffset, 0,  pylonOffset],
-  ]
-
-  return (
-    <group ref={groupRef} position={[0, 0.04, 0]}>
-      {/* Main octagonal platform */}
-      <mesh position={[0, PAD_HEIGHT / 2, 0]}>
-        <cylinderGeometry args={[PAD_RADIUS, PAD_RADIUS, PAD_HEIGHT, 8]} />
-        <meshStandardMaterial color="#1a1d24" roughness={0.7} metalness={0.3} />
-      </mesh>
-
-      {/* Raised inner ring — darker deck */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, PAD_HEIGHT + 0.02, 0]}>
-        <ringGeometry args={[2.6, 3.4, 32]} />
-        <meshStandardMaterial
-          color="#0e1118"
-          emissive="#1a3a5a"
-          emissiveIntensity={0.15}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-
-      {/* Inner cross markings — tactical crosshair */}
-      {[0, Math.PI / 2].map((rot, i) => (
-        <mesh key={`cross-${i}`} position={[0, PAD_HEIGHT + 0.03, 0]} rotation={[-Math.PI / 2, rot, 0]}>
-          <planeGeometry args={[4.8, 0.12]} />
-          <meshStandardMaterial
-            color="#2a5a7a"
-            emissive="#3a8abf"
-            emissiveIntensity={0.5}
-            side={THREE.DoubleSide}
-            transparent
-            opacity={0.8}
-          />
-        </mesh>
-      ))}
-
-      {/* Centre pip — glowing beacon dot */}
-      <mesh position={[0, PAD_HEIGHT + 0.06, 0]}>
-        <cylinderGeometry args={[0.35, 0.35, 0.06, 16]} />
-        <meshStandardMaterial
-          color="#00ccff"
-          emissive="#00ccff"
-          emissiveIntensity={1.2}
-        />
-      </mesh>
-
-      {/* Concentric ring markings on deck */}
-      {[1.6, 3.8].map((r, i) => (
-        <mesh key={`ring-${i}`} rotation={[-Math.PI / 2, 0, 0]} position={[0, PAD_HEIGHT + 0.025, 0]}>
-          <ringGeometry args={[r - 0.04, r + 0.04, 48]} />
-          <meshStandardMaterial
-            color="#1e4060"
-            emissive="#2060a0"
-            emissiveIntensity={0.3}
-            side={THREE.DoubleSide}
-            transparent
-            opacity={0.7}
-          />
-        </mesh>
-      ))}
-
-      {/* Edge ring — bright outline */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, PAD_HEIGHT + 0.025, 0]}>
-        <ringGeometry args={[PAD_RADIUS - 0.08, PAD_RADIUS + 0.02, 8]} />
-        <meshStandardMaterial
-          color="#2a4a6a"
-          emissive="#3070a0"
-          emissiveIntensity={0.4}
-          side={THREE.DoubleSide}
-          transparent
-          opacity={0.6}
-        />
-      </mesh>
-
-      {/* Animated scan arc — a partial ring that rotates */}
-      <mesh ref={scanRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, PAD_HEIGHT + 0.04, 0]}>
-        <ringGeometry args={[PAD_RADIUS - 0.3, PAD_RADIUS + 0.15, 32, 1, 0, Math.PI * 0.4]} />
-        <meshStandardMaterial
-          color="#00ddff"
-          emissive="#00ddff"
-          emissiveIntensity={0.9}
-          side={THREE.DoubleSide}
-          transparent
-          opacity={0.55}
-        />
-      </mesh>
-
-
-      {/* Diagonal corner marks — chevron-style tick marks */}
-      {[0, Math.PI / 2, Math.PI, Math.PI * 1.5].map((angle, i) => {
-        const dist = PAD_RADIUS * 0.55
-        const cx = Math.cos(angle + Math.PI / 4) * dist
-        const cz = Math.sin(angle + Math.PI / 4) * dist
-        return (
-          <mesh
-            key={`tick-${i}`}
-            position={[cx, PAD_HEIGHT + 0.03, cz]}
-            rotation={[-Math.PI / 2, angle + Math.PI / 4, 0]}
-          >
-            <planeGeometry args={[1.2, 0.08]} />
-            <meshStandardMaterial
-              color="#2a5a7a"
-              emissive="#3a8abf"
-              emissiveIntensity={0.4}
-              side={THREE.DoubleSide}
-              transparent
-              opacity={0.7}
-            />
-          </mesh>
-        )
-      })}
-
-      {/* "BASE" label on the deck */}
-      <Text
-        position={[0, PAD_HEIGHT + 0.04, 2.0]}
-        rotation={[-Math.PI / 2, 0, 0]}
-        fontSize={1.1}
-        letterSpacing={0.25}
-        color="#3a8abf"
-        anchorX="center"
-        anchorY="middle"
-        fontWeight="bold"
-      >
-        BASE
-        <meshStandardMaterial
-          color="#2a6a9a"
-          emissive="#3a8abf"
-          emissiveIntensity={0.5}
-          transparent
-          opacity={0.85}
-        />
-      </Text>
-
-      {/* Point light for ambient base glow */}
-      <pointLight position={[0, 1.5, 0]} color="#1a6090" intensity={2.5} distance={12} decay={2} />
-    </group>
-  )
-}
-
-// ── Supply crates — dropped at survivor locations after delivery ──────────────
-
 function survivorKey(s: SurvivorPoint): string {
   return `${s.x.toFixed(1)},${s.y.toFixed(1)},${s.z.toFixed(1)}`
 }
@@ -1078,186 +407,6 @@ function SupplyCrates({ deliveredTo }: { deliveredTo: Set<string> }) {
         </group>
       ))}
     </group>
-  )
-}
-
-// ── NW Tower ─────────────────────────────────────────────────────────────────
-// 7-floor building whose SE corner overlaps the NW corner of the target
-// building by ~1 m. Has windows on floors 2, 4, 6, 7 and a balcony on floor 5.
-function NWTowerBuilding({ transparentWalls }: { transparentWalls: boolean }) {
-  const hw = NW_W / 2
-  const hd = NW_D / 2
-  const windowYCenter = (floor: number) =>
-    (floor - 1) * FLOOR_H + FLOOR_T + NW_WINDOW_SILL + NW_WINDOW_HEIGHT / 2
-  const balconyY = (NW_BALCONY_FLOOR - 1) * FLOOR_H + 0.06
-  const balconyZ = NW_Z + hd + NW_BALCONY_DEPTH / 2
-
-  // Four thin wall panels (same pattern as TargetBuilding)
-  const wallPanels = [
-    { pos: [NW_X,      NW_H / 2, NW_Z - hd] as [number,number,number], size: [NW_W, NW_H, 0.14] as [number,number,number] }, // north
-    { pos: [NW_X,      NW_H / 2, NW_Z + hd] as [number,number,number], size: [NW_W, NW_H, 0.14] as [number,number,number] }, // south
-    { pos: [NW_X - hw, NW_H / 2, NW_Z]      as [number,number,number], size: [0.14, NW_H, NW_D] as [number,number,number] }, // west
-    { pos: [NW_X + hw, NW_H / 2, NW_Z]      as [number,number,number], size: [0.14, NW_H, NW_D] as [number,number,number] }, // east
-  ]
-
-  return (
-    <>
-      {/* Floor slabs */}
-      {Array.from({ length: 8 }, (_, i) => (
-        <mesh key={`slab-${i}`} position={[NW_X, i * FLOOR_H + FLOOR_T / 2, NW_Z]}>
-          <boxGeometry args={[NW_W, FLOOR_T, NW_D]} />
-          <meshStandardMaterial color="#b0b8c8" />
-        </mesh>
-      ))}
-      {/* Wall panels */}
-      {wallPanels.map(({ pos, size }, i) => (
-        <mesh key={`wall-${i}`} position={pos}>
-          <boxGeometry args={size} />
-          <meshStandardMaterial
-            color={transparentWalls ? '#8899bb' : '#8899aa'}
-            transparent={transparentWalls}
-            opacity={transparentWalls ? 0.22 : 1}
-            depthWrite={!transparentWalls}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-      ))}
-      {/* Windows */}
-      {NW_WINDOW_LAYOUT.map(({ floor, face, offset }, i) => {
-        const cx = face === 'north' || face === 'south' ? NW_X + offset : NW_X
-        const cz = face === 'east'  || face === 'west'  ? NW_Z + offset : NW_Z
-        const x  = face === 'east'  ? NW_X + hw + 0.07 : face === 'west' ? NW_X - hw - 0.07 : cx
-        const z  = face === 'south' ? NW_Z + hd + 0.07 : face === 'north' ? NW_Z - hd - 0.07 : cz
-        const ry = face === 'east' || face === 'west' ? Math.PI / 2 : 0
-        return (
-          <mesh key={i} position={[x, windowYCenter(floor), z]} rotation={[0, ry, 0]}>
-            <boxGeometry args={[NW_WINDOW_WIDTH, NW_WINDOW_HEIGHT, 0.10]} />
-            <meshStandardMaterial
-              color={C_GLASS} transparent opacity={0.2}
-              depthWrite={false} side={THREE.DoubleSide}
-            />
-          </mesh>
-        )
-      })}
-      {/* South balcony slab (floor 5) */}
-      <mesh position={[NW_X, balconyY, balconyZ]}>
-        <boxGeometry args={[NW_BALCONY_WIDTH, FLOOR_T, NW_BALCONY_DEPTH]} />
-        <meshStandardMaterial color="#99aabb" />
-      </mesh>
-      {/* Balcony railing */}
-      <mesh position={[NW_X, balconyY + 0.55, balconyZ + NW_BALCONY_DEPTH / 2]}>
-        <boxGeometry args={[NW_BALCONY_WIDTH, 1.1, 0.06]} />
-        <meshStandardMaterial color="#aabbcc" transparent opacity={0.6} />
-      </mesh>
-    </>
-  )
-}
-function SurvivorHuman({ pos, floodY, index, supplied }: { pos: SurvivorPoint; floodY: number; index: number; supplied: boolean }) {
-  const groupRef = useRef<THREE.Group>(null)
-
-  useFrame(({ clock }) => {
-    if (!groupRef.current) return
-    const t = clock.elapsedTime
-    if (supplied) {
-      // Gentle idle bob for supplied survivors
-      groupRef.current.scale.setScalar(1 + Math.sin(t * 1.5 + index * 0.9) * 0.06)
-    } else {
-      const submerged = pos.y < floodY - 0.2
-      const speed = submerged ? 6 : 3
-      groupRef.current.scale.setScalar(1 + Math.sin(t * speed + index * 0.9) * 0.18)
-    }
-
-    const bodyColor = supplied ? 0x22dd66 : (pos.y < floodY - 0.2 ? 0xff8800 : 0xff2222)
-    const emissiveColor = supplied ? 0x11aa44 : (pos.y < floodY - 0.2 ? 0xcc4400 : 0xff0000)
-    const emissiveIntensity = supplied ? 0.5 : (pos.y < floodY - 0.2 ? 0.7 : 0.45)
-    groupRef.current.traverse(child => {
-      if ((child as THREE.Mesh).isMesh) {
-        const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial
-        mat.color.setHex(bodyColor)
-        mat.emissive.setHex(emissiveColor)
-        mat.emissiveIntensity = emissiveIntensity
-      }
-    })
-  })
-
-  const submerged = pos.y < floodY - 0.2
-  const color = supplied ? '#22dd66' : (submerged ? '#ff8800' : '#ff2222')
-  const emissive = supplied ? '#11aa44' : (submerged ? '#cc4400' : '#ff0000')
-
-  return (
-    <group ref={groupRef} position={[pos.x, pos.y, pos.z]}>
-      {/* Head */}
-      <mesh position={[0, 0.33, 0]}>
-        <sphereGeometry args={[0.11, 8, 6]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.45} />
-      </mesh>
-      {/* Torso */}
-      <mesh position={[0, 0.10, 0]}>
-        <boxGeometry args={[0.18, 0.26, 0.10]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.45} />
-      </mesh>
-      {/* Left arm */}
-      <mesh position={[-0.14, 0.08, 0]} rotation={[0, 0, 0.35]}>
-        <boxGeometry args={[0.07, 0.22, 0.07]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.45} />
-      </mesh>
-      {/* Right arm */}
-      <mesh position={[0.14, 0.08, 0]} rotation={[0, 0, -0.35]}>
-        <boxGeometry args={[0.07, 0.22, 0.07]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.45} />
-      </mesh>
-      {/* Left leg */}
-      <mesh position={[-0.06, -0.17, 0]}>
-        <boxGeometry args={[0.07, 0.22, 0.08]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.45} />
-      </mesh>
-      {/* Right leg */}
-      <mesh position={[0.06, -0.17, 0]}>
-        <boxGeometry args={[0.07, 0.22, 0.08]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.45} />
-      </mesh>
-    </group>
-  )
-}
-
-function Survivors({ floodY, deliveredTo }: { floodY: number; deliveredTo: Set<string> }) {
-  return (
-    <>
-      {SURVIVOR_POSITIONS.map((pos, i) => (
-        <SurvivorHuman key={i} pos={pos} floodY={floodY} index={i} supplied={deliveredTo.has(survivorKey(pos))} />
-      ))}
-    </>
-  )
-}
-
-function SurvivorScanRays({
-  enabled,
-  dronePos,
-  survivors,
-}: {
-  enabled: boolean
-  dronePos: THREE.Vector3
-  survivors: SurvivorPoint[]
-}) {
-  if (!enabled || survivors.length === 0) return null
-  return (
-    <>
-      {survivors.map((survivor, index) => (
-        <Line
-          key={`scan-ray-${index}-${survivor.x}-${survivor.y}-${survivor.z}`}
-          points={[
-            [dronePos.x, dronePos.y, dronePos.z],
-            [survivor.x, survivor.y, survivor.z],
-          ]}
-          color="#ff4466"
-          lineWidth={1.2}
-          transparent
-          opacity={0.9}
-          depthTest={false}
-          depthWrite={false}
-        />
-      ))}
-    </>
   )
 }
 
@@ -3219,13 +2368,6 @@ export default function SARScene() {
     if (!selection) return
 
     // Detect which named buildings overlap the selected area.
-    const NAMED_BUILDINGS: { id: number; name: string }[] = [
-      { id: 0, name: 'target building' },
-      { id: 1, name: 'obstacle building' },
-      { id: 2, name: 'balcony building' },
-      { id: 3, name: 'shophouse block' },
-      { id: 4, name: 'NW tower' },
-    ]
     const overlapping = SIM_BUILDINGS.filter(b => {
       const bb = buildingBounds(b)
       // AABB overlap between selection and building footprint
@@ -3233,8 +2375,8 @@ export default function SARScene() {
              bb.minZ <= selection.maxZ && bb.maxZ >= selection.minZ
     })
     const buildingNames = overlapping
-      .map(b => NAMED_BUILDINGS.find(n => n.id === b.id)?.name)
-      .filter(Boolean) as string[]
+      .map(buildingPromptName)
+      .filter(Boolean)
 
     let prompt: string
     if (buildingNames.length === 1) {
@@ -3243,7 +2385,7 @@ export default function SARScene() {
     } else if (buildingNames.length > 1) {
       const buildingList = overlapping
         .map(b => {
-          const name = NAMED_BUILDINGS.find(n => n.id === b.id)?.name ?? `building ${b.id}`
+          const name = buildingPromptName(b)
           return `${name} at (${b.cx.toFixed(1)}, 0, ${b.cz.toFixed(1)})`
         })
         .join('; ')
@@ -3409,15 +2551,16 @@ export default function SARScene() {
         <hemisphereLight args={['#1a1a2e', '#0d0d0d', 0.4]} />
 
         {/* Scene */}
-        <Ground />
-        <GridOverlay />
+        <Ground span={span} />
+        <GridOverlay span={span} gridCells={GRID_CELLS} />
         <BasePad />
-        <ObstacleBuilding />
-        <TargetBuilding transparentWalls={transparentWalls} />
-        <BalconyBuilding transparentWalls={transparentWalls} />
-        <ShophouseBlock transparentWalls={transparentWalls} />
-        <NWTowerBuilding transparentWalls={transparentWalls} />
-        <Survivors floodY={FLOOD_LEVEL} deliveredTo={deliveredTo} />
+        <MissionBuildings
+          buildings={WORLD_BUILDINGS}
+          transparentWalls={transparentWalls}
+          floorHeight={FLOOR_H}
+          floorThickness={FLOOR_T}
+        />
+        <Survivors floodY={FLOOD_LEVEL} survivors={SURVIVOR_POSITIONS} deliveredTo={deliveredTo} />
         {selectMode ? (
           <AreaSelectProbe
             onDragUpdate={(start, end) => {
