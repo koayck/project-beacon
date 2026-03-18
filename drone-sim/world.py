@@ -1,44 +1,21 @@
 """
 Minimal world model for the drone sim container.
-Mirrors backend/world/model.py — kept in sync via the shared proto/world_data.
-Only building AABBs are needed for collision avoidance and vision.
-Survivor positions and facade windows are included so thermal detections can
-respect wall occlusion.
+Loads building/survivor data from shared/world.json or shared/world2.json.
+Supports runtime world switching via load_world().
 """
 from __future__ import annotations
 
+import json
 import math
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 FLOOD_LEVEL: float = 1.4
 SURVIVOR_RANGE: float = 3.0
 FLOOR_HEIGHT: float = 3.0
 FLOOR_SLAB_THICKNESS: float = 0.2
-
-# (cx, cz, w, d, h)
-# Target building at (-15, -20) — 4 floors, 12 m tall
-# Obstacle at (-7, -10) — solid block blocking the direct route from base (0,0,0) to target
-_RAW_BUILDINGS = [
-    (-15, -20, 8, 8, 12),   # target building
-    ( -7, -10, 6, 5, 10),   # obstacle on direct route (0,0,0) → (-15,0,-20)
-    ( 20, -20, 6, 6,  9),   # balcony building (3 floors, exterior balcony on south face)
-    ( 12, -27, 10, 8, 9),   # twin shophouse block (3 floors, windows on south face)
-    (-23, -28, 10, 10, 21), # NW tower (7 floors), SE corner overlaps NW corner of target
-]
-
-# (x, y, z) — inside the target building, one per floor (floors 2, 3, 4)
-# survY(n) = (n-1)*3.0 + 0.65  →  3.65, 6.65, 9.65
-_RAW_SURVIVORS = [
-    (-16.5,  3.65, -19.0),  # floor 2 — target building
-    (-14.5,  6.65, -20.5),  # floor 3 — target building
-    (-13.5,  9.65, -21.0),  # floor 4 — target building
-    ( 20.0,  6.65, -16.0),  # floor 3 — balcony building, on exterior balcony (outside AABB)
-    (  9.5,  3.65, -27.0),  # floor 2 — shophouse A, visible through south window
-    ( 14.5,  6.65, -27.0),  # floor 3 — shophouse B, visible through south window
-    (-19.0,  3.65, -27.5),  # floor 2 — NW tower, inside near east window
-    (-23.0, 12.65, -22.0),  # floor 5 — NW tower, on south balcony (outside AABB)
-]
 
 
 @dataclass(frozen=True)
@@ -189,92 +166,72 @@ class SimSurvivor:
         return math.sqrt((self.x-x)**2+(self.y-y)**2+(self.z-z)**2)
 
 
-def _target_windows(cx: float, cz: float) -> tuple[SimWindowAperture, ...]:
+def _resolve_world_path(world_id: int) -> Path:
+    """Find the world JSON file."""
+    filename = "world.json" if world_id == 1 else f"world{world_id}.json"
+    # Inside Docker: /shared/world.json
+    docker_path = Path("/shared") / filename
+    if docker_path.exists():
+        return docker_path
+    # Local dev: ../shared/world.json
+    local_path = Path(__file__).parent.parent / "shared" / filename
+    if local_path.exists():
+        return local_path
+    raise FileNotFoundError(f"Cannot find {filename}")
+
+
+def _parse_windows(b: dict) -> tuple[SimWindowAperture, ...]:
+    """Parse window definitions from a world.json building entry."""
+    cx, cz = float(b["cx"]), float(b["cz"])
     windows: list[SimWindowAperture] = []
-    layout: tuple[tuple[int, WindowFace, float], ...] = (
-        (1, "west", 0.0),
-        (2, "north", -1.5),
-        (3, "east", -0.5),
-        (4, "south", 1.5),
-    )
-    window_width = 2.0
-    window_height = 1.6
-    for floor, face, offset in layout:
-        sill_y = (floor - 1) * 3.0 + 0.4
-        axis_center = cx + offset if face in ("north", "south") else cz + offset
-        windows.append(
-            SimWindowAperture(
-                face=face,
-                axis_center=axis_center,
-                sill_y=sill_y,
-                width=window_width,
-                height=window_height,
-            )
-        )
+    for w in b.get("windows", []):
+        face: WindowFace = w["face"]
+        sill_y = (w["floor"] - 1) * FLOOR_HEIGHT + w["sill"]
+        axis_center = cx + w["offset"] if face in ("north", "south") else cz + w["offset"]
+        windows.append(SimWindowAperture(
+            face=face,
+            axis_center=axis_center,
+            sill_y=sill_y,
+            width=w["width"],
+            height=w["height"],
+        ))
     return tuple(windows)
 
 
-def _shophouse_windows(cx: float, cz: float) -> tuple[SimWindowAperture, ...]:
-    windows: list[SimWindowAperture] = []
-    layout: tuple[tuple[int, WindowFace, float], ...] = (
-        (2, "south", -2.5),
-        (2, "south",  2.5),
-        (3, "south", -2.5),
-        (3, "south",  2.5),
-    )
-    window_width = 1.6
-    window_height = 1.4
-    for floor, face, offset in layout:
-        sill_y = (floor - 1) * 3.0 + 0.5
-        axis_center = cx + offset if face in ("north", "south") else cz + offset
-        windows.append(
-            SimWindowAperture(
-                face=face,
-                axis_center=axis_center,
-                sill_y=sill_y,
-                width=window_width,
-                height=window_height,
-            )
-        )
-    return tuple(windows)
+def load_world(world_id: int = 1) -> None:
+    """Load (or reload) the world data from shared JSON.
+    Updates the module-level BUILDINGS and SURVIVORS lists in-place."""
+    global BUILDINGS, SURVIVORS, FLOOD_LEVEL
+
+    path = _resolve_world_path(world_id)
+    data = json.loads(path.read_text())
+
+    scene = data.get("scene", {})
+    FLOOD_LEVEL = scene.get("flood_level_m", 1.4)
+
+    BUILDINGS.clear()
+    for b in data["buildings"]:
+        BUILDINGS.append(SimBuilding(
+            id=b["id"],
+            cx=float(b["cx"]),
+            cz=float(b["cz"]),
+            w=float(b["w"]),
+            d=float(b["d"]),
+            h=float(b["h"]),
+            windows=_parse_windows(b),
+        ))
+
+    SURVIVORS.clear()
+    for i, s in enumerate(data.get("survivors", [])):
+        SURVIVORS.append(SimSurvivor(i, float(s["x"]), float(s["y"]), float(s["z"])))
 
 
-def _nw_tower_windows(cx: float, cz: float) -> tuple[SimWindowAperture, ...]:
-    windows: list[SimWindowAperture] = []
-    layout: tuple[tuple[int, WindowFace, float], ...] = (
-        (2, "east",  0.5),
-        (4, "south", -1.5),
-        (6, "north",  2.0),
-        (7, "west",  -1.0),
-    )
-    window_width = 1.8
-    window_height = 1.6
-    for floor, face, offset in layout:
-        sill_y = (floor - 1) * 3.0 + 0.4
-        axis_center = cx + offset if face in ("north", "south") else cz + offset
-        windows.append(
-            SimWindowAperture(
-                face=face,
-                axis_center=axis_center,
-                sill_y=sill_y,
-                width=window_width,
-                height=window_height,
-            )
-        )
-    return tuple(windows)
+BUILDINGS: list[SimBuilding] = []
+SURVIVORS: list[SimSurvivor] = []
 
-
-BUILDINGS = [
-    SimBuilding(
-        i, cx, cz, w, d, h,
-        _target_windows(cx, cz) if i == 0
-        else _shophouse_windows(cx, cz) if i == 3
-        else _nw_tower_windows(cx, cz) if i == 4
-        else ()
-    )
-    for i, (cx, cz, w, d, h) in enumerate(_RAW_BUILDINGS)
-]
-SURVIVORS = [SimSurvivor(i, *r) for i, r in enumerate(_RAW_SURVIVORS)]
+# Load default world at import time
+_initial_world = int(os.environ.get("WORLD_ID", "1"))
+load_world(_initial_world)
 
 
 def _compass(dx: float, dz: float) -> str:

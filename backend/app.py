@@ -280,6 +280,22 @@ async def set_speed(asset_id: str, req: SpeedRequest) -> dict:
     return {"asset_id": asset_id, "speed": req.speed}
 
 
+@app.post("/world/{world_id}")
+async def switch_world(world_id: int) -> dict:
+    """Switch the active world for backend and all connected drones."""
+    from backend.world.model import load_world as load_backend_world
+    load_backend_world(world_id)
+    # Tell each connected drone container to reload its world data
+    results = {}
+    for aid in grpc_client.registered_asset_ids():
+        try:
+            r = await grpc_client.switch_world(aid, world_id)
+            results[aid] = r
+        except Exception as e:
+            results[aid] = {"success": False, "message": str(e)}
+    return {"world_id": world_id, "drones": results}
+
+
 @app.post("/drone/{asset_id}/reset")
 async def reset_drone_to_base(asset_id: str) -> dict:
     """Command a drone to return to base using obstacle-aware routing."""

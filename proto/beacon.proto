@@ -4,11 +4,12 @@ package beacon;
 
 // Commander → Drone control service
 service DroneControl {
-  rpc MoveTo        (MoveToRequest)    returns (CommandResponse);
-  rpc GetStatus     (StatusRequest)    returns (DroneStatus);
-  rpc ReturnToBase  (ReturnRequest)    returns (CommandResponse);
-  rpc ScanArea      (ScanAreaRequest)  returns (CommandResponse);
-  rpc GetView       (ViewRequest)      returns (ViewResponse);
+  rpc MoveTo        (MoveToRequest)       returns (CommandResponse);
+  rpc GetStatus     (StatusRequest)       returns (DroneStatus);
+  rpc ReturnToBase  (ReturnRequest)       returns (CommandResponse);
+  rpc ScanArea      (ScanAreaRequest)     returns (CommandResponse);
+  rpc GetView       (ViewRequest)         returns (ViewResponse);
+  rpc SwitchWorld   (SwitchWorldRequest)  returns (CommandResponse);
 }
 
 // ── Requests ──────────────────────────────────────────────
@@ -41,6 +42,10 @@ message ViewRequest {
   string asset_id    = 1;
   float  heading_deg = 2;  // 0 = North, 90 = East; 0 = use last heading
   float  range       = 3;  // detection radius in metres; 0 = use default (20m)
+}
+
+message SwitchWorldRequest {
+  int32 world_id = 1;  // 1 = world.json, 2 = world2.json
 }
 
 // ── Responses ─────────────────────────────────────────────
