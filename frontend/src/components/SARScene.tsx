@@ -202,7 +202,7 @@ const PARKS = [
 // ── Survivor positions (from shared/world.json) ───────────────────────────────
 const SURVIVOR_POSITIONS = WORLD.survivors.map(s => ({ x: s.x, y: s.y, z: s.z }))
 
-const SURVIVOR_SENSOR_RANGE = 12.0
+const SURVIVOR_SENSOR_RANGE = 3.0
 const LOS_SAMPLE_COUNT = 30
 const APPROACH_OFFSET = 2.5
 
@@ -1014,6 +1014,21 @@ function BasePad() {
 
 function survivorKey(s: SurvivorPoint): string {
   return `${s.x.toFixed(1)},${s.y.toFixed(1)},${s.z.toFixed(1)}`
+}
+
+function mergeUniqueSurvivors(
+  existing: SurvivorPoint[],
+  incoming: SurvivorPoint[],
+): SurvivorPoint[] {
+  if (incoming.length === 0) return existing
+  const merged = new Map<string, SurvivorPoint>()
+  for (const survivor of existing) {
+    merged.set(survivorKey(survivor), survivor)
+  }
+  for (const survivor of incoming) {
+    merged.set(survivorKey(survivor), survivor)
+  }
+  return [...merged.values()]
 }
 
 function SupplyCrates({ deliveredTo }: { deliveredTo: Set<string> }) {
@@ -2090,9 +2105,9 @@ function IntelCard({
       </div>
 
       {/* Drone position context */}
-      <div style={{ color: '#667', marginBottom: 6, fontSize: 10 }}>
+      {/* <div style={{ color: '#667', marginBottom: 6, fontSize: 10 }}>
         SENSOR @ ({dronePos.x.toFixed(1)}, {dronePos.y.toFixed(1)}, {dronePos.z.toFixed(1)}) — {SURVIVOR_SENSOR_RANGE}m range
-      </div>
+      </div> */}
 
       {/* Individual survivor entries */}
       {detected === 0 ? (
@@ -2781,12 +2796,7 @@ export default function SARScene() {
           event.survivors &&
           event.survivors.length > 0
         ) {
-          setDiscoveredSurvivors(prev => {
-            const known = new Set(prev.map(survivorKey))
-            const novel = event.survivors!.filter(s => !known.has(survivorKey(s)))
-            if (novel.length === 0) return prev
-            return [...prev, ...novel]
-          })
+          setDiscoveredSurvivors(prev => mergeUniqueSurvivors(prev, event.survivors!))
         }
         if (event.type === 'done') addLog('✓ Agent responded')
       }
@@ -2902,6 +2912,18 @@ export default function SARScene() {
     () => scannedSurvivorsFromDrone(dronePos),
     [dronePos.x, dronePos.y, dronePos.z],
   )
+  const fleetScannedSurvivors = useMemo(() => {
+    const merged = new Map<string, SurvivorPoint>()
+    for (const telemetryEntry of Object.values(drones)) {
+      const droneScan = scannedSurvivorsFromDrone(
+        new THREE.Vector3(telemetryEntry.x, telemetryEntry.y, telemetryEntry.z),
+      )
+      for (const survivor of droneScan) {
+        merged.set(survivorKey(survivor), survivor)
+      }
+    }
+    return [...merged.values()]
+  }, [drones])
 
   const handleSendSupplies = useCallback((survivor: SurvivorPoint) => {
     const key = survivorKey(survivor)
@@ -2947,16 +2969,15 @@ export default function SARScene() {
 
   // Persistent intel — accumulate survivors across all scans
   const [discoveredSurvivors, setDiscoveredSurvivors] = useState<SurvivorPoint[]>([])
+  const intelSurvivors = useMemo(
+    () => mergeUniqueSurvivors([], discoveredSurvivors),
+    [discoveredSurvivors],
+  )
 
   useEffect(() => {
-    if (scannedSurvivors.length === 0) return
-    setDiscoveredSurvivors(prev => {
-      const known = new Set(prev.map(survivorKey))
-      const novel = scannedSurvivors.filter(s => !known.has(survivorKey(s)))
-      if (novel.length === 0) return prev
-      return [...prev, ...novel]
-    })
-  }, [scannedSurvivors])
+    if (fleetScannedSurvivors.length === 0) return
+    setDiscoveredSurvivors(prev => mergeUniqueSurvivors(prev, fleetScannedSurvivors))
+  }, [fleetScannedSurvivors])
 
   return (
     <div style={{
@@ -3083,7 +3104,7 @@ export default function SARScene() {
           selectMode={selectMode}
         />
         <IntelCard
-          survivors={discoveredSurvivors}
+          survivors={intelSurvivors}
           dronePos={dronePos}
           totalSurvivors={SURVIVOR_POSITIONS.length}
           deliveringTo={deliveringTo}
