@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source
 COPY drone-sim/ .
 COPY proto/ /proto/
+COPY shared/ /shared/
 
 # Generate gRPC stubs from the proto contract
 RUN mkdir -p grpc_generated && \

@@ -175,7 +175,12 @@ class DroneSimulator:
             "altitude_agl": view["altitude_agl"],
         }
 
-    def get_view(self, heading_deg: float = 0.0, detection_range: float = 20.0) -> dict:
+    def get_view(
+        self,
+        heading_deg: float = 0.0,
+        detection_range: float = 20.0,
+        survivor_range: float | None = None,
+    ) -> dict:
         """Full sensor view from the drone's current position.
 
         Keeps grpc_server.py as a pure transport adapter — it delegates view
@@ -183,7 +188,7 @@ class DroneSimulator:
         """
         s = self.get_snapshot()
         return get_view(s.position.x, s.position.y, s.position.z,
-                        heading_deg=heading_deg, detection_range=detection_range)
+                        heading_deg=heading_deg, detection_range=detection_range, survivor_range=survivor_range)
 
     def _loop(self) -> None:
         while self._running:

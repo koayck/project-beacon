@@ -73,6 +73,7 @@ class _DroneControlServicer(beacon_pb2_grpc.DroneControlServicer):
         view = self._sim.get_view(
             heading_deg=request.heading_deg,
             detection_range=detection_range,
+            survivor_range=detection_range,
         )
 
         objects = [
@@ -109,4 +110,3 @@ def serve(simulator: DroneSimulator, port: int = GRPC_PORT) -> grpc.Server:
     server.add_insecure_port(f"[::]:{port}")
     server.start()
     return server
-
