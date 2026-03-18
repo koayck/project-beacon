@@ -1422,7 +1422,9 @@ async def sweep_scan_building(
     # This avoids false zeroes in summary when IDs are unavailable but detections exist.
     reported_survivor_count = max(len(unique_survivors_detected), max_survivors_seen)
     final_status = await client.get_status(asset_id)
-    await client.end_scan(asset_id)  # clear scan session → drone returns to IDLE
+    end_scan = getattr(client, "end_scan", None)
+    if callable(end_scan):
+        await end_scan(asset_id)  # clear scan session → drone returns to IDLE
     latest_sensor_summary = waypoint_reports[-1]["sensor_summary"] if waypoint_reports else ""
     message = _build_sweep_scan_report(
         asset_id=asset_id,
