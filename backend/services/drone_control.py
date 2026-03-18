@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from backend.grpc.client import DroneGrpcClient
@@ -24,6 +25,37 @@ DEFAULT_SWEEP_SCAN_RADIUS = 3.0
 # Half-angle of the drone's forward-facing thermal camera cone (degrees).
 # Survivors beyond this angle off the drone's heading are not detected.
 THERMAL_HORIZ_FOV_HALF_DEG: float = 60.0
+_detected_survivor_ids: set[int] = set()
+
+
+def _normalize_survivor_id(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw.isdigit():
+            return int(raw)
+    return None
+
+
+def register_detected_survivors(rows: Iterable[dict]) -> int:
+    """Persist survivor IDs detected during prior scans for later supply gating."""
+    before = len(_detected_survivor_ids)
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        sid = _normalize_survivor_id(row.get("id"))
+        if sid is None:
+            continue
+        _detected_survivor_ids.add(sid)
+    return len(_detected_survivor_ids) - before
+
+
+def clear_detected_survivors() -> None:
+    """Reset detected-survivor memory (used by tests)."""
+    _detected_survivor_ids.clear()
 
 # Pre-defined formation offsets (x, y, z) relative to base.
 _FORMATIONS: dict[str, list[tuple[float, float, float]]] = {
@@ -1418,6 +1450,7 @@ async def sweep_scan_building(
         survivor_detection_index.values(),
         key=lambda row: int(row["id"]),
     )
+    register_detected_survivors(unique_survivors_detected)
     # Use whichever signal is stronger: unique survivor IDs or per-waypoint in-range count.
     # This avoids false zeroes in summary when IDs are unavailable but detections exist.
     reported_survivor_count = max(len(unique_survivors_detected), max_survivors_seen)
@@ -1752,6 +1785,72 @@ def find_buildings_in_area(
     }
 
 
+def find_survivors_in_area(
+    center_x: float,
+    center_z: float,
+    radius: float = 30.0,
+    detected_only: bool = False,
+    require_all_detected: bool = False,
+) -> dict:
+    """
+    Return all survivors within radius metres of (center_x, center_z) in XZ.
+    Results are sorted nearest-first from the search centre.
+    When detected_only=True, only survivors detected in prior sweep scans are returned.
+    When require_all_detected=True, return no survivors unless every survivor in area
+    has already been detected.
+    """
+    rows: list[tuple[float, object]] = []
+    for survivor in WORLD.survivors:
+        dist = math.sqrt((survivor.x - center_x) ** 2 + (survivor.z - center_z) ** 2)
+        if dist <= radius:
+            rows.append((dist, survivor))
+    rows.sort(key=lambda row: row[0])
+
+    detected_rows = [
+        (distance, survivor)
+        for distance, survivor in rows
+        if survivor.id in _detected_survivor_ids
+    ]
+    all_detected = len(detected_rows) == len(rows)
+    blocked_by_detection_gate = bool(
+        detected_only and require_all_detected and rows and not all_detected
+    )
+
+    selected_rows = rows
+    if detected_only:
+        selected_rows = detected_rows
+    if blocked_by_detection_gate:
+        selected_rows = []
+
+    return {
+        "survivors": [
+            {
+                "id": survivor.id,
+                "x": survivor.x,
+                "y": survivor.y,
+                "z": survivor.z,
+                "submerged": survivor.submerged,
+                "distance_m": round(distance, 2),
+            }
+            for distance, survivor in selected_rows
+        ],
+        "total": len(selected_rows),
+        "total_in_area": len(rows),
+        "detected_total": len(detected_rows),
+        "all_detected": all_detected,
+        "detection_gate_blocked": blocked_by_detection_gate,
+        "center": {"x": center_x, "z": center_z},
+        "radius": radius,
+        "detected_only": detected_only,
+        "require_all_detected": require_all_detected,
+        **(
+            {"message": "Not all survivors in the selected area have been detected yet."}
+            if blocked_by_detection_gate
+            else {}
+        ),
+    }
+
+
 def plan_sweep_pattern(
     min_x: float,
     min_y: float,
@@ -1970,6 +2069,277 @@ async def parallel_fleet_scan(
         "results": all_results,
         "total_buildings_scanned": total_buildings,
         "total_survivors": total_survivors,
+        "summary": summary,
+    }
+
+
+async def dispatch_supply_to_building(asset_id: str, building: dict) -> dict:
+    """
+    Dispatch one drone to deliver supplies for a target survivor/building.
+
+    Flow: return to base for pickup, route to target drop point,
+    execute waypoints, then report completion.
+    """
+    target_x = building.get("x")
+    target_y = building.get("y")
+    target_z = building.get("z")
+    if not isinstance(target_x, (int, float)) or not isinstance(target_z, (int, float)):
+        return {
+            "asset_id": asset_id,
+            "error": "Invalid supply target coordinates.",
+            "building": building,
+        }
+
+    resolved = resolve_scan_target(float(target_x), float(target_z))
+    matched_building = resolved.get("building") if isinstance(resolved, dict) else None
+    recommended_window = (
+        resolved.get("recommended_window_waypoint")
+        if isinstance(resolved, dict)
+        else None
+    )
+    interior_target = False
+    window_drop_for_survivor: dict | None = None
+    if isinstance(target_y, (int, float)):
+        host_building = WORLD.building_at(float(target_x), float(target_y), float(target_z))
+        interior_target = host_building is not None
+        if host_building is not None:
+            candidate_windows = host_building.window_scan_waypoints(standoff=WINDOW_SCAN_STANDOFF_M)
+            if candidate_windows:
+                window_drop_for_survivor = _select_window_waypoint(
+                    candidate_windows,
+                    ref_x=float(target_x),
+                    ref_z=float(target_z),
+                    preferred_y=float(target_y),
+                )
+
+    if (
+        interior_target
+        and isinstance(window_drop_for_survivor, dict)
+        and isinstance(window_drop_for_survivor.get("x"), (int, float))
+        and isinstance(window_drop_for_survivor.get("y"), (int, float))
+        and isinstance(window_drop_for_survivor.get("z"), (int, float))
+    ):
+        drop_x = float(window_drop_for_survivor["x"])
+        drop_y = float(window_drop_for_survivor["y"])
+        drop_z = float(window_drop_for_survivor["z"])
+    elif (
+        interior_target
+        and isinstance(recommended_window, dict)
+        and isinstance(recommended_window.get("x"), (int, float))
+        and isinstance(recommended_window.get("y"), (int, float))
+        and isinstance(recommended_window.get("z"), (int, float))
+    ):
+        drop_x = float(recommended_window["x"])
+        drop_y = float(recommended_window["y"])
+        drop_z = float(recommended_window["z"])
+    elif (
+        isinstance(target_y, (int, float))
+        and isinstance(matched_building, dict)
+        and all(
+            isinstance(matched_building.get(k), (int, float))
+            for k in ("min_x", "max_x", "min_z", "max_z", "height")
+        )
+    ):
+        # Balcony/exterior-near-building targets: route to a rooftop-edge drop point
+        # to avoid no-route failures against inflated obstacle bounds at facade level.
+        min_x = float(matched_building["min_x"])
+        max_x = float(matched_building["max_x"])
+        min_z = float(matched_building["min_z"])
+        max_z = float(matched_building["max_z"])
+        height = float(matched_building["height"])
+        tx = float(target_x)
+        tz = float(target_z)
+
+        if tz >= max_z:
+            drop_x = min(max(tx, min_x), max_x)
+            drop_z = max_z
+        elif tz <= min_z:
+            drop_x = min(max(tx, min_x), max_x)
+            drop_z = min_z
+        elif tx >= max_x:
+            drop_x = max_x
+            drop_z = min(max(tz, min_z), max_z)
+        elif tx <= min_x:
+            drop_x = min_x
+            drop_z = min(max(tz, min_z), max_z)
+        else:
+            drop_x = tx
+            drop_z = tz
+        drop_y = max(height + 2.5, float(target_y) + 2.0, 10.0)
+    elif isinstance(target_y, (int, float)):
+        drop_x = float(target_x)
+        drop_y = max(float(target_y) + 2.0, 5.0)
+        drop_z = float(target_z)
+    else:
+        target_height = float(building.get("height", 0.0) or 0.0)
+        drop_x = float(target_x)
+        drop_y = max(target_height + 5.0, 10.0)
+        drop_z = float(target_z)
+
+    to_base = await return_to_base(asset_id)
+    if "error" in to_base:
+        return {
+            "asset_id": asset_id,
+            "error": f"Failed to return to base before supply dispatch: {to_base['error']}",
+            "building": building,
+            "return_result": to_base,
+        }
+
+    route = await plan_route(
+        asset_id=asset_id,
+        target_x=drop_x,
+        target_z=drop_z,
+        target_y=drop_y,
+        snap_to_building_center=False,
+    )
+    if "error" in route:
+        retry_route = await plan_route(
+            asset_id=asset_id,
+            target_x=drop_x,
+            target_z=drop_z,
+            target_y=max(drop_y + 5.0, 15.0),
+            snap_to_building_center=False,
+        )
+        if "error" in retry_route:
+            return {
+                "asset_id": asset_id,
+                "error": route["error"],
+                "building": building,
+                "route": route,
+            }
+        route = retry_route
+
+    waypoints = route.get("waypoints", [])
+    for waypoint in waypoints:
+        move_result = await move_drone_to(
+            asset_id=asset_id,
+            x=float(waypoint["x"]),
+            y=float(waypoint["y"]),
+            z=float(waypoint["z"]),
+        )
+        if not move_result.get("success", True):
+            return {
+                "asset_id": asset_id,
+                "error": move_result.get("message", "Failed while moving on supply route."),
+                "building": building,
+                "waypoint": waypoint,
+                "move_result": move_result,
+            }
+
+    final_status = await grpc_client.get_status(asset_id)
+    return {
+        "success": True,
+        "asset_id": asset_id,
+        "building": building,
+        "drop_point": route.get("to"),
+        "waypoint_count": len(waypoints),
+        "message": (
+            f"SUPPLY SENT — {asset_id} delivered to building "
+            f"at (x={float(target_x):.1f}, z={float(target_z):.1f})."
+        ),
+        "target_type": "survivor" if isinstance(target_y, (int, float)) else "building",
+        "matched_building": matched_building,
+        "final_status": final_status,
+    }
+
+
+async def parallel_fleet_supply(
+    assignments: list[dict],
+    unassigned_buildings: list[dict] | None = None,
+    unassigned_targets: list[dict] | None = None,
+) -> dict:
+    """
+    Execute supply dispatch for all drone-building assignments concurrently.
+
+    After the parallel first batch, any unassigned buildings are handled
+    sequentially by the first assignment's drone.
+    """
+    if not assignments:
+        return {"error": "No assignments provided.", "results": [], "total_supplied": 0}
+
+    async def _dispatch_one(asset_id: str, target: dict) -> dict:
+        result = await dispatch_supply_to_building(asset_id=asset_id, building=target)
+        return {"asset_id": asset_id, "target": target, "supply_result": result}
+
+    rows = []
+    for assignment in assignments:
+        target = assignment.get("target", assignment.get("survivor", assignment.get("building")))
+        if isinstance(target, dict):
+            rows.append({"asset_id": assignment["asset_id"], "target": target})
+
+    batch = await asyncio.gather(
+        *[_dispatch_one(row["asset_id"], row["target"]) for row in rows],
+        return_exceptions=True,
+    )
+
+    all_results: list[dict] = []
+    for i, result in enumerate(batch):
+        if isinstance(result, Exception):
+            all_results.append(
+                {
+                    "asset_id": assignments[i]["asset_id"],
+                    "target": rows[i]["target"],
+                    "supply_result": {"error": str(result)},
+                }
+            )
+        else:
+            all_results.append(result)
+
+    pending_targets = (
+        list(unassigned_targets)
+        if unassigned_targets is not None
+        else list(unassigned_buildings or [])
+    )
+    if pending_targets:
+        fallback_aid = assignments[0]["asset_id"]
+        for target in pending_targets:
+            result = await dispatch_supply_to_building(asset_id=fallback_aid, building=target)
+            all_results.append(
+                {
+                    "asset_id": fallback_aid,
+                    "target": target,
+                    "supply_result": result,
+                }
+            )
+
+    total_supplied = 0
+    target_summaries: list[str] = []
+    for result in all_results:
+        supply = result["supply_result"]
+        target = result["target"]
+        if "error" in supply:
+            target_summaries.append(
+                f"Target at (x={target['x']}, z={target['z']}) [{result['asset_id']}]: "
+                f"SUPPLY ERROR — {supply['error']}"
+            )
+            continue
+        total_supplied += 1
+        target_summaries.append(
+            f"Target at (x={target['x']:.1f}, z={target['z']:.1f}) [{result['asset_id']}]: "
+            f"SUPPLY SENT. Waypoints: {supply.get('waypoint_count', '?')}."
+        )
+
+    total_targets = len(all_results)
+    divider = "═" * 39
+    thin_divider = "─" * 39
+    total_line = (
+        "No supplies dispatched."
+        if total_supplied == 0
+        else f"TOTAL SUPPLY DISPATCHED: {total_supplied}"
+    )
+    summary = (
+        f"{divider}\n"
+        f"  AREA SUPPLY DISPATCH COMPLETE — {total_targets} target(s)\n"
+        f"{divider}\n"
+        + "\n".join(target_summaries)
+        + f"\n{thin_divider}\n{total_line}\n{divider}"
+    )
+
+    return {
+        "success": True,
+        "results": all_results,
+        "total_buildings_targeted": total_targets,
+        "total_supplied": total_supplied,
         "summary": summary,
     }
 

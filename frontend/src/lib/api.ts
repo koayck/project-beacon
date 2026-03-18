@@ -12,9 +12,16 @@ export interface DetectedSurvivor {
   z: number
 }
 
+export interface SupplyDispatchEvent {
+  asset_id: string
+  survivor: { x: number; y: number; z: number }
+  building?: { x: number; z: number }
+  drop_point: { x: number; y: number; z: number }
+}
+
 export type AgentStreamEvent =
   | { type: 'tool_call'; name: string; args: Record<string, unknown>; agent: string }
-  | { type: 'tool_result'; name: string; success: boolean; result: string; survivors?: DetectedSurvivor[] }
+  | { type: 'tool_result'; name: string; success: boolean; result: string; survivors?: DetectedSurvivor[]; supply_dispatches?: SupplyDispatchEvent[] }
   | { type: 'text'; text: string; agent: string; survivors?: DetectedSurvivor[] }
   | { type: 'final'; text: string; agent: string }
   | { type: 'heartbeat'; elapsed: number }
