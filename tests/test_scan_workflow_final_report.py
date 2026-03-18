@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
 
-from backend.agents.scan_workflow import pick_next_building_for_asset
+from backend.agents.scan_workflow import build_aggregated_scan_report, pick_next_building_for_asset
 from backend.runtime import grpc_client
 
 
@@ -35,3 +36,27 @@ async def test_pick_next_building_emits_final_summary_when_queue_exhausted(monke
     assert tool_context.actions.escalate is True
     assert "AREA SCAN COMPLETE" in result["message"]
     assert tool_context.state["scan_summary_emitted"] is True
+
+
+def test_build_aggregated_scan_report_splits_cross_building_survivor_group() -> None:
+    tool_context = SimpleNamespace(
+        state={
+            "scan_results_list": json.dumps(
+                [
+                    "[BEACON-01] Building at (x=-15.0, z=-20.0): 4 survivor(s) across 4 level(s). Waypoints: 19.\n"
+                    "  - Survivor 0: (-16.5, 3.65, -19.0)\n"
+                    "  - Survivor 1: (-14.5, 6.65, -20.5)\n"
+                    "  - Survivor 2: (-13.5, 9.65, -21.0)\n"
+                    "  - Survivor 7: (-23.0, 12.65, -22.0)"
+                ]
+            )
+        },
+        actions=SimpleNamespace(escalate=False),
+    )
+
+    result = build_aggregated_scan_report(tool_context)
+
+    assert "Building 1:" not in result["summary"]
+    assert "BEACON-01\nBuilding at (x=-15.0, z=-20.0): 4 survivor(s) across 4 level(s). Waypoints: 19." in result["summary"]
+    assert "Building at (x=-23.0, z=-22.0): 1 survivor(s)" in result["summary"]
+    assert "  - Survivor 7: (-23.0, 12.65, -22.0)" in result["summary"]
