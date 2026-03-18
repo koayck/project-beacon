@@ -234,7 +234,7 @@ async def return_to_base(asset_id: str) -> dict:
     polling, then performs a final explicit landing leg to (0,0,0).
     """
     client = grpc_client
-    route = await plan_route(asset_id, 0.0, 0.0, 5.0)
+    route = await plan_route(asset_id, 0.0, 2.0, 5.0)
     if "error" in route:
         return {
             "asset_id": asset_id,
@@ -269,7 +269,7 @@ async def return_to_base(asset_id: str) -> dict:
                 "status": wait_result.get("status"),
             }
 
-    final_wp = {"x": 0.0, "y": 0.0, "z": 0.0, "reason": "final landing at home pad"}
+    final_wp = {"x": 0.0, "y": 2.0, "z": 0.0, "reason": "final landing at home pad"}
     final_move_result = await client.move_to(
         asset_id,
         final_wp["x"],
