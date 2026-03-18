@@ -12,10 +12,11 @@ import pathlib as _pathlib
 from dataclasses import dataclass, field
 from typing import Literal, NamedTuple
 
-# ── Load shared/world.json once at import time ────────────────────────────────
-_WORLD_JSON = _json.loads(
-    (_pathlib.Path(__file__).parents[2] / "shared" / "world.json").read_text()
-)
+# ── Shared directory ──────────────────────────────────────────────────────────
+_SHARED_DIR = _pathlib.Path(__file__).parents[2] / "shared"
+
+# ── Load default world at import time ─────────────────────────────────────────
+_WORLD_JSON = _json.loads((_SHARED_DIR / "world.json").read_text())
 _S = _WORLD_JSON["scene"]
 
 FLOOD_LEVEL: float                 = _S["flood_level_m"]
@@ -327,9 +328,9 @@ class WorldModel:
         return blocked
 
 
-def _build_world() -> WorldModel:
+def _build_world(world_json: dict) -> WorldModel:
     buildings: list[Building] = []
-    for b in _WORLD_JSON["buildings"]:
+    for b in world_json["buildings"]:
         cx, cz = float(b["cx"]), float(b["cz"])
         windows: list[WindowAperture] = []
         for w in b["windows"]:
@@ -352,14 +353,33 @@ def _build_world() -> WorldModel:
 
     survivors = [
         Survivor(id=i, x=float(s["x"]), y=float(s["y"]), z=float(s["z"]))
-        for i, s in enumerate(_WORLD_JSON["survivors"])
+        for i, s in enumerate(world_json["survivors"])
     ]
     trees = [
         Tree(id=i, x=float(t["x"]), z=float(t["z"]))
-        for i, t in enumerate(_WORLD_JSON.get("trees", []))
+        for i, t in enumerate(world_json.get("trees", []))
     ]
     return WorldModel(buildings=buildings, survivors=survivors, trees=trees)
 
 
+def load_world(world_id: int = 1) -> WorldModel:
+    """Load a world model from shared JSON.
+
+    Mutates the existing WORLD singleton in-place so that all modules
+    which imported ``WORLD`` at startup see the updated data.
+    """
+    global FLOOD_LEVEL
+    filename = "world.json" if world_id == 1 else f"world{world_id}.json"
+    data = _json.loads((_SHARED_DIR / filename).read_text())
+    scene = data.get("scene", {})
+    FLOOD_LEVEL = scene.get("flood_level_m", 1.4)
+    fresh = _build_world(data)
+    # Mutate in-place so existing references stay valid
+    WORLD.buildings[:] = fresh.buildings
+    WORLD.survivors[:] = fresh.survivors
+    WORLD.trees[:] = fresh.trees
+    return WORLD
+
+
 # Module-level singleton — import this everywhere
-WORLD: WorldModel = _build_world()
+WORLD: WorldModel = _build_world(_WORLD_JSON)
