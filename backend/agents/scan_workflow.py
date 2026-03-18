@@ -35,6 +35,16 @@ from backend.agents._mcp import FLEET_TOOLS, NAV_TOOLS, THERMAL_TOOLS, make_tool
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
 
 _SCAN_QUEUE_LOCK = asyncio.Lock()
+_RESULT_ASSET_PREFIX_RE = re.compile(r"^\[(?P<asset>[A-Za-z0-9_-]+)\]\s*(?P<body>.*)$", re.DOTALL)
+_RESULT_BUILDING_COORD_RE = re.compile(
+    r"^Building at \(x=(?P<x>-?\d+(?:\.\d+)?), z=(?P<z>-?\d+(?:\.\d+)?)\):"
+)
+_RESULT_SURVIVOR_LINE_RE = re.compile(
+    r"^\s*-\s*Survivor\s+(?P<id>\d+):\s+\("
+    r"(?P<x>-?\d+(?:\.\d+)?),\s*(?P<y>-?\d+(?:\.\d+)?),\s*(?P<z>-?\d+(?:\.\d+)?)\)"
+    r"(?P<tag>.*)$"
+)
+_CROSS_BUILDING_SURVIVOR_DISTANCE_M = 6.0
 
 
 # ── Queue FunctionTools ────────────────────────────────────────────────────────
@@ -104,6 +114,63 @@ def get_scan_results(tool_context: ToolContext) -> dict:
     return {"results": results, "total": len(results)}
 
 
+def _split_scan_result_asset(result_text: str) -> tuple[str | None, str]:
+    stripped = result_text.strip()
+    match = _RESULT_ASSET_PREFIX_RE.match(stripped)
+    if not match:
+        return None, stripped
+    return match.group("asset"), str(match.group("body") or "").strip()
+
+
+def _format_split_survivor_sections(result_body: str) -> str:
+    lines = [line.rstrip() for line in result_body.splitlines() if line.strip()]
+    if not lines:
+        return result_body.strip()
+
+    header = lines[0]
+    header_match = _RESULT_BUILDING_COORD_RE.match(header)
+    if not header_match:
+        return "\n".join(lines)
+
+    center_x = float(header_match.group("x"))
+    center_z = float(header_match.group("z"))
+    survivor_rows: list[tuple[str, float, float]] = []
+    passthrough_rows: list[str] = []
+    for line in lines[1:]:
+        survivor_match = _RESULT_SURVIVOR_LINE_RE.match(line)
+        if survivor_match:
+            survivor_rows.append(
+                (line, float(survivor_match.group("x")), float(survivor_match.group("z")))
+            )
+        else:
+            passthrough_rows.append(line)
+
+    if not survivor_rows:
+        return "\n".join(lines)
+
+    primary_rows: list[str] = []
+    cross_building_groups: dict[tuple[float, float], list[str]] = {}
+    for line, survivor_x, survivor_z in survivor_rows:
+        distance = math.hypot(survivor_x - center_x, survivor_z - center_z)
+        if distance <= _CROSS_BUILDING_SURVIVOR_DISTANCE_M:
+            primary_rows.append(line)
+            continue
+        key = (round(survivor_x, 1), round(survivor_z, 1))
+        cross_building_groups.setdefault(key, []).append(line)
+
+    if not cross_building_groups or not primary_rows:
+        return "\n".join(lines)
+
+    rendered = [header, *primary_rows, *passthrough_rows]
+    for (building_x, building_z), group in sorted(cross_building_groups.items()):
+        rendered.append("")
+        rendered.append(
+            f"Building at (x={building_x:.1f}, z={building_z:.1f}): {len(group)} survivor(s)"
+        )
+        rendered.extend(group)
+    return "\n".join(rendered)
+
+
 def build_aggregated_scan_report(tool_context: ToolContext) -> dict:
     """Build a deterministic final report from all saved scan results."""
     raw = tool_context.state.get("scan_results_list", "[]")
@@ -114,15 +181,35 @@ def build_aggregated_scan_report(tool_context: ToolContext) -> dict:
 
     survivor_re = re.compile(r":\s*(\d+)\s+survivor\(s\)")
     total_survivors = 0
-    lines: list[str] = []
+    grouped_lines: dict[str, list[str]] = {}
+    ungrouped_lines: list[str] = []
 
     for idx, item in enumerate(results, start=1):
         text = str(item)
-        first_line = text.splitlines()[0] if text else ""
+        asset_id, body = _split_scan_result_asset(text)
+        first_line = body.splitlines()[0] if body else ""
         match = survivor_re.search(first_line)
         if match:
             total_survivors += int(match.group(1))
-        lines.append(f"Building {idx}: {text}")
+        if asset_id is None:
+            ungrouped_lines.append(f"Building {idx}: {body}")
+            continue
+        grouped_lines.setdefault(asset_id, []).append(_format_split_survivor_sections(body))
+
+    lines: list[str] = []
+    for asset_id, sections in grouped_lines.items():
+        if lines:
+            lines.append("")
+        lines.append(asset_id)
+        for section_index, section in enumerate(sections):
+            if section_index > 0:
+                lines.append("")
+            lines.append(section)
+
+    if ungrouped_lines:
+        if lines:
+            lines.append("")
+        lines.extend(ungrouped_lines)
 
     total_buildings = len(results)
     div = "═" * 39
