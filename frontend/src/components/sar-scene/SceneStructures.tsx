@@ -7,7 +7,7 @@ import * as THREE from 'three'
 
 interface WorldWindowLayout {
   floor: number
-  face: 'north' | 'south' | 'west' | 'east'
+  face: 'north' | 'south' | 'west' | 'east' | 'top'
   offset: number
   width: number
   height: number
@@ -16,7 +16,7 @@ interface WorldWindowLayout {
 
 interface WorldBalconyLayout {
   floor: number
-  face: 'north' | 'south' | 'west' | 'east'
+  face: 'north' | 'south' | 'west' | 'east' | 'top'
   depth: number
   width: number
 }
