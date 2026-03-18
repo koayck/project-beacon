@@ -10,6 +10,7 @@ from backend.runtime import grpc_client
 from backend.world.model import (
     BUILDING_PROXIMITY_MARGIN_M,
     FLOOD_LEVEL,
+    FLOOR_HEIGHT_M,
     WINDOW_SCAN_STANDOFF_M,
     WORLD,
     Building,
@@ -1110,6 +1111,22 @@ async def sweep_scan_building(
     rooftop = preplan["rooftop_position"]
     building_cx: float = preplan["building"]["center_x"]
     building_cz: float = preplan["building"]["center_z"]
+    building_min_x: float = preplan["building"]["min_x"]
+    building_max_x: float = preplan["building"]["max_x"]
+    building_min_z: float = preplan["building"]["min_z"]
+    building_max_z: float = preplan["building"]["max_z"]
+    building_height: float = preplan["building"]["height"]
+    # Include shallow exterior balconies while still rejecting neighbouring buildings.
+    _SURVIVOR_BUILDING_MARGIN = 2.1
+
+    def _belongs_to_target_building(sx: object, sy: object, sz: object) -> bool:
+        if not isinstance(sx, (int, float)) or not isinstance(sy, (int, float)) or not isinstance(sz, (int, float)):
+            return False
+        return (
+            building_min_x - _SURVIVOR_BUILDING_MARGIN <= float(sx) <= building_max_x + _SURVIVOR_BUILDING_MARGIN
+            and building_min_z - _SURVIVOR_BUILDING_MARGIN <= float(sz) <= building_max_z + _SURVIVOR_BUILDING_MARGIN
+            and -0.5 <= float(sy) <= building_height + FLOOR_HEIGHT_M
+        )
 
     # ── Step 2: Navigate to top of building using plan_route ───────────
     building_id = preplan["building"]["id"]
@@ -1292,6 +1309,8 @@ async def sweep_scan_building(
         detected_survivors: list[dict] = []
         for obj in view.get("objects", []):
             if obj.get("object_type") != "survivor":
+                continue
+            if not _belongs_to_target_building(obj.get("x"), obj.get("y"), obj.get("z")):
                 continue
             # Horizontal FOV filter: discard survivors outside the camera cone.
             sx, sz = obj.get("x", wp_x), obj.get("z", wp_z)

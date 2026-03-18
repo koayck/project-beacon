@@ -7,14 +7,20 @@ respect wall occlusion.
 """
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
-FLOOD_LEVEL: float = 1.4
+_WORLD_JSON_PATH = Path(__file__).resolve().parents[1] / "shared" / "world.json"
+_WORLD_JSON = json.loads(_WORLD_JSON_PATH.read_text())
+_SCENE = _WORLD_JSON["scene"]
+
+FLOOD_LEVEL: float = float(_SCENE["flood_level_m"])
 SURVIVOR_RANGE: float = 3.0
-FLOOR_HEIGHT: float = 3.0
-FLOOR_SLAB_THICKNESS: float = 0.2
+FLOOR_HEIGHT: float = float(_SCENE["floor_height_m"])
+FLOOR_SLAB_THICKNESS: float = float(_SCENE["floor_slab_thickness_m"])
 
 # (cx, cz, w, d, h)
 # Target building at (-15, -20) — 4 floors, 12 m tall
@@ -266,15 +272,33 @@ def _nw_tower_windows(cx: float, cz: float) -> tuple[SimWindowAperture, ...]:
 
 BUILDINGS = [
     SimBuilding(
-        i, cx, cz, w, d, h,
-        _target_windows(cx, cz) if i == 0
-        else _shophouse_windows(cx, cz) if i == 3
-        else _nw_tower_windows(cx, cz) if i == 4
-        else ()
+        id=int(building["id"]),
+        cx=float(building["cx"]),
+        cz=float(building["cz"]),
+        w=float(building["w"]),
+        d=float(building["d"]),
+        h=float(building["h"]),
+        windows=tuple(
+            SimWindowAperture(
+                face=str(window["face"]),
+                axis_center=(
+                    float(building["cx"]) + float(window["offset"])
+                    if str(window["face"]) in ("north", "south")
+                    else float(building["cz"]) + float(window["offset"])
+                ),
+                sill_y=(float(window["floor"]) - 1.0) * FLOOR_HEIGHT + float(window["sill"]),
+                width=float(window["width"]),
+                height=float(window["height"]),
+            )
+            for window in building.get("windows", [])
+        ),
     )
-    for i, (cx, cz, w, d, h) in enumerate(_RAW_BUILDINGS)
+    for building in _WORLD_JSON["buildings"]
 ]
-SURVIVORS = [SimSurvivor(i, *r) for i, r in enumerate(_RAW_SURVIVORS)]
+SURVIVORS = [
+    SimSurvivor(id=i, x=float(s["x"]), y=float(s["y"]), z=float(s["z"]))
+    for i, s in enumerate(_WORLD_JSON["survivors"])
+]
 
 
 def _compass(dx: float, dz: float) -> str:
@@ -284,7 +308,8 @@ def _compass(dx: float, dz: float) -> str:
 
 def get_view(x: float, y: float, z: float,
              heading_deg: float = 0.0,
-             detection_range: float = 20.0) -> dict:
+             detection_range: float = 20.0,
+             survivor_range: float | None = None) -> dict:
     """Return a view dict matching ViewResponse fields."""
     import json
 
@@ -333,10 +358,11 @@ def get_view(x: float, y: float, z: float,
         )
 
     nearby_s: list[SimSurvivor] = []
+    effective_survivor_range = SURVIVOR_RANGE if survivor_range is None else max(float(survivor_range), 0.0)
     for s in SURVIVORS:
         if not _survivor_visible(s):
             continue
-        if s.dist(x, y, z) <= SURVIVOR_RANGE:
+        if s.dist(x, y, z) <= effective_survivor_range:
             nearby_s.append(s)
 
     nearest_b_dist = min((b.dist_xz(x, z) for b in nearby_b), default=float("inf"))

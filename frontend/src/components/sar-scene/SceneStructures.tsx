@@ -1,6 +1,6 @@
 'use client'
 
-import { Line } from '@react-three/drei'
+import { Html, Line } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import { useRef } from 'react'
 import * as THREE from 'three'
@@ -579,11 +579,13 @@ export function MissionBuildings({
   transparentWalls,
   floorHeight,
   floorThickness,
+  survivorStatsByBuilding = {},
 }: {
   buildings: WorldBuilding[]
   transparentWalls: boolean
   floorHeight: number
   floorThickness: number
+  survivorStatsByBuilding?: Record<number, { detected: number; supplied: number }>
 }) {
   const palettes = [
     { solid: '#5f6b77', transparent: '#7d9ab1' },
@@ -679,6 +681,7 @@ export function MissionBuildings({
           (window) => window.face === 'south' && window.floor === 2,
         )
         const shouldRenderShopAwnings = shopAwnings.length >= 2
+        const survivorStats = survivorStatsByBuilding[building.id] ?? { detected: 0, supplied: 0 }
         return (
           <group key={building.id}>
             {Array.from({ length: numFloors + 1 }, (_, floorIdx) => (
@@ -764,6 +767,26 @@ export function MissionBuildings({
                 <meshStandardMaterial color="#c44830" />
               </mesh>
             )) : null}
+            <Html position={[building.cx + halfWidth - 0.8, building.h + 1.6, building.cz - halfDepth + 0.8]} center distanceFactor={20} zIndexRange={[0, 0]}>
+              <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 2,
+                background: 'rgba(4, 10, 16, 0.86)',
+                border: '1px solid rgba(120, 180, 240, 0.35)',
+                borderRadius: 4,
+                padding: '3px 7px',
+                fontFamily: 'Courier New, monospace',
+                fontSize: '34px',
+                lineHeight: 1.1,
+                letterSpacing: '0.05em',
+                pointerEvents: 'none',
+                whiteSpace: 'nowrap',
+              }}>
+                <span style={{ color: '#ffd84d' }}>DET {survivorStats.detected}</span>
+                <span style={{ color: '#22dd66' }}>SUP {survivorStats.supplied}</span>
+              </div>
+            </Html>
           </group>
         )
       })}
@@ -935,7 +958,7 @@ export function BasePad() {
 }
 
 function survivorKey(s: SurvivorPoint): string {
-  return `${s.x.toFixed(2)}|${s.y.toFixed(2)}|${s.z.toFixed(2)}`
+  return `${s.x.toFixed(1)},${s.y.toFixed(1)},${s.z.toFixed(1)}`
 }
 
 function SurvivorHuman({
@@ -943,11 +966,13 @@ function SurvivorHuman({
   floodY,
   index,
   supplied,
+  detected,
 }: {
   pos: SurvivorPoint
   floodY: number
   index: number
   supplied: boolean
+  detected: boolean
 }) {
   const groupRef = useRef<THREE.Group>(null)
 
@@ -956,6 +981,8 @@ function SurvivorHuman({
     const t = clock.elapsedTime
     if (supplied) {
       groupRef.current.scale.setScalar(1 + Math.sin(t * 1.5 + index * 0.9) * 0.06)
+    } else if (detected) {
+      groupRef.current.scale.setScalar(1 + Math.sin(t * 2.5 + index * 0.9) * 0.12)
     } else {
       const submerged = pos.y < floodY - 0.2
       const speed = submerged ? 6 : 3
@@ -964,9 +991,9 @@ function SurvivorHuman({
     }
 
     const submerged = pos.y < floodY - 0.2
-    const bodyColor = supplied ? 0x22dd66 : (submerged ? 0xff8800 : 0xff2222)
-    const emissiveColor = supplied ? 0x11aa44 : (submerged ? 0xcc4400 : 0xff0000)
-    const emissiveIntensity = supplied ? 0.5 : (submerged ? 0.7 : 0.45)
+    const bodyColor = supplied ? 0x22dd66 : (detected ? 0xffd84d : (submerged ? 0xff8800 : 0xff2222))
+    const emissiveColor = supplied ? 0x11aa44 : (detected ? 0xccaa11 : (submerged ? 0xcc4400 : 0xff0000))
+    const emissiveIntensity = supplied ? 0.5 : (detected ? 0.6 : (submerged ? 0.7 : 0.45))
     groupRef.current.traverse(child => {
       if ((child as THREE.Mesh).isMesh) {
         const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial
@@ -978,8 +1005,8 @@ function SurvivorHuman({
   })
 
   const submerged = pos.y < floodY - 0.2
-  const color = supplied ? '#22dd66' : (submerged ? '#ff8800' : '#ff2222')
-  const emissive = supplied ? '#11aa44' : (submerged ? '#cc4400' : '#ff0000')
+  const color = supplied ? '#22dd66' : (detected ? '#ffd84d' : (submerged ? '#ff8800' : '#ff2222'))
+  const emissive = supplied ? '#11aa44' : (detected ? '#ccaa11' : (submerged ? '#cc4400' : '#ff0000'))
 
   return (
     <group ref={groupRef} position={[pos.x, pos.y, pos.z]}>
@@ -1015,12 +1042,15 @@ export function Survivors({
   floodY,
   survivors,
   deliveredTo,
+  detectedSurvivors,
 }: {
   floodY: number
   survivors: SurvivorPoint[]
   deliveredTo?: Set<string>
+  detectedSurvivors?: Set<string>
 }) {
   const delivered = deliveredTo ?? new Set<string>()
+  const detected = detectedSurvivors ?? new Set<string>()
   return (
     <>
       {survivors.map((pos, i) => (
@@ -1030,6 +1060,7 @@ export function Survivors({
           floodY={floodY}
           index={i}
           supplied={delivered.has(survivorKey(pos))}
+          detected={detected.has(survivorKey(pos))}
         />
       ))}
     </>

@@ -285,6 +285,26 @@ function scannedSurvivorsFromDrone(dronePos: THREE.Vector3): SurvivorPoint[] {
   })
 }
 
+function nearbySurvivorsFromDrone(dronePos: THREE.Vector3): SurvivorPoint[] {
+  return SURVIVOR_POSITIONS
+    .filter((survivor) => survivorDistance(dronePos, survivor) <= SURVIVOR_SENSOR_RANGE)
+    .sort((a, b) => survivorDistance(dronePos, a) - survivorDistance(dronePos, b))
+}
+
+function detectedSurvivorsFromTelemetryEntry(telemetryEntry: DroneMap[string]): SurvivorPoint[] {
+  const visibleCount = Math.max(0, Math.floor(telemetryEntry.survivors_in_range ?? 0))
+  if (visibleCount <= 0) return []
+
+  const dronePos = new THREE.Vector3(telemetryEntry.x, telemetryEntry.y, telemetryEntry.z)
+  const losMatches = scannedSurvivorsFromDrone(dronePos)
+  if (losMatches.length >= visibleCount) return losMatches
+
+  const fallback = nearbySurvivorsFromDrone(dronePos).filter((survivor) => {
+    return !losMatches.some((match) => survivorKey(match) === survivorKey(survivor))
+  })
+  return [...losMatches, ...fallback.slice(0, Math.max(0, visibleCount - losMatches.length))]
+}
+
 // ── Approach position computation ─────────────────────────────────────────────
 
 function computeApproachPosition(survivor: SurvivorPoint): SurvivorPoint {
@@ -2223,6 +2243,56 @@ export default function SARScene() {
   }, [telemetry?.status])
 
   useEffect(() => {
+    if (autoRecallThreshold === null) return
+    const lowBatteryIdle = Object.values(drones)
+      .filter(entry => entry.status === 'IDLE' && entry.battery <= autoRecallThreshold)
+      .sort((a, b) => a.asset_id.localeCompare(b.asset_id))
+    const lowBatteryIdleIds = new Set(lowBatteryIdle.map(entry => entry.asset_id))
+
+    for (const assetId of [...autoRecallDismissedRef.current]) {
+      if (!lowBatteryIdleIds.has(assetId)) autoRecallDismissedRef.current.delete(assetId)
+    }
+    for (const assetId of [...autoRecallTriggeredRef.current]) {
+      if (!lowBatteryIdleIds.has(assetId)) autoRecallTriggeredRef.current.delete(assetId)
+    }
+
+    if (autoRecallPrompt && !lowBatteryIdleIds.has(autoRecallPrompt.assetId)) {
+      setAutoRecallPrompt(null)
+      return
+    }
+    if (autoRecallPrompt) return
+
+    const nextPrompt = lowBatteryIdle.find(entry =>
+      !autoRecallDismissedRef.current.has(entry.asset_id)
+      && !autoRecallTriggeredRef.current.has(entry.asset_id)
+      && !autoRecallInFlightRef.current.has(entry.asset_id)
+    )
+    if (nextPrompt) {
+      setAutoRecallPrompt({ assetId: nextPrompt.asset_id, battery: nextPrompt.battery })
+    }
+  }, [drones, autoRecallPrompt, autoRecallThreshold])
+
+  useEffect(() => {
+    if (!autoRecallPrompt) return
+    const deadline = Date.now() + AUTO_RECALL_UI_DELAY_MS
+    setAutoRecallCountdown(Math.ceil(AUTO_RECALL_UI_DELAY_MS / 1000))
+
+    const interval = setInterval(() => {
+      const remainingMs = Math.max(0, deadline - Date.now())
+      setAutoRecallCountdown(Math.ceil(remainingMs / 1000))
+    }, 200)
+
+    const timeout = setTimeout(() => {
+      void executeAutoRecall(autoRecallPrompt.assetId, autoRecallPrompt.battery)
+    }, AUTO_RECALL_UI_DELAY_MS)
+
+    return () => {
+      clearInterval(interval)
+      clearTimeout(timeout)
+    }
+  }, [autoRecallPrompt, executeAutoRecall])
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
       const tag = target?.tagName
@@ -2475,10 +2545,7 @@ export default function SARScene() {
   const fleetScannedSurvivors = useMemo(() => {
     const merged = new Map<string, SurvivorPoint>()
     for (const telemetryEntry of Object.values(drones)) {
-      const droneScan = scannedSurvivorsFromDrone(
-        new THREE.Vector3(telemetryEntry.x, telemetryEntry.y, telemetryEntry.z),
-      )
-      for (const survivor of droneScan) {
+      for (const survivor of detectedSurvivorsFromTelemetryEntry(telemetryEntry)) {
         merged.set(survivorKey(survivor), survivor)
       }
     }
@@ -2550,9 +2617,31 @@ export default function SARScene() {
   // Persistent intel — accumulate survivors across all scans
   const [discoveredSurvivors, setDiscoveredSurvivors] = useState<SurvivorPoint[]>([])
   const intelSurvivors = useMemo(
-    () => mergeUniqueSurvivors([], discoveredSurvivors),
-    [discoveredSurvivors],
+    () => mergeUniqueSurvivors(discoveredSurvivors, fleetScannedSurvivors),
+    [discoveredSurvivors, fleetScannedSurvivors],
   )
+  const detectedSurvivorKeys = useMemo(
+    () => new Set(intelSurvivors.map(survivorKey)),
+    [intelSurvivors],
+  )
+  const survivorStatsByBuilding = useMemo(() => {
+    const stats: Record<number, { detected: number; supplied: number }> = {}
+    for (const building of WORLD_BUILDINGS) {
+      stats[building.id] = { detected: 0, supplied: 0 }
+    }
+    for (const survivor of SURVIVOR_POSITIONS) {
+      const building = findBuildingAt(survivor.x, survivor.y, survivor.z)
+      if (!building) continue
+      const key = survivorKey(survivor)
+      if (detectedSurvivorKeys.has(key)) {
+        stats[building.id].detected += 1
+      }
+      if (deliveredTo.has(key)) {
+        stats[building.id].supplied += 1
+      }
+    }
+    return stats
+  }, [deliveredTo, detectedSurvivorKeys])
 
   useEffect(() => {
     if (fleetScannedSurvivors.length === 0) return
@@ -2596,8 +2685,14 @@ export default function SARScene() {
           transparentWalls={transparentWalls}
           floorHeight={FLOOR_H}
           floorThickness={FLOOR_T}
+          survivorStatsByBuilding={survivorStatsByBuilding}
         />
-        <Survivors floodY={FLOOD_LEVEL} survivors={SURVIVOR_POSITIONS} deliveredTo={deliveredTo} />
+        <Survivors
+          floodY={FLOOD_LEVEL}
+          survivors={SURVIVOR_POSITIONS}
+          deliveredTo={deliveredTo}
+          detectedSurvivors={detectedSurvivorKeys}
+        />
         {selectMode ? (
           <AreaSelectProbe
             onDragUpdate={(start, end) => {

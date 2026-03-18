@@ -54,7 +54,7 @@
     {
       "id": 4,
       "name": "nw_tower",
-      "cx": -23, "cz": -28,
+      "cx": -28, "cz": -28,
       "w": 10, "d": 10, "h": 21,
       "windows": [
         { "floor": 2, "face": "east",  "offset":  0.5, "width": 1.8, "height": 1.6, "sill": 0.4 },
@@ -72,8 +72,8 @@
     { "x":  20.0, "y":  6.65, "z": -16.0, "note": "floor 3 — balcony building, on exterior balcony" },
     { "x":   9.5, "y":  3.65, "z": -27.0, "note": "floor 2 — shophouse A, visible through south window" },
     { "x":  14.5, "y":  6.65, "z": -27.0, "note": "floor 3 — shophouse B, visible through south window" },
-    { "x": -19.0, "y":  3.65, "z": -27.5, "note": "floor 2 — NW tower, inside near east window" },
-    { "x": -23.0, "y": 12.65, "z": -22.0, "note": "floor 5 — NW tower, on south balcony" }
+    { "x": -27.0, "y":  3.65, "z": -27.5, "note": "floor 2 — NW tower, inside near east window" },
+    { "x": -28.0, "y": 12.65, "z": -22.0, "note": "floor 5 — NW tower, on south balcony" }
   ],
   "trees": []
 }
