@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.services.drone_control import assign_fleet_to_buildings, parallel_fleet_scan
+from backend.services.drone_control import (
+    assign_fleet_to_buildings,
+    parallel_fleet_scan,
+    parallel_fleet_supply,
+)
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -258,3 +262,98 @@ async def test_parallel_fleet_scan_summary_format():
     assert "TOTAL SURVIVORS DETECTED: 2" in result["summary"]
     assert "SUBMERGED — CRITICAL" in result["summary"]
     assert "CRITICAL: 1 submerged" in result["summary"]
+
+
+# ── parallel_fleet_supply tests ────────────────────────────────────────────────
+
+def _make_supply_result() -> dict:
+    return {
+        "success": True,
+        "waypoint_count": 3,
+        "message": "SUPPLY SENT",
+    }
+
+
+@pytest.mark.asyncio
+async def test_parallel_fleet_supply_runs_concurrently():
+    assignments = [
+        {"asset_id": "BEACON-01", "building": _make_building(0, 0.0, 0.0), "distance_m": 1.0},
+        {"asset_id": "BEACON-02", "building": _make_building(1, 20.0, 0.0), "distance_m": 2.0},
+    ]
+    call_order: list[str] = []
+
+    async def fake_dispatch(asset_id: str, building: dict):
+        call_order.append(asset_id)
+        return _make_supply_result()
+
+    with patch("backend.services.drone_control.dispatch_supply_to_building", side_effect=fake_dispatch):
+        result = await parallel_fleet_supply(assignments)
+
+    assert result["success"] is True
+    assert result["total_buildings_targeted"] == 2
+    assert result["total_supplied"] == 2
+    assert set(call_order) == {"BEACON-01", "BEACON-02"}
+
+
+@pytest.mark.asyncio
+async def test_parallel_fleet_supply_sequential_fallback():
+    assignments = [
+        {"asset_id": "BEACON-01", "building": _make_building(0, 0.0, 0.0), "distance_m": 1.0},
+    ]
+    unassigned = [_make_building(1, 20.0, 0.0)]
+
+    async def fake_dispatch(asset_id: str, building: dict):
+        return _make_supply_result()
+
+    with patch("backend.services.drone_control.dispatch_supply_to_building", side_effect=fake_dispatch):
+        result = await parallel_fleet_supply(assignments, unassigned)
+
+    assert result["total_buildings_targeted"] == 2
+    assert all(r["asset_id"] == "BEACON-01" for r in result["results"])
+
+
+@pytest.mark.asyncio
+async def test_parallel_fleet_supply_partial_failure():
+    assignments = [
+        {"asset_id": "BEACON-01", "building": _make_building(0, 0.0, 0.0), "distance_m": 1.0},
+        {"asset_id": "BEACON-02", "building": _make_building(1, 20.0, 0.0), "distance_m": 2.0},
+    ]
+
+    async def fake_dispatch(asset_id: str, building: dict):
+        if asset_id == "BEACON-01":
+            raise RuntimeError("route blocked")
+        return _make_supply_result()
+
+    with patch("backend.services.drone_control.dispatch_supply_to_building", side_effect=fake_dispatch):
+        result = await parallel_fleet_supply(assignments)
+
+    assert result["total_buildings_targeted"] == 2
+    assert result["total_supplied"] == 1
+    errors = [r for r in result["results"] if "error" in r["supply_result"]]
+    successes = [r for r in result["results"] if "error" not in r["supply_result"]]
+    assert len(errors) == 1
+    assert len(successes) == 1
+    assert errors[0]["asset_id"] == "BEACON-01"
+
+
+@pytest.mark.asyncio
+async def test_parallel_fleet_supply_empty_assignments():
+    result = await parallel_fleet_supply([])
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_parallel_fleet_supply_summary_format():
+    assignments = [
+        {"asset_id": "BEACON-01", "building": _make_building(0, -15.0, -20.0), "distance_m": 5.0},
+    ]
+
+    async def fake_dispatch(asset_id: str, building: dict):
+        return _make_supply_result()
+
+    with patch("backend.services.drone_control.dispatch_supply_to_building", side_effect=fake_dispatch):
+        result = await parallel_fleet_supply(assignments)
+
+    assert result["total_supplied"] == 1
+    assert "AREA SUPPLY DISPATCH COMPLETE" in result["summary"]
+    assert "TOTAL SUPPLY DISPATCHED: 1" in result["summary"]

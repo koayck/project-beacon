@@ -7,7 +7,16 @@ import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import CommandPanel from './CommandPanel'
 import { useTelemetry, type DroneMap } from '@/lib/ws'
-import { uplink, streamCommand, healthCheck, getFleet, getAutoRecallConfig, resetDroneToBase, type AgentStreamEvent } from '@/lib/api'
+import {
+  uplink,
+  streamCommand,
+  healthCheck,
+  getFleet,
+  getAutoRecallConfig,
+  resetDroneToBase,
+  type AgentStreamEvent,
+  type SupplyDispatchEvent,
+} from '@/lib/api'
 import WORLD from '@shared/world.json'
 import { BasePad, GridOverlay, Ground, MissionBuildings, SurvivorScanRays, Survivors } from './sar-scene/SceneStructures'
 
@@ -70,6 +79,9 @@ const SURVIVOR_POSITIONS = WORLD.survivors.map(s => ({ x: s.x, y: s.y, z: s.z })
 const SURVIVOR_SENSOR_RANGE = 3.0
 const LOS_SAMPLE_COUNT = 30
 const APPROACH_OFFSET = 2.5
+const BALCONY_SURVIVOR_Y_TOLERANCE = 0.8
+const BALCONY_EDGE_TOLERANCE = 0.35
+const ROOFTOP_THROW_CLEARANCE = 2.5
 
 interface SimWindowAperture {
   face: WindowFace
@@ -249,6 +261,29 @@ function survivorDistance(from: THREE.Vector3, target: SurvivorPoint): number {
   return Math.sqrt(dx * dx + dy * dy + dz * dz)
 }
 
+function distanceBetweenPoints(a: SurvivorPoint, b: SurvivorPoint): number {
+  const dx = a.x - b.x
+  const dy = a.y - b.y
+  const dz = a.z - b.z
+  return Math.sqrt(dx * dx + dy * dy + dz * dz)
+}
+
+function parseArrivedCoords(text: string): SurvivorPoint | null {
+  const match = text.match(/arrived at \(([^,]+),\s*([^,]+),\s*([^)]+)\)/i)
+  if (!match) return null
+  const x = Number(match[1])
+  const y = Number(match[2])
+  const z = Number(match[3])
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null
+  return { x, y, z }
+}
+
+function parseSupplyLoopAssetId(toolName: string): string | null {
+  const match = toolName.match(/^process_next_supply_target_(.+)$/)
+  if (!match) return null
+  return match[1].replace(/_/g, '-').toUpperCase()
+}
+
 function survivorVisibleFromDrone(dronePos: THREE.Vector3, survivor: SurvivorPoint): boolean {
   const survivorBuilding = findBuildingAt(survivor.x, survivor.y, survivor.z)
   if (!survivorBuilding) {
@@ -359,6 +394,122 @@ function computeApproachPosition(survivor: SurvivorPoint): SurvivorPoint {
   else if (minDist === distToEast)  return { x: bounds.maxX + APPROACH_OFFSET, y: survivor.y, z: survivor.z }
   else if (minDist === distToNorth) return { x: survivor.x, y: survivor.y, z: bounds.minZ - APPROACH_OFFSET }
   else                              return { x: survivor.x, y: survivor.y, z: bounds.maxZ + APPROACH_OFFSET }
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function worldBuildingBounds(building: WorldBuilding) {
+  return {
+    minX: building.cx - building.w / 2,
+    maxX: building.cx + building.w / 2,
+    minZ: building.cz - building.d / 2,
+    maxZ: building.cz + building.d / 2,
+  }
+}
+
+function findBalconyHostBuilding(survivor: SurvivorPoint): WorldBuilding | null {
+  for (const building of WORLD_BUILDINGS) {
+    if (!building.balcony) continue
+    const balcony = building.balcony
+    const bounds = worldBuildingBounds(building)
+    const expectedY = survY(balcony.floor)
+    if (Math.abs(survivor.y - expectedY) > BALCONY_SURVIVOR_Y_TOLERANCE) continue
+
+    let minX = bounds.minX
+    let maxX = bounds.maxX
+    let minZ = bounds.minZ
+    let maxZ = bounds.maxZ
+    if (balcony.face === 'south') {
+      minX = building.cx - balcony.width / 2
+      maxX = building.cx + balcony.width / 2
+      minZ = bounds.maxZ
+      maxZ = bounds.maxZ + balcony.depth
+    } else if (balcony.face === 'north') {
+      minX = building.cx - balcony.width / 2
+      maxX = building.cx + balcony.width / 2
+      minZ = bounds.minZ - balcony.depth
+      maxZ = bounds.minZ
+    } else if (balcony.face === 'east') {
+      minX = bounds.maxX
+      maxX = bounds.maxX + balcony.depth
+      minZ = building.cz - balcony.width / 2
+      maxZ = building.cz + balcony.width / 2
+    } else { // west
+      minX = bounds.minX - balcony.depth
+      maxX = bounds.minX
+      minZ = building.cz - balcony.width / 2
+      maxZ = building.cz + balcony.width / 2
+    }
+
+    if (
+      survivor.x >= minX - BALCONY_EDGE_TOLERANCE
+      && survivor.x <= maxX + BALCONY_EDGE_TOLERANCE
+      && survivor.z >= minZ - BALCONY_EDGE_TOLERANCE
+      && survivor.z <= maxZ + BALCONY_EDGE_TOLERANCE
+    ) {
+      const insideShell = (
+        survivor.x >= bounds.minX
+        && survivor.x <= bounds.maxX
+        && survivor.y >= 0
+        && survivor.y <= building.h
+        && survivor.z >= bounds.minZ
+        && survivor.z <= bounds.maxZ
+      )
+      if (!insideShell) return building
+    }
+  }
+  return null
+}
+
+function survivorAssociatedBuildingId(survivor: SurvivorPoint): number | null {
+  const inside = findBuildingAt(survivor.x, survivor.y, survivor.z)
+  if (inside) return inside.id
+  const balconyHost = findBalconyHostBuilding(survivor)
+  return balconyHost ? balconyHost.id : null
+}
+
+function computeSupplyThrowOrigin(target: SurvivorPoint, fallback: THREE.Vector3): THREE.Vector3 {
+  const balconyHost = findBalconyHostBuilding(target)
+  if (balconyHost) {
+    const bounds = worldBuildingBounds(balconyHost)
+    const roofY = balconyHost.h + ROOFTOP_THROW_CLEARANCE
+    if (balconyHost.balcony?.face === 'south') {
+      return new THREE.Vector3(
+        clamp(target.x, bounds.minX, bounds.maxX),
+        roofY,
+        bounds.maxZ,
+      )
+    }
+    if (balconyHost.balcony?.face === 'north') {
+      return new THREE.Vector3(
+        clamp(target.x, bounds.minX, bounds.maxX),
+        roofY,
+        bounds.minZ,
+      )
+    }
+    if (balconyHost.balcony?.face === 'east') {
+      return new THREE.Vector3(
+        bounds.maxX,
+        roofY,
+        clamp(target.z, bounds.minZ, bounds.maxZ),
+      )
+    }
+    return new THREE.Vector3(
+      bounds.minX,
+      roofY,
+      clamp(target.z, bounds.minZ, bounds.maxZ),
+    )
+  }
+
+  const insideBuilding = findBuildingAt(target.x, target.y, target.z)
+  if (insideBuilding) {
+    const windowPoint = computeApproachPosition(target)
+    return new THREE.Vector3(windowPoint.x, windowPoint.y, windowPoint.z)
+  }
+
+  return fallback.clone()
 }
 
 function survivorKey(s: SurvivorPoint): string {
@@ -646,10 +797,12 @@ function AreaHighlight({
 function AreaContextMenu({
   selection,
   onScan,
+  onSendSupply,
   onClose,
 }: {
   selection: AreaSelection
   onScan: () => void
+  onSendSupply: () => void
   onClose: () => void
 }) {
   const w = selection.maxX - selection.minX
@@ -704,6 +857,22 @@ function AreaContextMenu({
           }}
         >
           📡 Scan this area
+        </button>
+        <button
+          onClick={onSendSupply}
+          style={{
+            flex: 1,
+            background: 'rgba(50,170,255,0.16)',
+            border: '1px solid rgba(80,190,255,0.55)',
+            borderRadius: 4,
+            color: '#7fd0ff',
+            padding: '6px 10px',
+            cursor: 'pointer',
+            fontSize: 11,
+            fontFamily: 'Courier New, monospace',
+          }}
+        >
+          📦 Send supplies
         </button>
         <button
           onClick={onClose}
@@ -1721,6 +1890,11 @@ function parseEventToActivity(event: import('@/lib/api').AgentStreamEvent): Acti
       const totalMatch = t.match(/TOTAL SURVIVORS DETECTED:\s*(\d+)/)
       return { id: ++_activityId, icon: '◈', label: `Area scan done`, detail: `${areaMatch[1]} bldg · ${totalMatch?.[1] ?? '?'} survivors`, ts: Date.now(), status: 'done', category: 'complete' }
     }
+    const supplyAreaMatch = t.match(/AREA SUPPLY DISPATCH COMPLETE.*?(\d+)\s*building/)
+    if (supplyAreaMatch) {
+      const totalSupplyMatch = t.match(/TOTAL SUPPLY DISPATCHED:\s*(\d+)/)
+      return { id: ++_activityId, icon: '◈', label: 'Area supply done', detail: `${supplyAreaMatch[1]} bldg · ${totalSupplyMatch?.[1] ?? '?'} supplied`, ts: Date.now(), status: 'done', category: 'complete' }
+    }
     const scanTargetMatch = t.match(/SCAN TARGET.*?building at \(x=([^,]+),\s*z=([^)]+)\)/)
     if (scanTargetMatch) {
       return { id: ++_activityId, icon: '▶', label: 'Next target', detail: `building (${scanTargetMatch[1]}, ${scanTargetMatch[2]})`, ts: Date.now(), status: 'active', category: 'scan' }
@@ -2094,9 +2268,17 @@ export default function SARScene() {
   const [activities, setActivities] = useState<ActivityItem[]>([])
   const [agentBusy, setAgentBusy] = useState(false)
   const [hasCargo, setHasCargo] = useState(false)
+  const [cargoByDrone, setCargoByDrone] = useState<Set<string>>(new Set())
   const [activeThrow, setActiveThrow] = useState<{ from: THREE.Vector3; to: SurvivorPoint } | null>(null)
+  const throwQueueRef = useRef<Array<{ from: THREE.Vector3; to: SurvivorPoint }>>([])
+  const detectedSurvivorsRef = useRef<SurvivorPoint[]>([])
+  const detectedSurvivorKeysRef = useRef<Set<string>>(new Set())
+  const pendingSupplyPickupRef = useRef<Set<string>>(new Set())
+  const supplyInFlightByAssetRef = useRef<Record<string, number>>({})
+  const backendSupplyDispatchSeenRef = useRef(false)
   const deliveryTarget = useRef<SurvivorPoint | null>(null)
   const deliveryApproach = useRef<SurvivorPoint | null>(null)
+  const deliveryThrowOrigin = useRef<SurvivorPoint | null>(null)
   const [routeArrived, setRouteArrived] = useState(false)
   const [autoRecallThreshold, setAutoRecallThreshold] = useState<number | null>(null)
   const [autoRecallPrompt, setAutoRecallPrompt] = useState<{ assetId: string; battery: number } | null>(null)
@@ -2136,6 +2318,111 @@ export default function SARScene() {
   const addLog = useCallback((msg: string) => {
     setLog(prev => [...prev.slice(-6), msg])
   }, [])
+
+  const markSupplyLoopStart = useCallback((assetId: string) => {
+    const next = { ...supplyInFlightByAssetRef.current }
+    next[assetId] = (next[assetId] ?? 0) + 1
+    supplyInFlightByAssetRef.current = next
+    pendingSupplyPickupRef.current.add(assetId)
+  }, [])
+
+  const markSupplyLoopEnd = useCallback((assetId: string) => {
+    const next = { ...supplyInFlightByAssetRef.current }
+    const remaining = (next[assetId] ?? 0) - 1
+    if (remaining <= 0) {
+      delete next[assetId]
+      pendingSupplyPickupRef.current.delete(assetId)
+      setCargoByDrone(prev => {
+        if (!prev.has(assetId)) return prev
+        const updated = new Set(prev)
+        updated.delete(assetId)
+        return updated
+      })
+    } else {
+      next[assetId] = remaining
+    }
+    supplyInFlightByAssetRef.current = next
+  }, [])
+
+  const queueSupplyThrow = useCallback((from: THREE.Vector3, to: SurvivorPoint) => {
+    setActiveThrow(prev => {
+      if (!prev) return { from, to }
+      throwQueueRef.current.push({ from, to })
+      return prev
+    })
+  }, [])
+
+  const queueSupplyDispatchAnimations = useCallback((dispatches: SupplyDispatchEvent[]) => {
+    const reservedKeys = new Set<string>()
+    let queued = 0
+    for (const dispatch of dispatches) {
+      const dispatchSurvivor: SurvivorPoint = {
+        x: dispatch.survivor.x,
+        y: dispatch.survivor.y,
+        z: dispatch.survivor.z,
+      }
+      const nearestBuilding = dispatch.building
+        ? WORLD_BUILDINGS.reduce((best, candidate) => {
+          const dx = candidate.cx - dispatch.building!.x
+          const dz = candidate.cz - dispatch.building!.z
+          const dist = Math.sqrt(dx * dx + dz * dz)
+          if (best === null || dist < best.dist) return { building: candidate, dist }
+          return best
+        }, null as { building: WorldBuilding; dist: number } | null)
+        : null
+
+      const availableDetected = detectedSurvivorsRef.current.filter((survivor) => {
+        const key = survivorKey(survivor)
+        return (
+          !deliveredTo.has(key)
+          && !deliveringTo.has(key)
+          && !reservedKeys.has(key)
+        )
+      })
+
+      const exactDetectedTarget = availableDetected.find((survivor) => (
+        distanceBetweenPoints(survivor, dispatchSurvivor) <= 0.8
+      ))
+      const targetByBuilding = nearestBuilding
+        ? availableDetected.find((survivor) => (
+          survivorAssociatedBuildingId(survivor) === nearestBuilding.building.id
+        ))
+        : null
+      const fallbackTarget = availableDetected[0]
+      const target = exactDetectedTarget ?? targetByBuilding ?? fallbackTarget
+      if (!target) continue
+
+      const key = survivorKey(target)
+      reservedKeys.add(key)
+      setDeliveringTo(prev => new Set(prev).add(key))
+
+      const telemetryEntry = drones[dispatch.asset_id]
+      const fallbackFrom = (
+        Number.isFinite(dispatch.drop_point.x)
+        && Number.isFinite(dispatch.drop_point.y)
+        && Number.isFinite(dispatch.drop_point.z)
+      )
+        ? new THREE.Vector3(dispatch.drop_point.x, dispatch.drop_point.y, dispatch.drop_point.z)
+        : telemetryEntry
+          ? new THREE.Vector3(telemetryEntry.x, telemetryEntry.y, telemetryEntry.z)
+          : DRONE_START.clone()
+      const from = computeSupplyThrowOrigin(target, fallbackFrom)
+      queueSupplyThrow(from, target)
+      queued += 1
+    }
+
+    if (queued > 0) {
+      addLog(`📦 Visualizing ${queued} supply drop${queued === 1 ? '' : 's'}`)
+    } else if (dispatches.length > 0) {
+      addLog('ℹ No detected survivors available for supply visualization')
+    }
+  }, [addLog, deliveredTo, deliveringTo, drones, queueSupplyThrow])
+
+  useEffect(() => {
+    if (activeThrow || throwQueueRef.current.length === 0) return
+    const next = throwQueueRef.current.shift()
+    if (next) setActiveThrow(next)
+  }, [activeThrow])
 
   const executeAutoRecall = useCallback(async (assetId: string, batteryPct: number) => {
     setAutoRecallPrompt(current => (current?.assetId === assetId ? null : current))
@@ -2345,6 +2632,25 @@ export default function SARScene() {
   const BASE_PICKUP_RANGE = 3.0
 
   useEffect(() => {
+    if (pendingSupplyPickupRef.current.size === 0) return
+    const reachedBase: string[] = []
+    for (const assetId of pendingSupplyPickupRef.current) {
+      const telemetryEntry = drones[assetId]
+      if (!telemetryEntry) continue
+      const distToBase = Math.sqrt(telemetryEntry.x ** 2 + telemetryEntry.y ** 2 + telemetryEntry.z ** 2)
+      if (distToBase < BASE_PICKUP_RANGE) reachedBase.push(assetId)
+    }
+    if (reachedBase.length === 0) return
+
+    setCargoByDrone(prev => {
+      const next = new Set(prev)
+      for (const assetId of reachedBase) next.add(assetId)
+      return next
+    })
+  }, [drones])
+
+  useEffect(() => {
+    if (backendSupplyDispatchSeenRef.current) return
     if (!deliveryTarget.current || cargoPickedUp.current) return
     if (!pendingDeliveryKey.current || !deliveryDroneId.current) return
 
@@ -2362,6 +2668,7 @@ export default function SARScene() {
   // ── Cargo throw trigger ───────────────────────────────────────────────────
 
   useEffect(() => {
+    if (backendSupplyDispatchSeenRef.current) return
     const target = deliveryTarget.current
     if (!target || activeThrow || !cargoPickedUp.current) return
     if (!routeArrived || !deliveryDroneId.current) return
@@ -2372,9 +2679,12 @@ export default function SARScene() {
     cargoPickedUp.current = false
     setHasCargo(false)
     setRouteArrived(false)
-    setActiveThrow({ from: new THREE.Vector3(t.x, t.y, t.z), to: target })
+    const from = deliveryThrowOrigin.current
+      ? new THREE.Vector3(deliveryThrowOrigin.current.x, deliveryThrowOrigin.current.y, deliveryThrowOrigin.current.z)
+      : computeSupplyThrowOrigin(target, new THREE.Vector3(t.x, t.y, t.z))
+    queueSupplyThrow(from, target)
     addLog('📦 Supply thrown to survivor')
-  }, [routeArrived, drones, activeThrow, addLog])
+  }, [routeArrived, drones, activeThrow, addLog, queueSupplyThrow])
 
 
 
@@ -2385,6 +2695,7 @@ export default function SARScene() {
   ): Promise<void> => {
     const ac = new AbortController()
     abortRef.current = ac
+    backendSupplyDispatchSeenRef.current = false
     addLog(`⬆ ${prompt}`)
     setAgentBusy(true)
     setActivities(prev => [...prev, { id: ++_activityId, icon: '◆', label: prompt.length > 50 ? prompt.slice(0, 47) + '...' : prompt, ts: Date.now(), status: 'done', category: 'dispatch' as ActivityCategory }])
@@ -2392,7 +2703,13 @@ export default function SARScene() {
     try {
       for await (const event of streamCommand(effectiveAssetId, prompt, ac.signal)) {
         onEvent(event)
+        if (event.type === 'tool_call') {
+          const supplyAssetId = parseSupplyLoopAssetId(event.name)
+          if (supplyAssetId) markSupplyLoopStart(supplyAssetId)
+        }
         if (event.type === 'tool_result') {
+          const supplyAssetId = parseSupplyLoopAssetId(event.name)
+          if (supplyAssetId) markSupplyLoopEnd(supplyAssetId)
           setActivities(prev => {
             const idx = [...prev].reverse().findIndex(a => a.status === 'active')
             if (idx === -1) return prev
@@ -2423,20 +2740,39 @@ export default function SARScene() {
         ) {
           setDiscoveredSurvivors(prev => mergeUniqueSurvivors(prev, event.survivors!))
         }
+        if (
+          event.type === 'tool_result' &&
+          event.supply_dispatches &&
+          event.supply_dispatches.length > 0
+        ) {
+          backendSupplyDispatchSeenRef.current = true
+          setRouteArrived(false)
+          setHasCargo(false)
+          cargoPickedUp.current = false
+          queueSupplyDispatchAnimations(event.supply_dispatches)
+        }
         // Detect final route arrival — agent emits "BEACON-XX arrived at (x,y,z)"
         // only after ALL waypoints are complete, so this gates the supply throw.
         if (
           (event.type === 'text' || event.type === 'final') &&
           deliveryTarget.current &&
+          !backendSupplyDispatchSeenRef.current &&
           /arrived at \(/.test(event.text)
         ) {
-          setRouteArrived(true)
+          const arrived = parseArrivedCoords(event.text)
+          const expected = deliveryThrowOrigin.current ?? deliveryApproach.current ?? deliveryTarget.current
+          if (arrived && expected && distanceBetweenPoints(arrived, expected) <= 2.0) {
+            setRouteArrived(true)
+          }
         }
         if (event.type === 'done') addLog('✓ Agent responded')
       }
     } catch (e: unknown) {
       if (e instanceof Error && e.name === 'AbortError') {
         addLog('⚠ Command aborted')
+        pendingSupplyPickupRef.current.clear()
+        supplyInFlightByAssetRef.current = {}
+        setCargoByDrone(new Set())
         setActivities(prev => [...prev, { id: ++_activityId, icon: '✗', label: 'Aborted', ts: Date.now(), status: 'error', category: 'error' as ActivityCategory }])
       } else {
         throw e
@@ -2453,13 +2789,14 @@ export default function SARScene() {
         setRouteArrived(false)
         deliveryTarget.current = null
         deliveryApproach.current = null
+        deliveryThrowOrigin.current = null
         deliveryDroneId.current = null
         pendingDeliveryKey.current = null
       }
     } finally {
       setAgentBusy(false)
     }
-  }, [addLog])
+  }, [addLog, markSupplyLoopEnd, markSupplyLoopStart, queueSupplyDispatchAnimations])
 
   const handleStop = useCallback(() => {
     abortRef.current?.abort()
@@ -2514,6 +2851,29 @@ export default function SARScene() {
     setPendingScanPrompt(prompt)
   }, [selection, addLog])
 
+  const handleAreaSupplyDispatch = useCallback(() => {
+    if (!selection) return
+
+    const width = selection.maxX - selection.minX
+    const depth = selection.maxZ - selection.minZ
+    const centerX = (selection.minX + selection.maxX) / 2
+    const centerZ = (selection.minZ + selection.maxZ) / 2
+    const radius = Math.max(width, depth) / 2
+    const prompt =
+      `send emergency supplies in parallel to all buildings within ${radius.toFixed(1)}m ` +
+      `of (${centerX.toFixed(1)}, ${centerZ.toFixed(1)}). ` +
+      `Target area bounds: (${selection.minX}, ${selection.minZ}) to (${selection.maxX}, ${selection.maxZ}).`
+
+    addLog(`📦 Area supply dispatch: (${selection.minX},${selection.minZ}) → (${selection.maxX},${selection.maxZ})`)
+    setSelectMode(false)
+    setDragStart(null)
+    setDragEnd(null)
+    setSelection(null)
+    setShowContextMenu(false)
+    setPendingScanAssetId('auto')
+    setPendingScanPrompt(prompt)
+  }, [selection, addLog])
+
   const handleThrowComplete = useCallback(() => {
     if (!activeThrow) return
     const key = survivorKey(activeThrow.to)
@@ -2525,6 +2885,7 @@ export default function SARScene() {
     })
     deliveryTarget.current = null
     deliveryApproach.current = null
+    deliveryThrowOrigin.current = null
     deliveryDroneId.current = null
     setActiveThrow(null)
     addLog('✓ Supply delivered to survivor')
@@ -2554,6 +2915,10 @@ export default function SARScene() {
 
   const handleSendSupplies = useCallback((survivor: SurvivorPoint) => {
     const key = survivorKey(survivor)
+    if (!detectedSurvivorKeysRef.current.has(key)) {
+      addLog('⚠ Supplies can only be dispatched to detected survivors')
+      return
+    }
     const coords = `(${survivor.x.toFixed(1)}, ${survivor.y.toFixed(1)}, ${survivor.z.toFixed(1)})`
     const approach = computeApproachPosition(survivor)
     const approachCoords = `(${approach.x.toFixed(1)}, ${approach.y.toFixed(1)}, ${approach.z.toFixed(1)})`
@@ -2578,15 +2943,28 @@ export default function SARScene() {
     deliveryDroneId.current = chosenId
     deliveryTarget.current = survivor
     deliveryApproach.current = approach
+    const throwOrigin = computeSupplyThrowOrigin(
+      survivor,
+      new THREE.Vector3(approach.x, approach.y, approach.z),
+    )
+    deliveryThrowOrigin.current = { x: throwOrigin.x, y: throwOrigin.y, z: throwOrigin.z }
+    const throwOriginCoords = `(${throwOrigin.x.toFixed(1)}, ${throwOrigin.y.toFixed(1)}, ${throwOrigin.z.toFixed(1)})`
     setRouteArrived(false)
     addLog(`Dispatching ${chosenId} with supplies to survivor at ${coords}`)
 
+    const balconyHost = findBalconyHostBuilding(survivor)
+    const balconyName = balconyHost?.name?.trim() || (balconyHost ? `building ${balconyHost.id}` : '')
     const isInside = findBuildingAt(survivor.x, survivor.y, survivor.z) !== null
-    const prompt = isInside
+    const prompt = balconyHost
+      ? `Deliver emergency supplies to survivor at balcony coordinates ${coords}. ` +
+        `First return to base at (0, 0, 0) to collect supplies, ` +
+        `then navigate to drop waypoint ${throwOriginCoords} above the rooftop edge of ${balconyName} ` +
+        `and drop supplies downward to the balcony target from that exact waypoint.`
+      : isInside
       ? `Deliver emergency supplies to survivor at ${coords}. ` +
         `First return to base at (0, 0, 0) to collect supplies, ` +
-        `then navigate to the approach position ${approachCoords} outside the building. ` +
-        `Do NOT navigate to the survivor's interior coordinates — the approach position is the drop point.`
+        `then navigate to exact window drop waypoint ${approachCoords} outside the building and drop from there. ` +
+        `Do NOT navigate to the survivor's interior coordinates.`
       : `Deliver emergency supplies to survivor at ${coords}. ` +
         `First return to base at (0, 0, 0) to collect supplies, ` +
         `then navigate to ${coords} to drop supplies.`
@@ -2607,6 +2985,7 @@ export default function SARScene() {
     setRouteArrived(false)
     deliveryTarget.current = null
     deliveryApproach.current = null
+    deliveryThrowOrigin.current = null
     deliveryDroneId.current = null
     pendingDeliveryKey.current = null
     setActiveThrow(null)
@@ -2624,20 +3003,25 @@ export default function SARScene() {
     () => new Set(intelSurvivors.map(survivorKey)),
     [intelSurvivors],
   )
+
+  useEffect(() => {
+    detectedSurvivorsRef.current = intelSurvivors
+    detectedSurvivorKeysRef.current = detectedSurvivorKeys
+  }, [intelSurvivors, detectedSurvivorKeys])
   const survivorStatsByBuilding = useMemo(() => {
     const stats: Record<number, { detected: number; supplied: number }> = {}
     for (const building of WORLD_BUILDINGS) {
       stats[building.id] = { detected: 0, supplied: 0 }
     }
     for (const survivor of SURVIVOR_POSITIONS) {
-      const building = findBuildingAt(survivor.x, survivor.y, survivor.z)
-      if (!building) continue
+      const buildingId = survivorAssociatedBuildingId(survivor)
+      if (buildingId === null || stats[buildingId] === undefined) continue
       const key = survivorKey(survivor)
       if (detectedSurvivorKeys.has(key)) {
-        stats[building.id].detected += 1
+        stats[buildingId].detected += 1
       }
       if (deliveredTo.has(key)) {
-        stats[building.id].supplied += 1
+        stats[buildingId].supplied += 1
       }
     }
     return stats
@@ -2720,7 +3104,7 @@ export default function SARScene() {
             key={t.asset_id}
             targetPos={new THREE.Vector3(t.x, t.y, t.z)}
             status={t.status}
-            hasCargo={hasCargo && deliveryDroneId.current === t.asset_id}
+            hasCargo={(hasCargo && deliveryDroneId.current === t.asset_id) || cargoByDrone.has(t.asset_id)}
             nearbyObstacles={t.nearby_obstacles}
             nearestObstacleDist={t.nearest_obstacle_dist}
             survivorsInRange={t.survivors_in_range}
@@ -2795,6 +3179,7 @@ export default function SARScene() {
         <AreaContextMenu
           selection={selection}
           onScan={handleAreaScan}
+          onSendSupply={handleAreaSupplyDispatch}
           onClose={handleSelectionClose}
         />
       )}

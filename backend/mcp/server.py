@@ -6,6 +6,7 @@ from backend.services.fleet import discover_fleet, ensure_uplink
 from backend.services.drone_control import (
     assign_fleet_to_buildings,
     find_buildings_in_area,
+    find_survivors_in_area,
     get_drone_status,
     get_drone_view,
     move_drone_to,
@@ -181,6 +182,29 @@ def find_buildings_in_area_tool(
     Use before an area scan loop to discover which buildings need to be scanned.
     """
     return find_buildings_in_area(center_x, center_z, radius, drone_x, drone_z)
+
+
+@beacon_mcp.tool(name="find_survivors_in_area")
+def find_survivors_in_area_tool(
+    center_x: float,
+    center_z: float,
+    radius: float = 30.0,
+    detected_only: bool = False,
+    require_all_detected: bool = False,
+) -> dict:
+    """
+    Return all known survivors within radius metres of (center_x, center_z),
+    sorted nearest-first from the search centre. Optionally filter to only
+    previously detected survivors and gate dispatch until all in-area survivors
+    have been detected.
+    """
+    return find_survivors_in_area(
+        center_x,
+        center_z,
+        radius,
+        detected_only=detected_only,
+        require_all_detected=require_all_detected,
+    )
 
 
 @beacon_mcp.tool(name="assign_fleet_to_buildings")

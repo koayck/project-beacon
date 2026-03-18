@@ -134,6 +134,68 @@ def _extract_survivor_coords(payload: object) -> list[dict[str, float]]:
     return survivors
 
 
+def _extract_supply_dispatches(tool_name: str, payload: object) -> list[dict[str, object]]:
+    """Extract structured supply-dispatch rows from tool responses."""
+    if tool_name == "build_aggregated_supply_report":
+        # Final report returns historical rows; don't re-emit old dispatches.
+        return []
+    if not isinstance(payload, dict):
+        return []
+
+    rows = payload.get("results")
+    if not isinstance(rows, list):
+        return []
+
+    dispatches: list[dict[str, object]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        supply_result = row.get("supply_result")
+        if not isinstance(supply_result, dict):
+            continue
+        if "error" in supply_result:
+            continue
+
+        asset_id = row.get("asset_id")
+        target = row.get("target", row.get("survivor", row.get("building")))
+        drop_point = supply_result.get("drop_point")
+        if not isinstance(asset_id, str):
+            continue
+        if not isinstance(target, dict):
+            continue
+        if not isinstance(drop_point, dict):
+            continue
+
+        sx = target.get("x")
+        sy = target.get("y")
+        sz = target.get("z")
+        dx = drop_point.get("x")
+        dy = drop_point.get("y")
+        dz = drop_point.get("z")
+        if not isinstance(sx, (int, float)) or not isinstance(sz, (int, float)):
+            continue
+        if not isinstance(dx, (int, float)) or not isinstance(dy, (int, float)) or not isinstance(dz, (int, float)):
+            continue
+
+        item: dict[str, object] = {
+            "asset_id": asset_id,
+            "survivor": {
+                "x": float(sx),
+                "y": float(sy) if isinstance(sy, (int, float)) else 0.0,
+                "z": float(sz),
+            },
+            "drop_point": {"x": float(dx), "y": float(dy), "z": float(dz)},
+        }
+        matched_building = supply_result.get("matched_building")
+        if isinstance(matched_building, dict):
+            bx = matched_building.get("center_x")
+            bz = matched_building.get("center_z")
+            if isinstance(bx, (int, float)) and isinstance(bz, (int, float)):
+                item["building"] = {"x": float(bx), "z": float(bz)}
+        dispatches.append(item)
+    return dispatches
+
+
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
     global _adk_runner, _auto_recall_monitor
@@ -572,6 +634,7 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                         resp = dict(part.function_response.response or {})
                         message = resp.get("message")
                         survivors_payload = _extract_survivor_coords(resp)
+                        supply_dispatches = _extract_supply_dispatches(part.function_response.name, resp)
                         if (
                             sweep_prompt
                             and isinstance(message, str)
@@ -585,6 +648,8 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                             payload: dict = {"type": "text", "text": message, "agent": event.author}
                             if survivors_payload:
                                 payload["survivors"] = survivors_payload
+                            if supply_dispatches:
+                                payload["supply_dispatches"] = supply_dispatches
                             yield f"data: {json.dumps(payload)}\n\n"
                             continue
                         payload = {
@@ -595,6 +660,8 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                         }
                         if survivors_payload:
                             payload["survivors"] = survivors_payload
+                        if supply_dispatches:
+                            payload["supply_dispatches"] = supply_dispatches
                         yield f"data: {json.dumps(payload)}\n\n"
                     elif part.text and part.text.strip():
                         if sweep_prompt and is_structured_sweep_report(part.text):
