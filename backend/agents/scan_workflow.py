@@ -255,6 +255,8 @@ def prepare_parallel_fleet_scan(tool_context: ToolContext) -> dict:
     tool_context.state["scan_done_count_by_asset"] = json.dumps(done_count_by_asset)
     tool_context.state["scan_results_by_asset"] = json.dumps({aid: [] for aid in ordered_aids})
     tool_context.state["active_fleet_assets"] = json.dumps(ordered_aids)
+    tool_context.state["scan_total_buildings"] = len(initial_by_drone) + len(pending)
+    tool_context.state["scan_summary_emitted"] = False
     _set_active_parallel_loops(ordered_aids)
     return {
         "success": True,
@@ -345,6 +347,27 @@ async def pick_next_building_for_asset(asset_id: str, tool_context: ToolContext)
             tool_context.state["scan_claimed_initial_by_asset"] = json.dumps(claimed_initial)
             tool_context.state["scan_pending_buildings"] = json.dumps(pending)
             tool_context.actions.escalate = True
+            raw_results = tool_context.state.get("scan_results_list", "[]")
+            try:
+                all_results = json.loads(raw_results) if isinstance(raw_results, str) else raw_results
+            except (json.JSONDecodeError, TypeError):
+                all_results = []
+            total_buildings = int(tool_context.state.get("scan_total_buildings", 0) or 0)
+            summary_emitted = bool(tool_context.state.get("scan_summary_emitted", False))
+            if (
+                not summary_emitted
+                and total_buildings > 0
+                and isinstance(all_results, list)
+                and len(all_results) >= total_buildings
+            ):
+                report = build_aggregated_scan_report(tool_context)
+                tool_context.state["scan_summary_emitted"] = True
+                return {
+                    "done": True,
+                    "asset_id": asset_id,
+                    "total_scanned": scanned,
+                    "message": report.get("summary", "Scan complete."),
+                }
             return {"done": True, "asset_id": asset_id, "total_scanned": scanned}
 
         next_scanned = scanned + 1
