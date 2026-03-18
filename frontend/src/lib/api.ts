@@ -126,6 +126,20 @@ export async function resetDroneToBase(assetId: string): Promise<void> {
   if (!res.ok) throw new Error(`Reset failed: ${res.status}`)
 }
 
+export async function recallFleet(): Promise<void> {
+  const res = await fetch(`${BASE}/fleet/recall`, { method: 'POST' })
+  if (!res.ok) throw new Error(`Fleet recall failed: ${res.status}`)
+}
+
+export async function setFleetSpeed(speed: number): Promise<void> {
+  const res = await fetch(`${BASE}/fleet/speed`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ speed }),
+  })
+  if (!res.ok) throw new Error(`Fleet speed failed: ${res.status}`)
+}
+
 export async function healthCheck(): Promise<boolean> {
   try {
     const res = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(2000) })

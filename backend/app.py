@@ -37,7 +37,12 @@ from backend.services.fleet import (
     restore_registered_connections,
     scan_frequencies as scan_unlinked_frequencies,
 )
-from backend.services.drone_control import return_to_base as rtb_service
+from backend.services.drone_control import (
+    return_to_base as rtb_service,
+    recall_swarm,
+    set_drone_speed,
+    list_all_drones,
+)
 
 import logging
 
@@ -293,6 +298,26 @@ async def list_assets() -> list[dict]:
 async def list_fleet() -> dict:
     """Return the active fleet state the MCP agent reasons over."""
     return await discover_fleet(auto_uplink=False, include_registered=True)
+
+
+@app.post("/fleet/recall")
+async def fleet_recall() -> dict:
+    """Command all registered drones to return to base concurrently."""
+    drone_info = await list_all_drones()
+    asset_ids = [d["asset_id"] for d in drone_info.get("drones", [])]
+    if not asset_ids:
+        return {"recalled": [], "message": "No drones registered"}
+    return await recall_swarm(asset_ids)
+
+
+@app.post("/fleet/speed")
+async def fleet_speed(req: SpeedRequest) -> dict:
+    """Set speed for all registered drones."""
+    drone_info = await list_all_drones()
+    asset_ids = [d["asset_id"] for d in drone_info.get("drones", [])]
+    for aid in asset_ids:
+        set_drone_speed(aid, req.speed)
+    return {"asset_ids": asset_ids, "speed": req.speed}
 
 
 @app.post("/spawn")

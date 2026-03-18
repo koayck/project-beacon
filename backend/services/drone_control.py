@@ -114,14 +114,26 @@ async def list_all_drones() -> dict:
 async def move_drone_to(
     asset_id: str, x: float, y: float, z: float, speed: float | None = None
 ) -> dict:
-    """Move a drone to the given X/Y/Z coordinates at the specified speed."""
-    return await grpc_client.move_to(
+    """Move a drone to the given X/Y/Z coordinates and wait for arrival."""
+    move_result = await grpc_client.move_to(
         asset_id,
         x,
         y,
         z,
         speed if speed is not None else get_drone_speed(asset_id),
     )
+    if not move_result.get("success", True):
+        return move_result
+
+    wait_result = await _wait_until_waypoint_reached(asset_id, x, y, z)
+    if not wait_result.get("ok", False):
+        return {
+            "success": False,
+            "message": wait_result.get("error", "Waypoint not reached"),
+            "status": wait_result.get("status"),
+        }
+
+    return move_result
 
 
 async def _wait_until_waypoint_reached(
@@ -1050,6 +1062,23 @@ async def sweep_scan_building(
     Execute a full-height-above-water perimeter sweep scan around a building.
     """
     client = grpc_client
+
+    # ── Wait for drone to finish any in-progress movement ──────────────
+    # The LLM navigation agent fires move_drone_to commands without
+    # waiting for physical arrival.  If we start planning immediately the
+    # drone may be mid-flight near an obstacle, causing plan_route to
+    # fail.  Wait until the drone settles (IDLE / ARRIVED / ERROR) or
+    # until a generous timeout expires.
+    _SETTLE_TIMEOUT_S = 120.0
+    _SETTLE_POLL_S = 0.3
+    _settled = 0.0
+    while _settled < _SETTLE_TIMEOUT_S:
+        _st = await client.get_status(asset_id)
+        if _st.get("status") not in ("MOVING",):
+            break
+        await asyncio.sleep(_SETTLE_POLL_S)
+        _settled += _SETTLE_POLL_S
+
     # Fetch status so default target can fall back to current drone position.
     status = await client.get_status(asset_id)
     if target_x is None:
