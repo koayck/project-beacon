@@ -1,7 +1,7 @@
 """Tests that sweep plan uses rooftop-first approach with perimeter rings + windows."""
 from __future__ import annotations
 
-from backend.services.drone_control import plan_building_vertical_sweep
+from backend.services.api.control import plan_building_vertical_sweep
 from backend.world.vision import get_view as backend_get_view
 
 

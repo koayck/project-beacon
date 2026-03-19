@@ -24,6 +24,7 @@ BUILDING_PROXIMITY_MARGIN_M: float = _S["building_proximity_margin_m"]
 FLOOR_HEIGHT_M: float              = _S["floor_height_m"]
 FLOOR_SLAB_THICKNESS_M: float      = _S["floor_slab_thickness_m"]
 WINDOW_SCAN_STANDOFF_M: float      = _S["window_scan_standoff_m"]
+CURRENT_WORLD_ID: int              = 1
 
 
 # ── Dataclasses ───────────────────────────────────────────────────────────────

@@ -62,7 +62,7 @@ async def assign_drones_to_supply_targets(tool_context: ToolContext) -> dict:
     Read state["supply_targets"], assign closest available drones, and persist
     assignment payload into state["supply_assignments"].
     """
-    from backend.services.drone_control import assign_fleet_to_buildings
+    from backend.services.api import assign_fleet_to_buildings
 
     supply_data = _load_json_state(tool_context.state.get("supply_targets", "{}"), {})
     survivors: list[dict] = _dedupe_targets(supply_data.get("survivors", []))
@@ -208,7 +208,7 @@ async def process_next_supply_target_for_asset(asset_id: str, tool_context: Tool
     Loop terminates when no targets remain.
     """
     from backend.runtime import grpc_client as runtime_grpc_client
-    from backend.services.drone_control import dispatch_supply_to_building
+    from backend.services.api.control import dispatch_supply_to_building
 
     active_assets = _load_json_state(tool_context.state.get("active_supply_assets", "[]"), [])
     if asset_id not in active_assets:

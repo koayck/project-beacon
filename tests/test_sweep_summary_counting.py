@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import backend.services.drone_control as drone_control
+import backend.services.api.control as drone_control
 
 
 @pytest.mark.asyncio
