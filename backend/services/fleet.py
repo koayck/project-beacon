@@ -3,6 +3,7 @@ from __future__ import annotations
 from backend.db.models import Asset
 from backend.db.repository import asset_repo
 from backend.runtime import grpc_client, udp_listener
+from backend.world.model import get_active_world_id
 
 
 def _grpc_target(asset_id: str) -> tuple[str, int]:
@@ -33,6 +34,8 @@ async def ensure_uplink(asset_id: str) -> dict:
     )
     await asset_repo.upsert(asset)
     grpc_client.register(asset_id, grpc_host, grpc_port)
+    # Keep newly uplinked drones in sync with backend's currently selected world.
+    await grpc_client.switch_world(asset_id, get_active_world_id())
     return {
         "asset_id": asset_id,
         "grpc_host": grpc_host,

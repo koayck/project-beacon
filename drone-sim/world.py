@@ -1,50 +1,25 @@
 """
 Minimal world model for the drone sim container.
-Mirrors backend/world/model.py — kept in sync via the shared proto/world_data.
-Only building AABBs are needed for collision avoidance and vision.
-Survivor positions and facade windows are included so thermal detections can
-respect wall occlusion.
+Loads building/survivor data from shared/world.json or shared/world2.json.
+Supports runtime world switching via load_world().
 """
 from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-_WORLD_JSON_PATH = Path(__file__).resolve().parents[1] / "shared" / "world.json"
+_WORLD_JSON_PATH = Path(__file__).resolve().parents[1] / "shared" / "world2.json"
 _WORLD_JSON = json.loads(_WORLD_JSON_PATH.read_text())
 _SCENE = _WORLD_JSON["scene"]
 
 FLOOD_LEVEL: float = float(_SCENE["flood_level_m"])
-SURVIVOR_RANGE: float = 3.0
-FLOOR_HEIGHT: float = float(_SCENE["floor_height_m"])
-FLOOR_SLAB_THICKNESS: float = float(_SCENE["floor_slab_thickness_m"])
-
-# (cx, cz, w, d, h)
-# Target building at (-15, -20) — 4 floors, 12 m tall
-# Obstacle at (-7, -10) — solid block blocking the direct route from base (0,0,0) to target
-_RAW_BUILDINGS = [
-    (-15, -20, 8, 8, 12),   # target building
-    ( -7, -10, 6, 5, 10),   # obstacle on direct route (0,0,0) → (-15,0,-20)
-    ( 20, -20, 6, 6,  9),   # balcony building (3 floors, exterior balcony on south face)
-    ( 12, -27, 10, 8, 9),   # twin shophouse block (3 floors, windows on south face)
-    (-28, -28, 10, 10, 21), # NW tower (7 floors), shifted west by 10m from prior position
-]
-
-# (x, y, z) — inside the target building, one per floor (floors 2, 3, 4)
-# survY(n) = (n-1)*3.0 + 0.65  →  3.65, 6.65, 9.65
-_RAW_SURVIVORS = [
-    (-16.5,  3.65, -19.0),  # floor 2 — target building
-    (-14.5,  6.65, -20.5),  # floor 3 — target building
-    (-13.5,  9.65, -21.0),  # floor 4 — target building
-    ( 20.0,  6.65, -16.0),  # floor 3 — balcony building, on exterior balcony (outside AABB)
-    (  9.5,  3.65, -27.0),  # floor 2 — shophouse A, visible through south window
-    ( 14.5,  6.65, -27.0),  # floor 3 — shophouse B, visible through south window
-    (-24.0,  3.65, -27.5),  # floor 2 — NW tower, inside near east window
-    (-28.0, 12.65, -22.0),  # floor 5 — NW tower, on south balcony (outside AABB)
-]
+SURVIVOR_RANGE: float = 5.0
+FLOOR_HEIGHT: float = 3.0
+FLOOR_SLAB_THICKNESS: float = 0.2
 
 
 @dataclass(frozen=True)
@@ -195,110 +170,72 @@ class SimSurvivor:
         return math.sqrt((self.x-x)**2+(self.y-y)**2+(self.z-z)**2)
 
 
-def _target_windows(cx: float, cz: float) -> tuple[SimWindowAperture, ...]:
+def _resolve_world_path(world_id: int) -> Path:
+    """Find the world JSON file."""
+    filename = "world.json" if world_id == 1 else f"world{world_id}.json"
+    # Inside Docker: /shared/world.json
+    docker_path = Path("/shared") / filename
+    if docker_path.exists():
+        return docker_path
+    # Local dev: ../shared/world.json
+    local_path = Path(__file__).parent.parent / "shared" / filename
+    if local_path.exists():
+        return local_path
+    raise FileNotFoundError(f"Cannot find {filename}")
+
+
+def _parse_windows(b: dict) -> tuple[SimWindowAperture, ...]:
+    """Parse window definitions from a world.json building entry."""
+    cx, cz = float(b["cx"]), float(b["cz"])
     windows: list[SimWindowAperture] = []
-    layout: tuple[tuple[int, WindowFace, float], ...] = (
-        (1, "west", 0.0),
-        (2, "north", -1.5),
-        (3, "east", -0.5),
-        (4, "south", 1.5),
-    )
-    window_width = 2.0
-    window_height = 1.6
-    for floor, face, offset in layout:
-        sill_y = (floor - 1) * 3.0 + 0.4
-        axis_center = cx + offset if face in ("north", "south") else cz + offset
-        windows.append(
-            SimWindowAperture(
-                face=face,
-                axis_center=axis_center,
-                sill_y=sill_y,
-                width=window_width,
-                height=window_height,
-            )
-        )
+    for w in b.get("windows", []):
+        face: WindowFace = w["face"]
+        sill_y = (w["floor"] - 1) * FLOOR_HEIGHT + w["sill"]
+        axis_center = cx + w["offset"] if face in ("north", "south") else cz + w["offset"]
+        windows.append(SimWindowAperture(
+            face=face,
+            axis_center=axis_center,
+            sill_y=sill_y,
+            width=w["width"],
+            height=w["height"],
+        ))
     return tuple(windows)
 
 
-def _shophouse_windows(cx: float, cz: float) -> tuple[SimWindowAperture, ...]:
-    windows: list[SimWindowAperture] = []
-    layout: tuple[tuple[int, WindowFace, float], ...] = (
-        (2, "south", -2.5),
-        (2, "south",  2.5),
-        (3, "south", -2.5),
-        (3, "south",  2.5),
-    )
-    window_width = 1.6
-    window_height = 1.4
-    for floor, face, offset in layout:
-        sill_y = (floor - 1) * 3.0 + 0.5
-        axis_center = cx + offset if face in ("north", "south") else cz + offset
-        windows.append(
-            SimWindowAperture(
-                face=face,
-                axis_center=axis_center,
-                sill_y=sill_y,
-                width=window_width,
-                height=window_height,
-            )
-        )
-    return tuple(windows)
+def load_world(world_id: int = 1) -> None:
+    """Load (or reload) the world data from shared JSON.
+    Updates the module-level BUILDINGS and SURVIVORS lists in-place."""
+    global BUILDINGS, SURVIVORS, FLOOD_LEVEL
+
+    path = _resolve_world_path(world_id)
+    data = json.loads(path.read_text())
+
+    scene = data.get("scene", {})
+    FLOOD_LEVEL = scene.get("flood_level_m", 1.4)
+
+    BUILDINGS.clear()
+    for b in data["buildings"]:
+        BUILDINGS.append(SimBuilding(
+            id=b["id"],
+            cx=float(b["cx"]),
+            cz=float(b["cz"]),
+            w=float(b["w"]),
+            d=float(b["d"]),
+            h=float(b["h"]),
+            windows=_parse_windows(b),
+        ))
+
+    SURVIVORS.clear()
+    for i, s in enumerate(data.get("survivors", [])):
+        SURVIVORS.append(SimSurvivor(i, float(s["x"]), float(s["y"]), float(s["z"])))
 
 
-def _nw_tower_windows(cx: float, cz: float) -> tuple[SimWindowAperture, ...]:
-    windows: list[SimWindowAperture] = []
-    layout: tuple[tuple[int, WindowFace, float], ...] = (
-        (2, "east",  0.5),
-        (4, "south", -1.5),
-        (6, "north",  2.0),
-        (7, "west",  -1.0),
-    )
-    window_width = 1.8
-    window_height = 1.6
-    for floor, face, offset in layout:
-        sill_y = (floor - 1) * 3.0 + 0.4
-        axis_center = cx + offset if face in ("north", "south") else cz + offset
-        windows.append(
-            SimWindowAperture(
-                face=face,
-                axis_center=axis_center,
-                sill_y=sill_y,
-                width=window_width,
-                height=window_height,
-            )
-        )
-    return tuple(windows)
+BUILDINGS: list[SimBuilding] = []
+SURVIVORS: list[SimSurvivor] = []
 
-
-BUILDINGS = [
-    SimBuilding(
-        id=int(building["id"]),
-        cx=float(building["cx"]),
-        cz=float(building["cz"]),
-        w=float(building["w"]),
-        d=float(building["d"]),
-        h=float(building["h"]),
-        windows=tuple(
-            SimWindowAperture(
-                face=str(window["face"]),
-                axis_center=(
-                    float(building["cx"]) + float(window["offset"])
-                    if str(window["face"]) in ("north", "south")
-                    else float(building["cz"]) + float(window["offset"])
-                ),
-                sill_y=(float(window["floor"]) - 1.0) * FLOOR_HEIGHT + float(window["sill"]),
-                width=float(window["width"]),
-                height=float(window["height"]),
-            )
-            for window in building.get("windows", [])
-        ),
-    )
-    for building in _WORLD_JSON["buildings"]
-]
-SURVIVORS = [
-    SimSurvivor(id=i, x=float(s["x"]), y=float(s["y"]), z=float(s["z"]))
-    for i, s in enumerate(_WORLD_JSON["survivors"])
-]
+# Load default world at import time
+_initial_world = int(os.environ.get("WORLD_ID", "1"))
+load_world(_initial_world)
 
 
 def _compass(dx: float, dz: float) -> str:

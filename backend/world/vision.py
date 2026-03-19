@@ -14,7 +14,7 @@ from backend.world.model import WORLD, Building, Survivor
 # Default sensor parameters
 DEFAULT_RANGE: float = 20.0   # metres
 DEFAULT_FOV: float   = 90.0   # degrees (downward-facing cone full angle)
-SURVIVOR_RANGE: float = 3.0  # survivors are harder to spot, shorter range
+SURVIVOR_RANGE: float = 5.0  # survivors are harder to spot, shorter range
 OBSTACLE_LOOKAHEAD: float = 10.0  # metres ahead to check for obstacles
 
 TerrainType = Literal["ground", "flooded", "building_roof", "in_building", "airspace"]

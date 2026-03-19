@@ -150,6 +150,15 @@ class DroneGrpcClient:
             "summary": resp.summary,
         }
 
+    async def switch_world(self, asset_id: str, world_id: int) -> dict:
+        stub = self._stub(asset_id)
+        resp = await self._call(
+            stub.SwitchWorld,
+            beacon_pb2.SwitchWorldRequest(world_id=world_id),
+            timeout=_GRPC_TIMEOUT_S,
+        )
+        return {"success": resp.success, "message": resp.message}
+
     def registered_asset_ids(self) -> list[str]:
         """Return all asset IDs that have an active gRPC connection."""
         return list(self._connections.keys())

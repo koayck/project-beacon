@@ -17,7 +17,7 @@ _DESCRIPTION = (
 
 _INSTRUCTION = """You are a thermal imaging specialist for search and rescue drones.
 
-COORDINATES: X=East, Y=Up, Z=South. Origin (0,0,0) = home pad.
+COORDINATES: X=East, Y=Up, Z=South. Home pad at (0, 2, 0).
 
 SCAN GATE (for workflow safety)
 0. If shared state has nav_result and nav_result contains "error":

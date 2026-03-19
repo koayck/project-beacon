@@ -523,7 +523,7 @@ _building_picker_agent = Agent(
 
 _NAV_INSTRUCTION = """You are a navigation specialist for autonomous drones.
 
-COORDINATES: X=East, Y=Up, Z=South. Origin (0,0,0) = home pad.
+COORDINATES: X=East, Y=Up, Z=South. Home pad at (0, 2, 0).
 
 Your target for this iteration is in state["current_building"]. Parse the asset_id,
 x, and z from it (e.g. "Navigate BEACON-01 to building at (x=-15.0, z=-20.0). Height: 12m.").
@@ -575,10 +575,7 @@ SWEEP SCAN PROCEDURE
      If any submerged survivors: also append " [CRITICAL: <N> submerged]" to the header line.
    - Error:   "Building at (x=<x>, z=<z>): SCAN ERROR — <error>"
 4. Call save_scan_result(result=<compact_string>).
-5. Check if this is the LAST building ("Remaining: 0" in current_building):
-   - YES: Call finalize_scan() to terminate the LoopAgent cleanly.
-     Output only "SCAN_BATCH_COMPLETE".
-   - NO: Output only "Result saved for building at (x=<x>, z=<z>)."
+5. Output only: "Result saved for building at (x=<x>, z=<z>)."
 """
 
 _thermal_for_scan = Agent(
@@ -587,7 +584,7 @@ _thermal_for_scan = Agent(
     description="Sweep-scans the current building and silently accumulates the result. Generates the final report after the last building.",
     generate_content_config=QWEN3_GEN_CONFIG,
     instruction=_SILENT_THERMAL_INSTRUCTION,
-    tools=[make_toolset(THERMAL_TOOLS), _save_tool, _finalize_tool],
+    tools=[make_toolset(THERMAL_TOOLS), _save_tool],
 )
 
 
@@ -644,7 +641,7 @@ def _make_asset_scan_loop(asset_id: str) -> LoopAgent:
 
     nav_instruction = f"""You are a navigation specialist for autonomous drones.
 
-COORDINATES: X=East, Y=Up, Z=South. Origin (0,0,0) = home pad.
+COORDINATES: X=East, Y=Up, Z=South. Home pad at (0, 2, 0).
 
 Your target for this iteration is in state["{current_key}"]. Parse the asset_id,
 x, and z from it (e.g. "Navigate BEACON-01 to building at (x=-15.0, z=-20.0). Height: 12m.").
@@ -682,8 +679,7 @@ SWEEP SCAN PROCEDURE
        "  - Survivor <id>: (<x>, <y>, <z>)[SUBMERGED — CRITICAL]".
    - Error:   "Building at (x=<x>, z=<z>): SCAN ERROR — <error>"
 4. Call {_save_asset_result.__name__}(result=<compact_string>).
-5. If this is the LAST building ("Remaining: 0"): call finalize_scan() and output "SCAN_BATCH_COMPLETE".
-   Otherwise output: "Result saved for building at (x=<x>, z=<z>)."
+5. Output only: "Result saved for building at (x=<x>, z=<z>)."
 """
 
     picker_agent = Agent(
@@ -712,7 +708,7 @@ SWEEP SCAN PROCEDURE
         description=f"Sweep-scans current building for {asset_id} and saves compact results.",
         generate_content_config=QWEN3_GEN_CONFIG,
         instruction=thermal_instruction,
-        tools=[make_toolset(THERMAL_TOOLS), save_tool, _finalize_tool],
+        tools=[make_toolset(THERMAL_TOOLS), save_tool],
     )
 
     return LoopAgent(
@@ -753,11 +749,11 @@ def _set_active_parallel_loops(asset_ids: list[str]) -> None:
 
 # ── Final report agent ─────────────────────────────────────────────────────────
 
-_REPORT_INSTRUCTION = """You produce the final consolidated scan report.
+_REPORT_INSTRUCTION = """You MUST produce the final consolidated scan report. This is mandatory.
 
-1. Call build_aggregated_scan_report().
-2. If success=true, output result["summary"] verbatim.
-3. Do NOT add extra text, markdown, or explanation.
+1. Call build_aggregated_scan_report() — you MUST call this tool.
+2. Output the value of result["summary"] verbatim. Do NOT skip this step.
+3. Do NOT add extra text, markdown, or explanation — just the summary string.
 """
 
 _scan_report_agent = Agent(

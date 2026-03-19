@@ -10,7 +10,7 @@ from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
 
 _INSTRUCTION = """You are a navigation specialist for autonomous drones.
 
-COORDINATES: X=East, Y=Up, Z=South. Origin (0,0,0) = home pad.
+COORDINATES: X=East, Y=Up, Z=South. Home pad at (0, 2, 0).
 
 MOVE PROCEDURE
 1. Call plan_route(asset_id, target_x, target_z, target_y).
