@@ -11,97 +11,607 @@
     {
       "id": 0,
       "name": "flooded_shophouse",
-      "cx": -15, "cz": -15,
-      "w": 10, "d": 15, "h": 12,
+      "cx": -15,
+      "cz": -15,
+      "w": 10,
+      "d": 15,
+      "h": 12,
       "windows": [
-        { "floor": 2, "face": "south", "offset": -2.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 2, "face": "south", "offset":  2.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 3, "face": "west",  "offset":  0.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 3, "face": "north", "offset": -1.5, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 4, "face": "east",  "offset":  1.0, "width": 2.0, "height": 1.6, "sill": 0.4 }
+        {
+          "floor": 2,
+          "face": "south",
+          "offset": -2,
+          "width": 2,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 2,
+          "face": "south",
+          "offset": 2,
+          "width": 2,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 3,
+          "face": "west",
+          "offset": 0,
+          "width": 2,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 3,
+          "face": "north",
+          "offset": -1.5,
+          "width": 2,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 4,
+          "face": "east",
+          "offset": 1,
+          "width": 2,
+          "height": 1.6,
+          "sill": 0.4
+        }
       ],
       "balcony": null
     },
     {
       "id": 1,
       "name": "hotel",
-      "cx": 30, "cz": -25,
-      "w": 15, "d": 12, "h": 24,
+      "cx": 30,
+      "cz": -25,
+      "w": 15,
+      "d": 12,
+      "h": 24,
       "windows": [
-        { "floor": 3, "face": "south", "offset": -3.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 3, "face": "south", "offset":  3.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 5, "face": "west",  "offset": -2.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 6, "face": "north", "offset":  0.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 8, "face": "east",  "offset":  1.0, "width": 2.0, "height": 1.6, "sill": 0.4 }
+        {
+          "floor": 3,
+          "face": "south",
+          "offset": -3,
+          "width": 2,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 3,
+          "face": "south",
+          "offset": 3,
+          "width": 2,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 5,
+          "face": "west",
+          "offset": -2,
+          "width": 2,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 6,
+          "face": "north",
+          "offset": 0,
+          "width": 2,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 8,
+          "face": "east",
+          "offset": 1,
+          "width": 2,
+          "height": 1.6,
+          "sill": 0.4
+        }
       ],
-      "balcony": { "floor": 5, "face": "south", "depth": 2.5, "width": 6.0 }
+      "balcony": {
+        "floor": 5,
+        "face": "south",
+        "depth": 2.5,
+        "width": 6
+      }
     },
     {
       "id": 2,
       "name": "market_hall",
-      "cx": -25, "cz": 20,
-      "w": 20, "d": 15, "h": 6,
+      "cx": -25,
+      "cz": 20,
+      "w": 20,
+      "d": 15,
+      "h": 6,
       "windows": [
-        { "floor": 1, "face": "south", "offset": -5.0, "width": 3.0, "height": 2.0, "sill": 0.3 },
-        { "floor": 1, "face": "south", "offset":  5.0, "width": 3.0, "height": 2.0, "sill": 0.3 },
-        { "floor": 2, "face": "north", "offset": -3.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 2, "face": "east",  "offset":  2.0, "width": 2.0, "height": 1.6, "sill": 0.4 }
+        {
+          "floor": 1,
+          "face": "south",
+          "offset": -5,
+          "width": 3,
+          "height": 2,
+          "sill": 0.3
+        },
+        {
+          "floor": 1,
+          "face": "south",
+          "offset": 5,
+          "width": 3,
+          "height": 2,
+          "sill": 0.3
+        },
+        {
+          "floor": 2,
+          "face": "north",
+          "offset": -3,
+          "width": 2,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 2,
+          "face": "east",
+          "offset": 2,
+          "width": 2,
+          "height": 1.6,
+          "sill": 0.4
+        }
       ],
       "balcony": null
     },
     {
       "id": 3,
       "name": "residential_block",
-      "cx": 20, "cz": 25,
-      "w": 12, "d": 10, "h": 18,
+      "cx": 20,
+      "cz": 25,
+      "w": 12,
+      "d": 10,
+      "h": 18,
       "windows": [
-        { "floor": 2, "face": "south", "offset": -2.0, "width": 1.8, "height": 1.4, "sill": 0.5 },
-        { "floor": 2, "face": "south", "offset":  2.0, "width": 1.8, "height": 1.4, "sill": 0.5 },
-        { "floor": 4, "face": "west",  "offset": -1.0, "width": 1.8, "height": 1.4, "sill": 0.5 },
-        { "floor": 5, "face": "north", "offset":  0.0, "width": 1.8, "height": 1.4, "sill": 0.5 },
-        { "floor": 6, "face": "east",  "offset":  1.5, "width": 1.8, "height": 1.4, "sill": 0.5 }
+        {
+          "floor": 2,
+          "face": "south",
+          "offset": -2,
+          "width": 1.8,
+          "height": 1.4,
+          "sill": 0.5
+        },
+        {
+          "floor": 2,
+          "face": "south",
+          "offset": 2,
+          "width": 1.8,
+          "height": 1.4,
+          "sill": 0.5
+        },
+        {
+          "floor": 4,
+          "face": "west",
+          "offset": -1,
+          "width": 1.8,
+          "height": 1.4,
+          "sill": 0.5
+        },
+        {
+          "floor": 5,
+          "face": "north",
+          "offset": 0,
+          "width": 1.8,
+          "height": 1.4,
+          "sill": 0.5
+        },
+        {
+          "floor": 6,
+          "face": "east",
+          "offset": 1.5,
+          "width": 1.8,
+          "height": 1.4,
+          "sill": 0.5
+        }
       ],
-      "balcony": { "floor": 4, "face": "south", "depth": 2.0, "width": 4.0 }
+      "balcony": {
+        "floor": 4,
+        "face": "south",
+        "depth": 2,
+        "width": 4
+      }
     },
     {
       "id": 4,
       "name": "commercial_tower",
-      "cx": -35, "cz": -30,
-      "w": 14, "d": 14, "h": 30,
+      "cx": -35,
+      "cz": -30,
+      "w": 14,
+      "d": 14,
+      "h": 30,
       "windows": [
-        { "floor": 3, "face": "east",  "offset":  0.5, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 5, "face": "south", "offset": -2.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 7, "face": "north", "offset":  2.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 9, "face": "west",  "offset": -1.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 10, "face": "south", "offset": 1.0, "width": 2.0, "height": 1.6, "sill": 0.4 }
+        {
+          "floor": 3,
+          "face": "east",
+          "offset": 0.5,
+          "width": 2,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 5,
+          "face": "south",
+          "offset": -2,
+          "width": 2,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 7,
+          "face": "north",
+          "offset": 2,
+          "width": 2,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 9,
+          "face": "west",
+          "offset": -1,
+          "width": 2,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 10,
+          "face": "south",
+          "offset": 1,
+          "width": 2,
+          "height": 1.6,
+          "sill": 0.4
+        }
       ],
-      "balcony": { "floor": 7, "face": "south", "depth": 2.5, "width": 5.0 }
+      "balcony": {
+        "floor": 7,
+        "face": "south",
+        "depth": 2.5,
+        "width": 5
+      }
     },
     {
       "id": 5,
       "name": "corner_shophouse",
-      "cx": 10, "cz": -10,
-      "w": 8, "d": 8, "h": 9,
+      "cx": 10,
+      "cz": -10,
+      "w": 8,
+      "d": 8,
+      "h": 9,
       "windows": [
-        { "floor": 2, "face": "south", "offset": -1.5, "width": 1.6, "height": 1.4, "sill": 0.5 },
-        { "floor": 2, "face": "south", "offset":  1.5, "width": 1.6, "height": 1.4, "sill": 0.5 },
-        { "floor": 3, "face": "west",  "offset":  0.0, "width": 1.6, "height": 1.4, "sill": 0.5 },
-        { "floor": 3, "face": "north", "offset":  1.0, "width": 1.6, "height": 1.4, "sill": 0.5 }
+        {
+          "floor": 2,
+          "face": "south",
+          "offset": -1.5,
+          "width": 1.6,
+          "height": 1.4,
+          "sill": 0.5
+        },
+        {
+          "floor": 2,
+          "face": "south",
+          "offset": 1.5,
+          "width": 1.6,
+          "height": 1.4,
+          "sill": 0.5
+        },
+        {
+          "floor": 3,
+          "face": "west",
+          "offset": 0,
+          "width": 1.6,
+          "height": 1.4,
+          "sill": 0.5
+        },
+        {
+          "floor": 3,
+          "face": "north",
+          "offset": 1,
+          "width": 1.6,
+          "height": 1.4,
+          "sill": 0.5
+        }
       ],
+      "balcony": null
+    },
+    {
+      "id": 10,
+      "name": "shophouse",
+      "cx": 34,
+      "cz": 38,
+      "w": 4,
+      "d": 12,
+      "h": 9,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 12,
+      "name": "shophouse",
+      "cx": -42,
+      "cz": 38,
+      "w": 4,
+      "d": 12,
+      "h": 12,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 14,
+      "name": "shophouse",
+      "cx": -50,
+      "cz": 38,
+      "w": 4,
+      "d": 12,
+      "h": 12,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 18,
+      "name": "shophouse",
+      "cx": -18,
+      "cz": -42,
+      "w": 4,
+      "d": 12,
+      "h": 9,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 20,
+      "name": "shophouse",
+      "cx": 6,
+      "cz": -42,
+      "w": 4,
+      "d": 12,
+      "h": 9,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 22,
+      "name": "shophouse",
+      "cx": 14,
+      "cz": -42,
+      "w": 4,
+      "d": 12,
+      "h": 9,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 26,
+      "name": "shophouse",
+      "cx": 42,
+      "cz": -4,
+      "w": 12,
+      "d": 4,
+      "h": 9,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 28,
+      "name": "shophouse",
+      "cx": 42,
+      "cz": 4,
+      "w": 12,
+      "d": 4,
+      "h": 9,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 30,
+      "name": "shophouse",
+      "cx": 42,
+      "cz": 12,
+      "w": 12,
+      "d": 4,
+      "h": 9,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 34,
+      "name": "shophouse",
+      "cx": -50,
+      "cz": 0,
+      "w": 12,
+      "d": 4,
+      "h": 9,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 36,
+      "name": "shophouse",
+      "cx": -50,
+      "cz": 8,
+      "w": 12,
+      "d": 4,
+      "h": 9,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 38,
+      "name": "shophouse",
+      "cx": 10,
+      "cz": 52,
+      "w": 4,
+      "d": 12,
+      "h": 12,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 42,
+      "name": "shophouse",
+      "cx": -6,
+      "cz": 52,
+      "w": 4,
+      "d": 12,
+      "h": 12,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 44,
+      "name": "shophouse",
+      "cx": -14,
+      "cz": 52,
+      "w": 4,
+      "d": 12,
+      "h": 12,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 46,
+      "name": "shophouse",
+      "cx": -10,
+      "cz": -52,
+      "w": 4,
+      "d": 12,
+      "h": 9,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 50,
+      "name": "shophouse",
+      "cx": 46,
+      "cz": -52,
+      "w": 4,
+      "d": 12,
+      "h": 12,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 52,
+      "name": "midrise",
+      "cx": -55,
+      "cz": -50,
+      "w": 14,
+      "d": 14,
+      "h": 21,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 54,
+      "name": "midrise",
+      "cx": -55,
+      "cz": 45,
+      "w": 16,
+      "d": 14,
+      "h": 21,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 58,
+      "name": "midrise",
+      "cx": 0,
+      "cz": -62,
+      "w": 16,
+      "d": 12,
+      "h": 15,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 60,
+      "name": "midrise",
+      "cx": -65,
+      "cz": -25,
+      "w": 10,
+      "d": 12,
+      "h": 21,
+      "windows": [],
+      "balcony": null
+    },
+    {
+      "id": 62,
+      "name": "midrise",
+      "cx": -65,
+      "cz": 25,
+      "w": 12,
+      "d": 10,
+      "h": 15,
+      "windows": [],
       "balcony": null
     }
   ],
   "survivors": [
-    { "x": -17.0, "y":  3.65, "z": -9.0, "note": "floor 2 — flooded shophouse, near south window" },
-    { "x": -16.0, "y":  6.65, "z": -20.0, "note": "floor 3 — flooded shophouse, west side" },
-    { "x": -11.0, "y":  9.65, "z": -14.0, "note": "floor 4 — flooded shophouse, east window" },
-    { "x":  30.0, "y": 12.65, "z": -18.0, "note": "floor 5 — hotel, on south balcony" },
-    { "x":  30.0, "y": 15.65, "z": -29.0, "note": "floor 6 — hotel, inside at north window" },
-    { "x": -28.0, "y":  3.65, "z":  14.0, "note": "floor 2 — market hall, upper level near east window" },
-    { "x":  18.0, "y":  3.65, "z":  28.0, "note": "floor 2 — residential block, south window" },
-    { "x":  20.0, "y":  9.65, "z":  31.0, "note": "floor 4 — residential block, on south balcony" },
-    { "x": -35.0, "y": 18.65, "z": -22.0, "note": "floor 7 — commercial tower, on south balcony" },
-    { "x":  11.5, "y":  3.65, "z": -7.0, "note": "floor 2 — corner shophouse, south window" }
+    {
+      "x": -17,
+      "y": 3.65,
+      "z": -9,
+      "note": "floor 2 — flooded shophouse, near south window"
+    },
+    {
+      "x": -16,
+      "y": 6.65,
+      "z": -22,
+      "note": "floor 3 — flooded shophouse, west side"
+    },
+    {
+      "x": -11,
+      "y": 9.65,
+      "z": -14,
+      "note": "floor 4 — flooded shophouse, east window"
+    },
+    {
+      "x": 30,
+      "y": 12.65,
+      "z": -18,
+      "note": "floor 5 — hotel, on south balcony"
+    },
+    {
+      "x": 30,
+      "y": 15.65,
+      "z": -30,
+      "note": "floor 6 — hotel, inside at north window"
+    },
+    {
+      "x": -28,
+      "y": 3.65,
+      "z": 14,
+      "note": "floor 2 — market hall, upper level near east window"
+    },
+    {
+      "x": 18,
+      "y": 3.65,
+      "z": 29,
+      "note": "floor 2 — residential block, south window"
+    },
+    {
+      "x": 20,
+      "y": 9.65,
+      "z": 31,
+      "note": "floor 4 — residential block, on south balcony"
+    },
+    {
+      "x": -35,
+      "y": 18.65,
+      "z": -22,
+      "note": "floor 7 — commercial tower, on south balcony"
+    },
+    {
+      "x": 11.5,
+      "y": 3.65,
+      "z": -7,
+      "note": "floor 2 — corner shophouse, south window"
+    }
   ],
   "trees": []
 }

@@ -107,30 +107,13 @@ const MIDRISE_BUILDINGS: readonly (readonly [number, number, number, number, num
 // ── Street trees (only along roads and parks, clear of buildings) ────────────────
 
 const TREE_POSITIONS: readonly (readonly [number, number])[] = [
-  // Main E-W road median/sidewalk (z=±5) — skip zones near mission buildings
-  [-38, 5], [-30, 5], [-6, 5], [22, 5], [30, 5], [38, 5],
-  [-38,-5], [-30,-5], [-6,-5], [22,-5], [30,-5], [38,-5],
-
-  // Main N-S road (x=±5) — skip near B5 (z -17 to -3) and B3 (z 17-33)
-  [5, -38], [5, -30], [5, 38],
-  [-5,-38], [-5,-30], [-5, 38],
-
-  // Secondary z=±45 road edges
-  [-20, 43], [-10, 43], [10, 43], [20, 43], [30, 43],
-  [-20,-47], [-10,-47], [10,-47], [20,-47],
-
-  // Secondary x=±45 road edges
-  [47, -12], [47, 0], [47, 12],
-  [-47,-12], [-47, 0], [-47, 12],
-
-  // Park trees (north park area z=66, east park x=65)
-  [-6, 64], [0, 66], [6, 64],
-  [64, -6], [66, 0], [64, 6],
-
-  // Scattered perimeter
-  [-70, 20], [-70,-20], [70, 20], [70,-20],
-  [0, 78], [0,-78],
-] as const  // 46 trees
+  [-30, 5], [22, 5], [-30,-5], [38,-5],
+  [5, -38], [-5, 38],
+  [-10, 43], [20,-47],
+  [47, 0], [-47, 0],
+  [0, 66], [66, 0],
+  [-70, 20], [70,-20],
+] as const  // 14 trees
 
 // ── Parks ───────────────────────────────────────────────────────────────────────
 
@@ -408,8 +391,8 @@ export function World2Environment({
       <World2Canal span={span} />
       <World2Parks />
       <World2Trees />
-      <World2Shophouses floorHeight={floorHeight} floorThickness={floorThickness} transparentWalls={transparentWalls} />
-      <World2MidRise floorHeight={floorHeight} floorThickness={floorThickness} transparentWalls={transparentWalls} />
+      {/* Shophouses and mid-rise are now mission buildings in world2.json,
+         rendered by MissionBuildings with proper x-ray/collision/area-select */}
       <World2FloodWater span={span} floodLevel={floodLevel} />
     </>
   )
