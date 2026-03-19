@@ -64,6 +64,16 @@ export interface AutoRecallConfig {
   cooldown_seconds: number
 }
 
+export interface NetworkMockStatus {
+  mode: string
+  updated_at: string | null
+  source: string | null
+  target_ssid: string | null
+  active_ssids: string[]
+  container_count: number
+  status_file: string
+}
+
 export async function uplink(assetId: string): Promise<UplinkResponse> {
   const res = await fetch(`${BASE}/uplink/${assetId}`, { method: 'POST' })
   if (!res.ok) throw new Error(`Uplink failed: ${res.status}`)
@@ -95,6 +105,12 @@ export async function getFleet(): Promise<{ fleet: FleetDrone[]; count: number; 
 export async function getAutoRecallConfig(): Promise<AutoRecallConfig> {
   const res = await fetch(`${BASE}/config/auto-recall`)
   if (!res.ok) throw new Error(`Auto-recall config lookup failed: ${res.status}`)
+  return res.json()
+}
+
+export async function getNetworkMockStatus(): Promise<NetworkMockStatus> {
+  const res = await fetch(`${BASE}/network/mock-status`)
+  if (!res.ok) throw new Error(`Network mock status lookup failed: ${res.status}`)
   return res.json()
 }
 

@@ -1,0 +1,162 @@
+'use client'
+
+import { Html } from '@react-three/drei'
+import { useFrame } from '@react-three/fiber'
+import { useRef } from 'react'
+import * as THREE from 'three'
+import { DRONE_START } from '../../../constants/missionConstants'
+
+interface DroneProps {
+  targetPos: THREE.Vector3
+  status: string
+  hasCargo: boolean
+  nearbyObstacles?: number
+  nearestObstacleDist?: number
+  survivorsInRange?: number
+  assetId?: string
+  headingDeg?: number
+  scanTiltDeg?: number
+}
+
+export function DroneMesh({
+  targetPos,
+  status,
+  hasCargo,
+  nearbyObstacles = 0,
+  nearestObstacleDist = 999,
+  survivorsInRange = 0,
+  assetId = '',
+  headingDeg = 0,
+  scanTiltDeg = 0,
+}: DroneProps) {
+  void nearbyObstacles
+  void nearestObstacleDist
+  void survivorsInRange
+
+  const groupRef = useRef<THREE.Group>(null)
+  const cargoRef = useRef<THREE.Mesh>(null)
+  const coneRef = useRef<THREE.Mesh>(null)
+  const lerpPos = useRef(DRONE_START.clone())
+
+  const statusRef = useRef(status)
+  const headingDegRef = useRef(headingDeg)
+  const scanTiltDegRef = useRef(scanTiltDeg)
+  statusRef.current = status
+  headingDegRef.current = headingDeg
+  scanTiltDegRef.current = scanTiltDeg
+
+  const inScanSessionRef = useRef(false)
+  if (status === 'SCANNING') inScanSessionRef.current = true
+  if (status === 'IDLE' || status === 'RETURNING' || status === 'BLOCKED' || status === 'ERROR') {
+    inScanSessionRef.current = false
+  }
+
+  const scanFovHalfDeg = 30
+  const scanFovRange = 3
+  const coneRadius = scanFovRange * Math.tan((scanFovHalfDeg * Math.PI) / 180)
+
+  useFrame((_, delta) => {
+    if (!groupRef.current) return
+    lerpPos.current.lerp(targetPos, Math.min(delta * 4, 1))
+    groupRef.current.position.copy(lerpPos.current)
+
+    if (coneRef.current) {
+      const headingRad = (headingDegRef.current * Math.PI) / 180
+      const tiltRad = (scanTiltDegRef.current * Math.PI) / 180
+      const cosT = Math.cos(tiltRad)
+      const scanDirX = Math.sin(headingRad) * cosT
+      const scanDirY = Math.sin(tiltRad)
+      const scanDirZ = -Math.cos(headingRad) * cosT
+
+      const half = scanFovRange / 2
+      coneRef.current.position.set(
+        lerpPos.current.x + scanDirX * half,
+        lerpPos.current.y + scanDirY * half,
+        lerpPos.current.z + scanDirZ * half,
+      )
+      const baseDir = new THREE.Vector3(scanDirX, scanDirY, scanDirZ)
+      if (baseDir.lengthSq() > 1e-6) {
+        coneRef.current.quaternion.setFromUnitVectors(
+          new THREE.Vector3(0, -1, 0),
+          baseDir.normalize(),
+        )
+      }
+      coneRef.current.visible = inScanSessionRef.current
+    }
+
+    if (cargoRef.current) {
+      cargoRef.current.position.set(0, -0.55, 0)
+      cargoRef.current.visible = hasCargo
+    }
+
+    const bodyColor =
+      status === 'BLOCKED' ? 0xff2200 :
+      status === 'MOVING' ? 0x00ff88 :
+      status === 'SCANNING' ? 0xffaa00 :
+      0x00ffff
+    const emissiveColor =
+      status === 'BLOCKED' ? 0x880000 :
+      status === 'MOVING' ? 0x00aa44 :
+      status === 'SCANNING' ? 0xaa6600 :
+      0x00aaaa
+
+    groupRef.current.traverse(child => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial
+        mat.color.setHex(bodyColor)
+        mat.emissive.setHex(emissiveColor)
+      }
+    })
+  })
+
+  const rotorPositions: [number, number, number][] = [
+    [0.48, 0.06, 0], [-0.48, 0.06, 0],
+    [0, 0.06, 0.48], [0, 0.06, -0.48],
+  ]
+
+  return (
+    <>
+      <group ref={groupRef} position={DRONE_START.toArray()}>
+        <mesh>
+          <boxGeometry args={[0.38, 0.10, 0.38]} />
+          <meshStandardMaterial color="#00ffff" emissive="#00aaaa" emissiveIntensity={0.3} />
+        </mesh>
+        <mesh ref={cargoRef} position={[0, -0.55, 0]} visible={false}>
+          <boxGeometry args={[0.4, 0.3, 0.4]} />
+          <meshStandardMaterial color="#ff8800" emissive="#cc5500" emissiveIntensity={0.4} />
+        </mesh>
+        <mesh>
+          <boxGeometry args={[0.96, 0.05, 0.07]} />
+          <meshStandardMaterial color="#00ffff" emissive="#00aaaa" emissiveIntensity={0.3} />
+        </mesh>
+        <mesh>
+          <boxGeometry args={[0.07, 0.05, 0.96]} />
+          <meshStandardMaterial color="#00ffff" emissive="#00aaaa" emissiveIntensity={0.3} />
+        </mesh>
+        {rotorPositions.map((pos, i) => (
+          <mesh key={i} position={pos} rotation={[Math.PI / 2, 0, 0]}>
+            <cylinderGeometry args={[0.19, 0.19, 0.025, 12]} />
+            <meshStandardMaterial color="#00ffff" emissive="#00aaaa" emissiveIntensity={0.3} transparent opacity={0.75} />
+          </mesh>
+        ))}
+        {assetId && (
+          <Html position={[0, 0.9, 0]} center distanceFactor={14} zIndexRange={[0, 0]}>
+            <div className="pointer-events-none whitespace-nowrap rounded-[3px] border border-[rgba(0,255,255,0.4)] bg-[rgba(0,16,24,0.82)] px-[7px] py-[2px] font-mono text-[48px] font-bold tracking-[0.05em] text-[#00ffff]">
+              {assetId}
+            </div>
+          </Html>
+        )}
+      </group>
+      <mesh ref={coneRef} position={DRONE_START.toArray()} visible={false}>
+        <coneGeometry args={[coneRadius, scanFovRange, 32, 1, true]} />
+        <meshStandardMaterial
+          color="#ffaa00"
+          transparent
+          opacity={0.35}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
+      </mesh>
+    </>
+  )
+}
