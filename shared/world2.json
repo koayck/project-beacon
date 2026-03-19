@@ -1,7 +1,7 @@
 {
   "scene": {
     "floor_height_m": 3.0,
-    "floor_slab_thickness_m": 0.20,
+    "floor_slab_thickness_m": 0.2,
     "flood_level_m": 1.4,
     "surv_hover_m": 0.55,
     "window_scan_standoff_m": 4.0,
@@ -11,97 +11,1225 @@
     {
       "id": 0,
       "name": "flooded_shophouse",
-      "cx": -15, "cz": -15,
-      "w": 10, "d": 15, "h": 12,
+      "cx": -15,
+      "cz": -15,
+      "w": 10,
+      "d": 15,
+      "h": 12,
       "windows": [
-        { "floor": 2, "face": "south", "offset": -2.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 2, "face": "south", "offset":  2.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 3, "face": "west",  "offset":  0.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 3, "face": "north", "offset": -1.5, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 4, "face": "east",  "offset":  1.0, "width": 2.0, "height": 1.6, "sill": 0.4 }
+        {
+          "floor": 2,
+          "face": "south",
+          "offset": -2.0,
+          "width": 2.0,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 2,
+          "face": "south",
+          "offset": 2.0,
+          "width": 2.0,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 3,
+          "face": "west",
+          "offset": 0.0,
+          "width": 2.0,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 3,
+          "face": "north",
+          "offset": -1.5,
+          "width": 2.0,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 4,
+          "face": "east",
+          "offset": 1.0,
+          "width": 2.0,
+          "height": 1.6,
+          "sill": 0.4
+        }
       ],
-      "balcony": null
+      "balcony": null,
+      "type": "shophouse"
     },
     {
       "id": 1,
       "name": "hotel",
-      "cx": 30, "cz": -25,
-      "w": 15, "d": 12, "h": 24,
+      "cx": 30,
+      "cz": -25,
+      "w": 15,
+      "d": 12,
+      "h": 24,
       "windows": [
-        { "floor": 3, "face": "south", "offset": -3.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 3, "face": "south", "offset":  3.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 5, "face": "west",  "offset": -2.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 6, "face": "north", "offset":  0.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 8, "face": "east",  "offset":  1.0, "width": 2.0, "height": 1.6, "sill": 0.4 }
+        {
+          "floor": 3,
+          "face": "south",
+          "offset": -3.0,
+          "width": 2.0,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 3,
+          "face": "south",
+          "offset": 3.0,
+          "width": 2.0,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 5,
+          "face": "west",
+          "offset": -2.0,
+          "width": 2.0,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 6,
+          "face": "north",
+          "offset": 0.0,
+          "width": 2.0,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 8,
+          "face": "east",
+          "offset": 1.0,
+          "width": 2.0,
+          "height": 1.6,
+          "sill": 0.4
+        }
       ],
-      "balcony": { "floor": 5, "face": "south", "depth": 2.5, "width": 6.0 }
+      "balcony": {
+        "floor": 5,
+        "face": "south",
+        "depth": 2.5,
+        "width": 6.0
+      },
+      "type": "midrise"
     },
     {
       "id": 2,
       "name": "market_hall",
-      "cx": -25, "cz": 20,
-      "w": 20, "d": 15, "h": 6,
+      "cx": -25,
+      "cz": 20,
+      "w": 20,
+      "d": 15,
+      "h": 6,
       "windows": [
-        { "floor": 1, "face": "south", "offset": -5.0, "width": 3.0, "height": 2.0, "sill": 0.3 },
-        { "floor": 1, "face": "south", "offset":  5.0, "width": 3.0, "height": 2.0, "sill": 0.3 },
-        { "floor": 2, "face": "north", "offset": -3.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 2, "face": "east",  "offset":  2.0, "width": 2.0, "height": 1.6, "sill": 0.4 }
+        {
+          "floor": 1,
+          "face": "south",
+          "offset": -5.0,
+          "width": 3.0,
+          "height": 2.0,
+          "sill": 0.3
+        },
+        {
+          "floor": 1,
+          "face": "south",
+          "offset": 5.0,
+          "width": 3.0,
+          "height": 2.0,
+          "sill": 0.3
+        },
+        {
+          "floor": 2,
+          "face": "north",
+          "offset": -3.0,
+          "width": 2.0,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 2,
+          "face": "east",
+          "offset": 2.0,
+          "width": 2.0,
+          "height": 1.6,
+          "sill": 0.4
+        }
       ],
-      "balcony": null
+      "balcony": null,
+      "type": "midrise"
     },
     {
       "id": 3,
       "name": "residential_block",
-      "cx": 20, "cz": 25,
-      "w": 12, "d": 10, "h": 18,
+      "cx": 20,
+      "cz": 25,
+      "w": 12,
+      "d": 10,
+      "h": 18,
       "windows": [
-        { "floor": 2, "face": "south", "offset": -2.0, "width": 1.8, "height": 1.4, "sill": 0.5 },
-        { "floor": 2, "face": "south", "offset":  2.0, "width": 1.8, "height": 1.4, "sill": 0.5 },
-        { "floor": 4, "face": "west",  "offset": -1.0, "width": 1.8, "height": 1.4, "sill": 0.5 },
-        { "floor": 5, "face": "north", "offset":  0.0, "width": 1.8, "height": 1.4, "sill": 0.5 },
-        { "floor": 6, "face": "east",  "offset":  1.5, "width": 1.8, "height": 1.4, "sill": 0.5 }
+        {
+          "floor": 2,
+          "face": "south",
+          "offset": -2.0,
+          "width": 1.8,
+          "height": 1.4,
+          "sill": 0.5
+        },
+        {
+          "floor": 2,
+          "face": "south",
+          "offset": 2.0,
+          "width": 1.8,
+          "height": 1.4,
+          "sill": 0.5
+        },
+        {
+          "floor": 4,
+          "face": "west",
+          "offset": -1.0,
+          "width": 1.8,
+          "height": 1.4,
+          "sill": 0.5
+        },
+        {
+          "floor": 5,
+          "face": "north",
+          "offset": 0.0,
+          "width": 1.8,
+          "height": 1.4,
+          "sill": 0.5
+        },
+        {
+          "floor": 6,
+          "face": "east",
+          "offset": 1.5,
+          "width": 1.8,
+          "height": 1.4,
+          "sill": 0.5
+        }
       ],
-      "balcony": { "floor": 4, "face": "south", "depth": 2.0, "width": 4.0 }
+      "balcony": {
+        "floor": 4,
+        "face": "south",
+        "depth": 2.0,
+        "width": 4.0
+      },
+      "type": "midrise"
     },
     {
       "id": 4,
       "name": "commercial_tower",
-      "cx": -35, "cz": -30,
-      "w": 14, "d": 14, "h": 30,
+      "cx": -35,
+      "cz": -30,
+      "w": 14,
+      "d": 14,
+      "h": 30,
       "windows": [
-        { "floor": 3, "face": "east",  "offset":  0.5, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 5, "face": "south", "offset": -2.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 7, "face": "north", "offset":  2.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 9, "face": "west",  "offset": -1.0, "width": 2.0, "height": 1.6, "sill": 0.4 },
-        { "floor": 10, "face": "south", "offset": 1.0, "width": 2.0, "height": 1.6, "sill": 0.4 }
+        {
+          "floor": 3,
+          "face": "east",
+          "offset": 0.5,
+          "width": 2.0,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 5,
+          "face": "south",
+          "offset": -2.0,
+          "width": 2.0,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 7,
+          "face": "north",
+          "offset": 2.0,
+          "width": 2.0,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 9,
+          "face": "west",
+          "offset": -1.0,
+          "width": 2.0,
+          "height": 1.6,
+          "sill": 0.4
+        },
+        {
+          "floor": 10,
+          "face": "south",
+          "offset": 1.0,
+          "width": 2.0,
+          "height": 1.6,
+          "sill": 0.4
+        }
       ],
-      "balcony": { "floor": 7, "face": "south", "depth": 2.5, "width": 5.0 }
+      "balcony": {
+        "floor": 7,
+        "face": "south",
+        "depth": 2.5,
+        "width": 5.0
+      },
+      "type": "tower"
     },
     {
       "id": 5,
       "name": "corner_shophouse",
-      "cx": 10, "cz": -10,
-      "w": 8, "d": 8, "h": 9,
+      "cx": 10,
+      "cz": -10,
+      "w": 8,
+      "d": 8,
+      "h": 9,
       "windows": [
-        { "floor": 2, "face": "south", "offset": -1.5, "width": 1.6, "height": 1.4, "sill": 0.5 },
-        { "floor": 2, "face": "south", "offset":  1.5, "width": 1.6, "height": 1.4, "sill": 0.5 },
-        { "floor": 3, "face": "west",  "offset":  0.0, "width": 1.6, "height": 1.4, "sill": 0.5 },
-        { "floor": 3, "face": "north", "offset":  1.0, "width": 1.6, "height": 1.4, "sill": 0.5 }
+        {
+          "floor": 2,
+          "face": "south",
+          "offset": -1.5,
+          "width": 1.6,
+          "height": 1.4,
+          "sill": 0.5
+        },
+        {
+          "floor": 2,
+          "face": "south",
+          "offset": 1.5,
+          "width": 1.6,
+          "height": 1.4,
+          "sill": 0.5
+        },
+        {
+          "floor": 3,
+          "face": "west",
+          "offset": 0.0,
+          "width": 1.6,
+          "height": 1.4,
+          "sill": 0.5
+        },
+        {
+          "floor": 3,
+          "face": "north",
+          "offset": 1.0,
+          "width": 1.6,
+          "height": 1.4,
+          "sill": 0.5
+        }
       ],
-      "balcony": null
+      "balcony": null,
+      "type": "shophouse"
     }
   ],
   "survivors": [
-    { "x": -17.0, "y":  3.65, "z": -9.0, "note": "floor 2 — flooded shophouse, near south window" },
-    { "x": -16.0, "y":  6.65, "z": -20.0, "note": "floor 3 — flooded shophouse, west side" },
-    { "x": -11.0, "y":  9.65, "z": -14.0, "note": "floor 4 — flooded shophouse, east window" },
-    { "x":  30.0, "y": 12.65, "z": -18.0, "note": "floor 5 — hotel, on south balcony" },
-    { "x":  30.0, "y": 15.65, "z": -29.0, "note": "floor 6 — hotel, inside at north window" },
-    { "x": -28.0, "y":  3.65, "z":  14.0, "note": "floor 2 — market hall, upper level near east window" },
-    { "x":  18.0, "y":  3.65, "z":  28.0, "note": "floor 2 — residential block, south window" },
-    { "x":  20.0, "y":  9.65, "z":  31.0, "note": "floor 4 — residential block, on south balcony" },
-    { "x": -35.0, "y": 18.65, "z": -22.0, "note": "floor 7 — commercial tower, on south balcony" },
-    { "x":  11.5, "y":  3.65, "z": -7.0, "note": "floor 2 — corner shophouse, south window" }
+    {
+      "x": -17.0,
+      "y": 3.65,
+      "z": -9.0,
+      "note": "floor 2 \u2014 flooded shophouse, near south window"
+    },
+    {
+      "x": -16.0,
+      "y": 6.65,
+      "z": -20.0,
+      "note": "floor 3 \u2014 flooded shophouse, west side"
+    },
+    {
+      "x": -11.0,
+      "y": 9.65,
+      "z": -14.0,
+      "note": "floor 4 \u2014 flooded shophouse, east window"
+    },
+    {
+      "x": 30.0,
+      "y": 12.65,
+      "z": -18.0,
+      "note": "floor 5 \u2014 hotel, on south balcony"
+    },
+    {
+      "x": 30.0,
+      "y": 15.65,
+      "z": -29.0,
+      "note": "floor 6 \u2014 hotel, inside at north window"
+    },
+    {
+      "x": -28.0,
+      "y": 3.65,
+      "z": 14.0,
+      "note": "floor 2 \u2014 market hall, upper level near east window"
+    },
+    {
+      "x": 18.0,
+      "y": 3.65,
+      "z": 28.0,
+      "note": "floor 2 \u2014 residential block, south window"
+    },
+    {
+      "x": 20.0,
+      "y": 9.65,
+      "z": 31.0,
+      "note": "floor 4 \u2014 residential block, on south balcony"
+    },
+    {
+      "x": -35.0,
+      "y": 18.65,
+      "z": -22.0,
+      "note": "floor 7 \u2014 commercial tower, on south balcony"
+    },
+    {
+      "x": 11.5,
+      "y": 3.65,
+      "z": -7.0,
+      "note": "floor 2 \u2014 corner shophouse, south window"
+    }
   ],
-  "trees": []
+  "trees": [],
+  "environment": {
+    "colors": {
+      "road": "#2c2c32",
+      "line": "#D7CDA5",
+      "park": "#286C34",
+      "trunk": "#5F4126",
+      "leaf": "#267632",
+      "canal": "#1a4a7a"
+    },
+    "roads": {
+      "strips": [
+        [
+          0,
+          0,
+          200,
+          8
+        ],
+        [
+          0,
+          0,
+          8,
+          200
+        ],
+        [
+          0,
+          -45,
+          200,
+          5
+        ],
+        [
+          0,
+          45,
+          200,
+          5
+        ],
+        [
+          -45,
+          0,
+          5,
+          200
+        ],
+        [
+          45,
+          0,
+          5,
+          200
+        ]
+      ],
+      "lane_strips": [
+        [
+          0,
+          0,
+          200,
+          0.14
+        ],
+        [
+          0,
+          0,
+          0.14,
+          200
+        ]
+      ]
+    },
+    "canal": {
+      "position": [
+        0,
+        0.06,
+        -88
+      ],
+      "width": 6,
+      "opacity": 0.9
+    },
+    "parks": [
+      [
+        0,
+        66,
+        18,
+        10
+      ],
+      [
+        65,
+        0,
+        10,
+        18
+      ],
+      [
+        -65,
+        40,
+        8,
+        8
+      ],
+      [
+        0,
+        -70,
+        14,
+        8
+      ]
+    ],
+    "trees": {
+      "positions": [
+        [
+          -38,
+          5
+        ],
+        [
+          -30,
+          5
+        ],
+        [
+          -6,
+          5
+        ],
+        [
+          22,
+          5
+        ],
+        [
+          30,
+          5
+        ],
+        [
+          38,
+          5
+        ],
+        [
+          -38,
+          -5
+        ],
+        [
+          -30,
+          -5
+        ],
+        [
+          -6,
+          -5
+        ],
+        [
+          22,
+          -5
+        ],
+        [
+          30,
+          -5
+        ],
+        [
+          38,
+          -5
+        ],
+        [
+          5,
+          -38
+        ],
+        [
+          5,
+          -30
+        ],
+        [
+          5,
+          38
+        ],
+        [
+          -5,
+          -38
+        ],
+        [
+          -5,
+          -30
+        ],
+        [
+          -5,
+          38
+        ],
+        [
+          -20,
+          43
+        ],
+        [
+          -10,
+          43
+        ],
+        [
+          10,
+          43
+        ],
+        [
+          20,
+          43
+        ],
+        [
+          30,
+          43
+        ],
+        [
+          -20,
+          -47
+        ],
+        [
+          -10,
+          -47
+        ],
+        [
+          10,
+          -47
+        ],
+        [
+          20,
+          -47
+        ],
+        [
+          47,
+          -12
+        ],
+        [
+          47,
+          0
+        ],
+        [
+          47,
+          12
+        ],
+        [
+          -47,
+          -12
+        ],
+        [
+          -47,
+          0
+        ],
+        [
+          -47,
+          12
+        ],
+        [
+          -6,
+          64
+        ],
+        [
+          0,
+          66
+        ],
+        [
+          6,
+          64
+        ],
+        [
+          64,
+          -6
+        ],
+        [
+          66,
+          0
+        ],
+        [
+          64,
+          6
+        ],
+        [
+          -70,
+          20
+        ],
+        [
+          -70,
+          -20
+        ],
+        [
+          70,
+          20
+        ],
+        [
+          70,
+          -20
+        ],
+        [
+          0,
+          78
+        ],
+        [
+          0,
+          -78
+        ]
+      ],
+      "trunk_size": [
+        0.2,
+        2.4,
+        0.2
+      ],
+      "leaf_radius": 0.8,
+      "trunk_y": 1.2,
+      "leaf_y": 3.0
+    },
+    "decor_buildings": [
+      {
+        "type": "shophouse",
+        "cx": 34,
+        "cz": 38,
+        "w": 4,
+        "d": 12,
+        "h": 9,
+        "body_color": "#F5E6C8",
+        "roof_color": "#E8D5B0"
+      },
+      {
+        "type": "shophouse",
+        "cx": 38,
+        "cz": 38,
+        "w": 4,
+        "d": 12,
+        "h": 12,
+        "body_color": "#B5D4E8",
+        "roof_color": "#A0C4D8"
+      },
+      {
+        "type": "shophouse",
+        "cx": -42,
+        "cz": 38,
+        "w": 4,
+        "d": 12,
+        "h": 12,
+        "body_color": "#F0E0A8",
+        "roof_color": "#F5E8A0"
+      },
+      {
+        "type": "shophouse",
+        "cx": -46,
+        "cz": 38,
+        "w": 4,
+        "d": 12,
+        "h": 9,
+        "body_color": "#E8B5B0",
+        "roof_color": "#D4A09A"
+      },
+      {
+        "type": "shophouse",
+        "cx": -50,
+        "cz": 38,
+        "w": 4,
+        "d": 12,
+        "h": 12,
+        "body_color": "#B0D8C0",
+        "roof_color": "#A0C8B0"
+      },
+      {
+        "type": "shophouse",
+        "cx": -6,
+        "cz": -42,
+        "w": 4,
+        "d": 12,
+        "h": 12,
+        "body_color": "#C2DDE8",
+        "roof_color": "#B5D4E8"
+      },
+      {
+        "type": "shophouse",
+        "cx": -10,
+        "cz": -42,
+        "w": 4,
+        "d": 12,
+        "h": 9,
+        "body_color": "#F5E6C8",
+        "roof_color": "#E8D5B0"
+      },
+      {
+        "type": "shophouse",
+        "cx": -14,
+        "cz": -42,
+        "w": 4,
+        "d": 12,
+        "h": 12,
+        "body_color": "#E8B5B0",
+        "roof_color": "#D4A09A"
+      },
+      {
+        "type": "shophouse",
+        "cx": -18,
+        "cz": -42,
+        "w": 4,
+        "d": 12,
+        "h": 9,
+        "body_color": "#F5E8A0",
+        "roof_color": "#E8DC90"
+      },
+      {
+        "type": "shophouse",
+        "cx": -22,
+        "cz": -42,
+        "w": 4,
+        "d": 12,
+        "h": 12,
+        "body_color": "#B0D8C0",
+        "roof_color": "#A0C8B0"
+      },
+      {
+        "type": "shophouse",
+        "cx": 6,
+        "cz": -42,
+        "w": 4,
+        "d": 12,
+        "h": 9,
+        "body_color": "#E8E4E0",
+        "roof_color": "#D8D4D0"
+      },
+      {
+        "type": "shophouse",
+        "cx": 10,
+        "cz": -42,
+        "w": 4,
+        "d": 12,
+        "h": 12,
+        "body_color": "#C89478",
+        "roof_color": "#B88468"
+      },
+      {
+        "type": "shophouse",
+        "cx": 14,
+        "cz": -42,
+        "w": 4,
+        "d": 12,
+        "h": 9,
+        "body_color": "#F0C4BE",
+        "roof_color": "#E8B5B0"
+      },
+      {
+        "type": "shophouse",
+        "cx": 18,
+        "cz": -42,
+        "w": 4,
+        "d": 12,
+        "h": 12,
+        "body_color": "#D4A09A",
+        "roof_color": "#C89488"
+      },
+      {
+        "type": "shophouse",
+        "cx": 42,
+        "cz": -12,
+        "w": 12,
+        "d": 4,
+        "h": 9,
+        "body_color": "#F5E6C8",
+        "roof_color": "#E8D5B0"
+      },
+      {
+        "type": "shophouse",
+        "cx": 42,
+        "cz": -8,
+        "w": 12,
+        "d": 4,
+        "h": 12,
+        "body_color": "#B5D4E8",
+        "roof_color": "#A0C4D8"
+      },
+      {
+        "type": "shophouse",
+        "cx": 42,
+        "cz": -4,
+        "w": 12,
+        "d": 4,
+        "h": 9,
+        "body_color": "#F5E8A0",
+        "roof_color": "#E8DC90"
+      },
+      {
+        "type": "shophouse",
+        "cx": 42,
+        "cz": 0,
+        "w": 12,
+        "d": 4,
+        "h": 12,
+        "body_color": "#E8B5B0",
+        "roof_color": "#D4A09A"
+      },
+      {
+        "type": "shophouse",
+        "cx": 42,
+        "cz": 4,
+        "w": 12,
+        "d": 4,
+        "h": 9,
+        "body_color": "#B0D8C0",
+        "roof_color": "#A0C8B0"
+      },
+      {
+        "type": "shophouse",
+        "cx": 42,
+        "cz": 8,
+        "w": 12,
+        "d": 4,
+        "h": 12,
+        "body_color": "#E8E4E0",
+        "roof_color": "#D8D4D0"
+      },
+      {
+        "type": "shophouse",
+        "cx": 42,
+        "cz": 12,
+        "w": 12,
+        "d": 4,
+        "h": 9,
+        "body_color": "#C89478",
+        "roof_color": "#B88468"
+      },
+      {
+        "type": "shophouse",
+        "cx": -50,
+        "cz": -12,
+        "w": 12,
+        "d": 4,
+        "h": 12,
+        "body_color": "#C2DDE8",
+        "roof_color": "#B5D4E8"
+      },
+      {
+        "type": "shophouse",
+        "cx": -50,
+        "cz": -8,
+        "w": 12,
+        "d": 4,
+        "h": 9,
+        "body_color": "#F0C4BE",
+        "roof_color": "#E8B5B0"
+      },
+      {
+        "type": "shophouse",
+        "cx": -50,
+        "cz": -4,
+        "w": 12,
+        "d": 4,
+        "h": 12,
+        "body_color": "#F0E0A8",
+        "roof_color": "#F5E8A0"
+      },
+      {
+        "type": "shophouse",
+        "cx": -50,
+        "cz": 0,
+        "w": 12,
+        "d": 4,
+        "h": 9,
+        "body_color": "#D4A09A",
+        "roof_color": "#C89488"
+      },
+      {
+        "type": "shophouse",
+        "cx": -50,
+        "cz": 4,
+        "w": 12,
+        "d": 4,
+        "h": 12,
+        "body_color": "#C0E0D0",
+        "roof_color": "#B0D8C0"
+      },
+      {
+        "type": "shophouse",
+        "cx": -50,
+        "cz": 8,
+        "w": 12,
+        "d": 4,
+        "h": 9,
+        "body_color": "#F0ECE8",
+        "roof_color": "#E8E4E0"
+      },
+      {
+        "type": "shophouse",
+        "cx": 6,
+        "cz": 52,
+        "w": 4,
+        "d": 12,
+        "h": 9,
+        "body_color": "#F5E6C8",
+        "roof_color": "#E8D5B0"
+      },
+      {
+        "type": "shophouse",
+        "cx": 10,
+        "cz": 52,
+        "w": 4,
+        "d": 12,
+        "h": 12,
+        "body_color": "#B5D4E8",
+        "roof_color": "#A0C4D8"
+      },
+      {
+        "type": "shophouse",
+        "cx": 14,
+        "cz": 52,
+        "w": 4,
+        "d": 12,
+        "h": 9,
+        "body_color": "#E8B5B0",
+        "roof_color": "#D4A09A"
+      },
+      {
+        "type": "shophouse",
+        "cx": 18,
+        "cz": 52,
+        "w": 4,
+        "d": 12,
+        "h": 12,
+        "body_color": "#F5E8A0",
+        "roof_color": "#E8DC90"
+      },
+      {
+        "type": "shophouse",
+        "cx": 22,
+        "cz": 52,
+        "w": 4,
+        "d": 12,
+        "h": 9,
+        "body_color": "#B0D8C0",
+        "roof_color": "#A0C8B0"
+      },
+      {
+        "type": "shophouse",
+        "cx": -6,
+        "cz": 52,
+        "w": 4,
+        "d": 12,
+        "h": 12,
+        "body_color": "#E8E4E0",
+        "roof_color": "#D8D4D0"
+      },
+      {
+        "type": "shophouse",
+        "cx": -10,
+        "cz": 52,
+        "w": 4,
+        "d": 12,
+        "h": 9,
+        "body_color": "#F0C4BE",
+        "roof_color": "#E8B5B0"
+      },
+      {
+        "type": "shophouse",
+        "cx": -14,
+        "cz": 52,
+        "w": 4,
+        "d": 12,
+        "h": 12,
+        "body_color": "#C2DDE8",
+        "roof_color": "#B5D4E8"
+      },
+      {
+        "type": "shophouse",
+        "cx": -6,
+        "cz": -52,
+        "w": 4,
+        "d": 12,
+        "h": 12,
+        "body_color": "#C89478",
+        "roof_color": "#B88468"
+      },
+      {
+        "type": "shophouse",
+        "cx": -10,
+        "cz": -52,
+        "w": 4,
+        "d": 12,
+        "h": 9,
+        "body_color": "#E8E4E0",
+        "roof_color": "#D8D4D0"
+      },
+      {
+        "type": "shophouse",
+        "cx": -14,
+        "cz": -52,
+        "w": 4,
+        "d": 12,
+        "h": 12,
+        "body_color": "#F0C4BE",
+        "roof_color": "#E8B5B0"
+      },
+      {
+        "type": "shophouse",
+        "cx": -18,
+        "cz": -52,
+        "w": 4,
+        "d": 12,
+        "h": 9,
+        "body_color": "#D4A09A",
+        "roof_color": "#C89488"
+      },
+      {
+        "type": "shophouse",
+        "cx": 42,
+        "cz": -52,
+        "w": 4,
+        "d": 12,
+        "h": 9,
+        "body_color": "#F5E6C8",
+        "roof_color": "#E8D5B0"
+      },
+      {
+        "type": "shophouse",
+        "cx": 46,
+        "cz": -52,
+        "w": 4,
+        "d": 12,
+        "h": 12,
+        "body_color": "#B5D4E8",
+        "roof_color": "#A0C4D8"
+      },
+      {
+        "type": "midrise",
+        "cx": 55,
+        "cz": 45,
+        "w": 16,
+        "d": 14,
+        "h": 24,
+        "body_color": "#466291",
+        "roof_color": "#5A76A5"
+      },
+      {
+        "type": "midrise",
+        "cx": -55,
+        "cz": -50,
+        "w": 14,
+        "d": 14,
+        "h": 21,
+        "body_color": "#374E76",
+        "roof_color": "#4B628A"
+      },
+      {
+        "type": "midrise",
+        "cx": 50,
+        "cz": -50,
+        "w": 14,
+        "d": 14,
+        "h": 30,
+        "body_color": "#303E52",
+        "roof_color": "#445266"
+      },
+      {
+        "type": "midrise",
+        "cx": -55,
+        "cz": 45,
+        "w": 16,
+        "d": 14,
+        "h": 21,
+        "body_color": "#52769E",
+        "roof_color": "#668AB2"
+      },
+      {
+        "type": "midrise",
+        "cx": 60,
+        "cz": 0,
+        "w": 14,
+        "d": 16,
+        "h": 15,
+        "body_color": "#A86C48",
+        "roof_color": "#B9805A"
+      },
+      {
+        "type": "midrise",
+        "cx": -60,
+        "cz": 0,
+        "w": 14,
+        "d": 16,
+        "h": 18,
+        "body_color": "#34486E",
+        "roof_color": "#485C82"
+      },
+      {
+        "type": "midrise",
+        "cx": 0,
+        "cz": 60,
+        "w": 18,
+        "d": 14,
+        "h": 18,
+        "body_color": "#768A98",
+        "roof_color": "#8A9EAC"
+      },
+      {
+        "type": "midrise",
+        "cx": 0,
+        "cz": -62,
+        "w": 16,
+        "d": 12,
+        "h": 15,
+        "body_color": "#CDBEA0",
+        "roof_color": "#DACDAF"
+      },
+      {
+        "type": "midrise",
+        "cx": 65,
+        "cz": 25,
+        "w": 12,
+        "d": 12,
+        "h": 18,
+        "body_color": "#94483E",
+        "roof_color": "#A55A4E"
+      },
+      {
+        "type": "midrise",
+        "cx": -65,
+        "cz": -25,
+        "w": 10,
+        "d": 12,
+        "h": 21,
+        "body_color": "#3C5070",
+        "roof_color": "#506484"
+      },
+      {
+        "type": "midrise",
+        "cx": 65,
+        "cz": -25,
+        "w": 12,
+        "d": 12,
+        "h": 15,
+        "body_color": "#628E73",
+        "roof_color": "#76A287"
+      },
+      {
+        "type": "midrise",
+        "cx": -65,
+        "cz": 25,
+        "w": 12,
+        "d": 10,
+        "h": 15,
+        "body_color": "#B2946E",
+        "roof_color": "#C3A580"
+      },
+      {
+        "type": "midrise",
+        "cx": 75,
+        "cz": 0,
+        "w": 10,
+        "d": 10,
+        "h": 12,
+        "body_color": "#C6B696",
+        "roof_color": "#D4C6A8"
+      },
+      {
+        "type": "midrise",
+        "cx": -75,
+        "cz": 0,
+        "w": 10,
+        "d": 10,
+        "h": 12,
+        "body_color": "#B2AFA5",
+        "roof_color": "#C0BEB4"
+      }
+    ]
+  }
 }
