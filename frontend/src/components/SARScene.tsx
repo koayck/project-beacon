@@ -1039,12 +1039,14 @@ function TopStatusBar({
   survivors,
   activeWorld,
   onWorldChange,
+  agentMetrics,
 }: {
   selectMode: boolean
   floodLevel: number
   survivors: SurvivorPoint[]
   activeWorld: 1 | 2
   onWorldChange: (world: 1 | 2) => void
+  agentMetrics?: { ttft: number | null; tps: number | null; busy: boolean; elapsed: number }
 }) {
   const submerged = survivors.filter(p => p.y < floodLevel - 0.2).length
 
@@ -1134,6 +1136,20 @@ function TopStatusBar({
 
       {/* Right: Status indicators */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+        {/* ADK metrics */}
+        <span style={{ color: '#5a6a7a', letterSpacing: 0.5 }}>ADK / Gemini 2.5 Flash</span>
+        {agentMetrics?.ttft != null && (
+          <span style={{ color: '#5af' }} title="Time to First Token">
+            <span style={{ color: '#5a6a7a' }}>TTFT </span>
+            {agentMetrics.ttft < 1000 ? `${agentMetrics.ttft}ms` : `${(agentMetrics.ttft / 1000).toFixed(1)}s`}
+          </span>
+        )}
+        {agentMetrics?.tps != null && (
+          <span style={{ color: '#5af' }} title="Tokens per Second">
+            <span style={{ color: '#5a6a7a' }}>TPS </span>{agentMetrics.tps}
+          </span>
+        )}
+        <span style={{ color: '#3a4a5a', fontSize: 14 }}>|</span>
         {selectMode && (
           <span style={{
             color: '#ff9933',
@@ -1792,17 +1808,6 @@ function IntelCard({
           {deliveredCount > 0 && <StatCounter value={deliveredCount} label="SUPPLIED" color="#44ccff" />}
         </div>
 
-        {/* Sensor context */}
-        <div style={{
-          color: '#7a8a9a',
-          marginBottom: 8,
-          fontSize: 11,
-          display: 'flex',
-          justifyContent: 'space-between',
-        }}>
-          <span>SENSOR @ ({dronePos.x.toFixed(1)}, {dronePos.y.toFixed(1)}, {dronePos.z.toFixed(1)})</span>
-          <span style={{ color: '#8899aa' }}>{SURVIVOR_SENSOR_RANGE}m</span>
-        </div>
       </div>
 
       {/* Scrollable survivor list — capped to ~3 visible items */}
@@ -2445,6 +2450,7 @@ export default function SARScene() {
   const [deliveringTo, setDeliveringTo] = useState<Set<string>>(new Set())
   const [activities, setActivities] = useState<ActivityItem[]>([])
   const [agentBusy, setAgentBusy] = useState(false)
+  const [agentMetrics, setAgentMetrics] = useState<{ ttft: number | null; tps: number | null; busy: boolean; elapsed: number }>({ ttft: null, tps: null, busy: false, elapsed: 0 })
   const [hasCargo, setHasCargo] = useState(false)
   const [cargoByDrone, setCargoByDrone] = useState<Set<string>>(new Set())
   const [activeThrow, setActiveThrow] = useState<{ from: THREE.Vector3; to: SurvivorPoint } | null>(null)
@@ -2549,6 +2555,20 @@ export default function SARScene() {
         }, null as { building: WorldBuilding; dist: number } | null)
         : null
 
+      // Exact coordinate match: allow re-matching survivors already in deliveringTo
+      // so that deliveries initiated by handleSendSupplies complete their throw animation
+      // when the backend supply dispatch arrives for the same survivor.
+      const exactDetectedTarget = detectedSurvivorsRef.current.find((survivor) => {
+        const key = survivorKey(survivor)
+        return (
+          !deliveredTo.has(key)
+          && !reservedKeys.has(key)
+          && distanceBetweenPoints(survivor, dispatchSurvivor) <= 0.8
+        )
+      })
+
+      // For building-based and fallback matching, exclude deliveringTo to prevent
+      // double dispatches to the same survivor from different triggers.
       const availableDetected = detectedSurvivorsRef.current.filter((survivor) => {
         const key = survivorKey(survivor)
         return (
@@ -2558,9 +2578,6 @@ export default function SARScene() {
         )
       })
 
-      const exactDetectedTarget = availableDetected.find((survivor) => (
-        distanceBetweenPoints(survivor, dispatchSurvivor) <= 0.8
-      ))
       const targetByBuilding = nearestBuilding
         ? availableDetected.find((survivor) => (
           survivorAssociatedBuildingId(simBuildings, worldBuildings, survivor) === nearestBuilding.building.id
@@ -3321,6 +3338,7 @@ export default function SARScene() {
         survivors={survivorPositions}
         activeWorld={activeWorld}
         onWorldChange={handleWorldChange}
+        agentMetrics={agentMetrics}
       />
 
       {/* Left panel — Mission Log */}
@@ -3440,6 +3458,7 @@ export default function SARScene() {
           setPendingScanPrompt(null)
           setPendingScanAssetId(null)
         }}
+        onMetricsChange={setAgentMetrics}
       />
     </div>
   )
