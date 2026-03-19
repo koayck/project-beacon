@@ -159,6 +159,10 @@ export async function setFleetSpeed(speed: number): Promise<void> {
   if (!res.ok) throw new Error(`Fleet speed failed: ${res.status}`)
 }
 
+export async function switchWorld(worldId: number): Promise<void> {
+  await fetch(`${BASE}/world/${worldId}`, { method: 'POST' })
+}
+
 export async function healthCheck(): Promise<boolean> {
   try {
     const res = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(2000) })

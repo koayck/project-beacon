@@ -7,7 +7,7 @@ import * as THREE from 'three'
 
 interface WorldWindowLayout {
   floor: number
-  face: 'north' | 'south' | 'west' | 'east'
+  face: 'north' | 'south' | 'west' | 'east' | 'top'
   offset: number
   width: number
   height: number
@@ -16,7 +16,7 @@ interface WorldWindowLayout {
 
 interface WorldBalconyLayout {
   floor: number
-  face: 'north' | 'south' | 'west' | 'east'
+  face: 'north' | 'south' | 'west' | 'east' | 'top'
   depth: number
   width: number
 }
@@ -839,14 +839,23 @@ export function BasePad() {
     [ pylonOffset, 0,  pylonOffset],
   ]
 
+  const PLATFORM_HEIGHT = 1.8  // raised above flood level (1.4m)
+  const topY = PLATFORM_HEIGHT + PAD_HEIGHT  // surface level for decals and rings
+
   return (
-    <group ref={groupRef} position={[0, 0.04, 0]}>
-      <mesh position={[0, PAD_HEIGHT / 2, 0]}>
+    <group ref={groupRef} position={[0, 0, 0]}>
+      {/* Raised concrete platform to keep pad above flood */}
+      <mesh position={[0, PLATFORM_HEIGHT / 2, 0]}>
+        <cylinderGeometry args={[PAD_RADIUS + 0.6, PAD_RADIUS + 1.0, PLATFORM_HEIGHT, 8]} />
+        <meshStandardMaterial color="#22262e" roughness={0.8} metalness={0.2} />
+      </mesh>
+      {/* Landing surface */}
+      <mesh position={[0, PLATFORM_HEIGHT + PAD_HEIGHT / 2, 0]}>
         <cylinderGeometry args={[PAD_RADIUS, PAD_RADIUS, PAD_HEIGHT, 8]} />
         <meshStandardMaterial color="#1a1d24" roughness={0.7} metalness={0.3} />
       </mesh>
 
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, PAD_HEIGHT + 0.02, 0]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, topY + 0.02, 0]}>
         <ringGeometry args={[2.6, 3.4, 32]} />
         <meshStandardMaterial
           color="#0e1118"
@@ -857,7 +866,7 @@ export function BasePad() {
       </mesh>
 
       {[0, Math.PI / 2].map((rot, i) => (
-        <mesh key={`cross-${i}`} position={[0, PAD_HEIGHT + 0.03, 0]} rotation={[-Math.PI / 2, rot, 0]}>
+        <mesh key={`cross-${i}`} position={[0, topY + 0.03, 0]} rotation={[-Math.PI / 2, rot, 0]}>
           <planeGeometry args={[4.8, 0.12]} />
           <meshStandardMaterial
             color="#2a5a7a"
@@ -870,7 +879,7 @@ export function BasePad() {
         </mesh>
       ))}
 
-      <mesh position={[0, PAD_HEIGHT + 0.06, 0]}>
+      <mesh position={[0, topY + 0.06, 0]}>
         <cylinderGeometry args={[0.35, 0.35, 0.06, 16]} />
         <meshStandardMaterial
           color="#00ccff"
@@ -880,7 +889,7 @@ export function BasePad() {
       </mesh>
 
       {[1.6, 3.8].map((r, i) => (
-        <mesh key={`ring-${i}`} rotation={[-Math.PI / 2, 0, 0]} position={[0, PAD_HEIGHT + 0.025, 0]}>
+        <mesh key={`ring-${i}`} rotation={[-Math.PI / 2, 0, 0]} position={[0, topY + 0.025, 0]}>
           <ringGeometry args={[r - 0.04, r + 0.04, 48]} />
           <meshStandardMaterial
             color="#1e4060"
@@ -893,7 +902,7 @@ export function BasePad() {
         </mesh>
       ))}
 
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, PAD_HEIGHT + 0.025, 0]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, topY + 0.025, 0]}>
         <ringGeometry args={[4.95, 5.05, 64]} />
         <meshStandardMaterial
           color="#355a7a"
@@ -905,7 +914,7 @@ export function BasePad() {
         />
       </mesh>
 
-      <mesh ref={scanRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, PAD_HEIGHT + 0.04, 0]}>
+      <mesh ref={scanRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, topY + 0.04, 0]}>
         <ringGeometry args={[0.9, 1.15, 40]} />
         <meshStandardMaterial
           color="#6ec8ff"
@@ -918,7 +927,7 @@ export function BasePad() {
       </mesh>
 
       {pylonPositions.map(([x, y, z], i) => (
-        <group key={`pylon-${i}`} position={[x, y, z]}>
+        <group key={`pylon-${i}`} position={[x, y + PLATFORM_HEIGHT, z]}>
           <mesh
             ref={el => {
               if (el) beaconRefs.current[i] = el
@@ -937,7 +946,7 @@ export function BasePad() {
         </group>
       ))}
 
-      <group ref={ringsRef} position={[0, PAD_HEIGHT + 0.03, 0]}>
+      <group ref={ringsRef} position={[0, topY + 0.03, 0]}>
         {Array.from({ length: NUM_PULSE_RINGS }, (_, i) => (
           <mesh key={`pulse-${i}`} rotation={[-Math.PI / 2, 0, 0]}>
             <ringGeometry args={[2.8, 2.95, 48]} />
