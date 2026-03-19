@@ -23,11 +23,20 @@ FLOOR_SLAB_THICKNESS: float = 0.2
 
 
 @dataclass(frozen=True)
+class SimBalcony:
+    floor: int
+    face: "WindowFace"
+    depth: float
+    width: float
+
+
+@dataclass(frozen=True)
 class SimBuilding:
     id: int
     cx: float; cz: float
     w: float;  d: float; h: float
     windows: tuple["SimWindowAperture", ...] = ()
+    balcony: SimBalcony | None = None
 
     @property
     def min_x(self): return self.cx - self.w/2
@@ -215,6 +224,15 @@ def load_world(world_id: int = 1) -> None:
 
     BUILDINGS.clear()
     for b in data["buildings"]:
+        balcony_raw = b.get("balcony")
+        balcony = None
+        if balcony_raw:
+            balcony = SimBalcony(
+                floor=balcony_raw["floor"],
+                face=balcony_raw["face"],
+                depth=float(balcony_raw["depth"]),
+                width=float(balcony_raw["width"]),
+            )
         BUILDINGS.append(SimBuilding(
             id=b["id"],
             cx=float(b["cx"]),
@@ -223,6 +241,7 @@ def load_world(world_id: int = 1) -> None:
             d=float(b["d"]),
             h=float(b["h"]),
             windows=_parse_windows(b),
+            balcony=balcony,
         ))
 
     SURVIVORS.clear()
