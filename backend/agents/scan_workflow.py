@@ -240,7 +240,15 @@ def finalize_scan(tool_context: ToolContext) -> dict:
     """
     Signal that the scan workflow is complete. Used by the final agent to
     cleanly terminate the LoopAgent after all buildings have been scanned.
+    Generates the aggregated report before escalating so it's always emitted
+    even if the report agent is skipped by escalation propagation.
     """
+    summary_emitted = bool(tool_context.state.get("scan_summary_emitted", False))
+    if not summary_emitted:
+        report = build_aggregated_scan_report(tool_context)
+        tool_context.state["scan_summary_emitted"] = True
+        tool_context.actions.escalate = True
+        return {"done": True, "report": report.get("summary", "")}
     tool_context.actions.escalate = True
     return {"done": True}
 
@@ -386,7 +394,10 @@ async def pick_next_building_for_asset(asset_id: str, tool_context: ToolContext)
     except (json.JSONDecodeError, TypeError):
         done_count = {}
 
-    if asset_id not in active_assets:
+    # Gracefully handle state not yet propagated from prep agent.
+    # If active_assets is empty but we have an initial building, proceed anyway.
+    has_initial = isinstance(initial_by_asset.get(asset_id), dict)
+    if asset_id not in active_assets and not has_initial and not pending:
         tool_context.actions.escalate = True
         return {"done": True, "asset_id": asset_id, "total_scanned": 0}
 
@@ -431,31 +442,47 @@ async def pick_next_building_for_asset(asset_id: str, tool_context: ToolContext)
                 remaining = len(pending)
 
         if building is None:
-            tool_context.state["scan_claimed_initial_by_asset"] = json.dumps(claimed_initial)
-            tool_context.state["scan_pending_buildings"] = json.dumps(pending)
-            tool_context.actions.escalate = True
-            raw_results = tool_context.state.get("scan_results_list", "[]")
-            try:
-                all_results = json.loads(raw_results) if isinstance(raw_results, str) else raw_results
-            except (json.JSONDecodeError, TypeError):
-                all_results = []
-            total_buildings = int(tool_context.state.get("scan_total_buildings", 0) or 0)
-            summary_emitted = bool(tool_context.state.get("scan_summary_emitted", False))
-            if (
-                not summary_emitted
-                and total_buildings > 0
-                and isinstance(all_results, list)
-                and len(all_results) >= total_buildings
-            ):
-                report = build_aggregated_scan_report(tool_context)
-                tool_context.state["scan_summary_emitted"] = True
-                return {
-                    "done": True,
-                    "asset_id": asset_id,
-                    "total_scanned": scanned,
-                    "message": report.get("summary", "Scan complete."),
-                }
-            return {"done": True, "asset_id": asset_id, "total_scanned": scanned}
+            # Safety: if this drone hasn't scanned anything yet but had an initial
+            # assignment, the state may not have propagated. Re-read the initial
+            # assignment one more time before giving up.
+            if scanned == 0 and not claimed:
+                fresh_initial_raw = tool_context.state.get("scan_initial_building_by_asset", "{}")
+                try:
+                    fresh_initial = json.loads(fresh_initial_raw) if isinstance(fresh_initial_raw, str) else fresh_initial_raw
+                except (json.JSONDecodeError, TypeError):
+                    fresh_initial = {}
+                retry_candidate = fresh_initial.get(asset_id)
+                if isinstance(retry_candidate, dict):
+                    claimed_initial[asset_id] = True
+                    building = retry_candidate
+                    remaining = len(pending)
+
+            if building is None:
+                tool_context.state["scan_claimed_initial_by_asset"] = json.dumps(claimed_initial)
+                tool_context.state["scan_pending_buildings"] = json.dumps(pending)
+                tool_context.actions.escalate = True
+                raw_results = tool_context.state.get("scan_results_list", "[]")
+                try:
+                    all_results = json.loads(raw_results) if isinstance(raw_results, str) else raw_results
+                except (json.JSONDecodeError, TypeError):
+                    all_results = []
+                total_buildings = int(tool_context.state.get("scan_total_buildings", 0) or 0)
+                summary_emitted = bool(tool_context.state.get("scan_summary_emitted", False))
+                if (
+                    not summary_emitted
+                    and total_buildings > 0
+                    and isinstance(all_results, list)
+                    and len(all_results) >= total_buildings
+                ):
+                    report = build_aggregated_scan_report(tool_context)
+                    tool_context.state["scan_summary_emitted"] = True
+                    return {
+                        "done": True,
+                        "asset_id": asset_id,
+                        "total_scanned": scanned,
+                        "message": report.get("summary", "Scan complete."),
+                    }
+                return {"done": True, "asset_id": asset_id, "total_scanned": scanned}
 
         next_scanned = scanned + 1
         done_count[asset_id] = next_scanned
@@ -577,7 +604,8 @@ SWEEP SCAN PROCEDURE
 4. Call save_scan_result(result=<compact_string>).
 5. Check if this is the LAST building ("Remaining: 0" in current_building):
    - YES: Call finalize_scan() to terminate the LoopAgent cleanly.
-     Output "SCAN_BATCH_COMPLETE" on its own line.
+     If finalize_scan returns a "report" field, output that report verbatim.
+     Otherwise output "SCAN_BATCH_COMPLETE".
    - NO: Output only "Result saved for building at (x=<x>, z=<z>)."
 """
 
@@ -752,11 +780,11 @@ def _set_active_parallel_loops(asset_ids: list[str]) -> None:
 
 # ── Final report agent ─────────────────────────────────────────────────────────
 
-_REPORT_INSTRUCTION = """You MUST produce the final consolidated scan report. This is mandatory.
+_REPORT_INSTRUCTION = """You produce the final consolidated scan report — but ONLY if it hasn't been emitted yet.
 
-1. Call build_aggregated_scan_report() — you MUST call this tool.
-2. Output the value of result["summary"] verbatim. Do NOT skip this step.
-3. Do NOT add extra text, markdown, or explanation — just the summary string.
+1. Check: if the previous agent output already contains "AREA SCAN COMPLETE", output exactly "Report emitted." and stop. Do NOT call any tool.
+2. Otherwise: call build_aggregated_scan_report() and output result["summary"] verbatim.
+3. Do NOT add extra text, markdown, or explanation.
 """
 
 _scan_report_agent = Agent(
