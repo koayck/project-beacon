@@ -275,6 +275,13 @@ async def assign_drones_to_buildings(tool_context: ToolContext) -> dict:
     from backend.services.drone_control import assign_fleet_to_buildings
 
     raw = tool_context.state.get("scan_buildings", "{}")
+    if isinstance(raw, str):
+        # Strip markdown code fences the LLM occasionally emits
+        stripped = raw.strip()
+        if stripped.startswith("```"):
+            stripped = stripped.split("\n", 1)[-1]
+            stripped = stripped.rsplit("```", 1)[0]
+            raw = stripped.strip()
     try:
         scan_data = json.loads(raw) if isinstance(raw, str) else raw
     except (json.JSONDecodeError, TypeError):
