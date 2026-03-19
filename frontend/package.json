@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node scripts/generate-world-env.mjs --world ../shared/world2.json --out src/generated/world2Environment.generated.ts --const WORLD2_ENV && next build",
     "start": "next start"
   },
   "dependencies": {
@@ -20,6 +20,10 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/three": "^0.168.0",
-    "typescript": "^5.6.3"
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.6.3",
+    "zod": "^4.3.6"
   }
 }
