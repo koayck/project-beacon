@@ -21,6 +21,7 @@ except ImportError as exc:
     ) from exc
 
 from sim import DroneSimulator
+from world import load_world
 
 GRPC_PORT = int(os.environ.get("GRPC_PORT", "50051"))
 
@@ -66,6 +67,20 @@ class _DroneControlServicer(beacon_pb2_grpc.DroneControlServicer):
             success=True,
             message=f"Scanning area at ({request.cx:.1f}, {request.cy:.1f}, {request.cz:.1f}) r={request.radius:.1f}",
         )
+
+    def SwitchWorld(self, request, context):
+        world_id = request.world_id
+        try:
+            load_world(world_id)
+            return beacon_pb2.CommandResponse(
+                success=True,
+                message=f"Switched to world {world_id}",
+            )
+        except Exception as e:
+            return beacon_pb2.CommandResponse(
+                success=False,
+                message=f"Failed to switch world: {e}",
+            )
 
     def GetView(self, request, context):
         s = self._sim.get_snapshot()

@@ -21,7 +21,7 @@ _NORMAL_SPEED = 5.0
 # _FAST_SPEED = 20.0
 _drone_speeds: dict[str, float] = {}
 # Match world vision survivor sensor range to avoid sweep summary undercounting.
-DEFAULT_SWEEP_SCAN_RADIUS = 3.0
+DEFAULT_SWEEP_SCAN_RADIUS = 5.0
 # Half-angle of the drone's forward-facing thermal camera cone (degrees).
 # Survivors beyond this angle off the drone's heading are not detected.
 THERMAL_HORIZ_FOV_HALF_DEG: float = 60.0
@@ -267,7 +267,7 @@ async def return_to_base(asset_id: str) -> dict:
     polling, then performs a final explicit landing leg to (0,0,0).
     """
     client = grpc_client
-    route = await plan_route(asset_id, 0.0, 0.0, 5.0)
+    route = await plan_route(asset_id, 0.0, 2.0, 5.0)
     if "error" in route:
         return {
             "asset_id": asset_id,
@@ -302,7 +302,7 @@ async def return_to_base(asset_id: str) -> dict:
                 "status": wait_result.get("status"),
             }
 
-    final_wp = {"x": 0.0, "y": 0.0, "z": 0.0, "reason": "final landing at home pad"}
+    final_wp = {"x": 0.0, "y": 2.0, "z": 0.0, "reason": "final landing at home pad"}
     final_move_result = await client.move_to(
         asset_id,
         final_wp["x"],
@@ -1337,7 +1337,7 @@ async def sweep_scan_building(
         face_dx = building_cx - wp_x
         face_dz = building_cz - wp_z
         heading_toward_building = math.degrees(math.atan2(face_dx, -face_dz)) % 360
-        view = await client.get_view(asset_id, heading_deg=heading_toward_building, detection_range=25.0)
+        view = await client.get_view(asset_id, heading_deg=heading_toward_building, detection_range=5.0)
         detected_survivors: list[dict] = []
         for obj in view.get("objects", []):
             if obj.get("object_type") != "survivor":

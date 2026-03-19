@@ -1,0 +1,83 @@
+{
+  "scene": {
+    "floor_height_m": 2.6,
+    "floor_slab_thickness_m": 0.18,
+    "flood_level_m": 1.0,
+    "surv_hover_m": 0.45,
+    "window_scan_standoff_m": 3.0,
+    "building_proximity_margin_m": 1.5
+  },
+  "buildings": [
+    {
+      "id": 0,
+      "name": "mini_shophouse",
+      "cx": -10,
+      "cz": -10,
+      "w": 7,
+      "d": 10,
+      "h": 8,
+      "windows": [
+        { "floor": 2, "face": "south", "offset": -1.5, "width": 1.6, "height": 1.3, "sill": 0.4 },
+        { "floor": 2, "face": "south", "offset": 1.5, "width": 1.6, "height": 1.3, "sill": 0.4 },
+        { "floor": 3, "face": "west", "offset": 0.0, "width": 1.6, "height": 1.3, "sill": 0.4 }
+      ],
+      "balcony": null
+    },
+    {
+      "id": 1,
+      "name": "compact_hotel",
+      "cx": 18,
+      "cz": -14,
+      "w": 10,
+      "d": 9,
+      "h": 14,
+      "windows": [
+        { "floor": 2, "face": "south", "offset": -2.0, "width": 1.8, "height": 1.4, "sill": 0.4 },
+        { "floor": 3, "face": "south", "offset": 2.0, "width": 1.8, "height": 1.4, "sill": 0.4 },
+        { "floor": 4, "face": "north", "offset": 0.0, "width": 1.8, "height": 1.4, "sill": 0.4 },
+        { "floor": 5, "face": "east", "offset": 0.8, "width": 1.8, "height": 1.4, "sill": 0.4 }
+      ],
+      "balcony": { "floor": 4, "face": "south", "depth": 1.8, "width": 4.0 }
+    },
+    {
+      "id": 2,
+      "name": "market_annex",
+      "cx": -16,
+      "cz": 14,
+      "w": 12,
+      "d": 10,
+      "h": 5,
+      "windows": [
+        { "floor": 1, "face": "south", "offset": -3.0, "width": 2.2, "height": 1.6, "sill": 0.3 },
+        { "floor": 1, "face": "south", "offset": 3.0, "width": 2.2, "height": 1.6, "sill": 0.3 },
+        { "floor": 2, "face": "east", "offset": 1.2, "width": 1.8, "height": 1.4, "sill": 0.4 }
+      ],
+      "balcony": null
+    },
+    {
+      "id": 3,
+      "name": "residential_midrise",
+      "cx": 12,
+      "cz": 16,
+      "w": 9,
+      "d": 8,
+      "h": 12,
+      "windows": [
+        { "floor": 2, "face": "south", "offset": -1.5, "width": 1.6, "height": 1.3, "sill": 0.5 },
+        { "floor": 2, "face": "south", "offset": 1.5, "width": 1.6, "height": 1.3, "sill": 0.5 },
+        { "floor": 3, "face": "west", "offset": -0.8, "width": 1.6, "height": 1.3, "sill": 0.5 },
+        { "floor": 4, "face": "north", "offset": 0.0, "width": 1.6, "height": 1.3, "sill": 0.5 }
+      ],
+      "balcony": { "floor": 3, "face": "south", "depth": 1.6, "width": 3.2 }
+    }
+  ],
+  "survivors": [
+    { "x": -11.5, "y": 3.05, "z": -6.0, "note": "floor 2 - mini shophouse, near south window" },
+    { "x": -10.0, "y": 5.65, "z": -14.0, "note": "floor 3 - mini shophouse, west side" },
+    { "x": 18.0, "y": 8.25, "z": -10.0, "note": "floor 4 - compact hotel, on south balcony" },
+    { "x": 18.0, "y": 10.85, "z": -18.0, "note": "floor 5 - compact hotel, east window" },
+    { "x": -17.5, "y": 3.05, "z": 10.5, "note": "floor 2 - market annex, near east side" },
+    { "x": 10.5, "y": 5.65, "z": 19.0, "note": "floor 3 - residential midrise, on south balcony" }
+  ],
+  "trees": []
+}

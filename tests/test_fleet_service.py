@@ -44,6 +44,8 @@ async def test_discover_fleet_auto_uplinks_new_assets(monkeypatch: pytest.Monkey
         "register",
         lambda asset_id, host, port: register_calls.append((asset_id, host, port)),
     )
+    switch_world = AsyncMock(return_value={"success": True, "message": "Switched to world 1"})
+    monkeypatch.setattr(fleet.grpc_client, "switch_world", switch_world)
 
     result = await fleet.discover_fleet(auto_uplink=True, include_registered=True)
 
@@ -53,3 +55,4 @@ async def test_discover_fleet_auto_uplinks_new_assets(monkeypatch: pytest.Monkey
     assert result["fleet"][0]["uplinked"] is True
     upsert.assert_awaited_once()
     assert register_calls == [("BEACON-01", "localhost", 50051)]
+    switch_world.assert_awaited_once_with("BEACON-01", 1)
