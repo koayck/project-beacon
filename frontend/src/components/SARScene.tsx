@@ -24,7 +24,7 @@ import { World2Environment } from './sar-scene/World2Environment'
 
 // ── Constants (from shared/world.json) ────────────────────────────────────────
 
-type WindowFace = 'north' | 'south' | 'west' | 'east' | 'top'
+type WindowFace = 'north' | 'south' | 'west' | 'east'
 
 interface WorldWindowLayout {
   floor: number
@@ -178,6 +178,11 @@ function buildSimBuildings(worldBuildings: WorldBuilding[]): SimBuilding[] {
         encD = bal.width
       }
 
+      // The balcony is open on its outward face (bal.face).
+      // Model the opening as a window on that face so the drone has
+      // line-of-sight to survivors standing on the balcony.
+      const openFace = bal.face
+      const isNS = openFace === 'north' || openFace === 'south'
       result.push({
         id: nextId++,
         name: `${building.name} balcony`,
@@ -189,11 +194,11 @@ function buildSimBuildings(worldBuildings: WorldBuilding[]): SimBuilding[] {
         minY: balconyY,
         h: balconyY + RAILING_H,
         windows: [{
-          face: 'top' as WindowFace,
-          axisCenter: encCx,
-          width: encW,
-          sillY: encCz - encD / 2,
-          height: encD,
+          face: openFace,
+          axisCenter: isNS ? encCx : encCz,
+          width: isNS ? encW : encD,
+          sillY: balconyY,
+          height: RAILING_H,
         }],
       })
     }
@@ -237,9 +242,7 @@ function containsFloorSlabPoint(b: SimBuilding, x: number, y: number, z: number)
     if (level >= bottomY && level - half - epsilon <= y && y <= level + half + epsilon) return true
     level += FLOOR_H
   }
-  // Skip roof slab for buildings with a top aperture (open roof/balcony)
-  const hasTopAperture = b.windows.some(w => w.face === 'top')
-  if (!hasTopAperture && b.h - half - epsilon <= y && y <= b.h + half + epsilon) return true
+  if (b.h - half - epsilon <= y && y <= b.h + half + epsilon) return true
   return false
 }
 
@@ -269,21 +272,6 @@ function segmentIntersectsWindow(
   const maxAxis = window.axisCenter + window.width / 2
   const minY = window.sillY
   const maxY = window.sillY + window.height
-
-  // Top aperture — horizontal plane at building ceiling
-  if (window.face === 'top') {
-    if (Math.abs(dy) <= epsilon) return false
-    const planeY = building.h
-    const t = (planeY - fromY) / dy
-    if (t <= epsilon || t >= 1.0 - epsilon) return false
-    const hitX = fromX + dx * t
-    const hitZ = fromZ + dz * t
-    // For 'top': axisCenter/width = X bounds, sillY/height = Z bounds
-    return (
-      minAxis - epsilon <= hitX && hitX <= maxAxis + epsilon &&
-      minY - epsilon <= hitZ && hitZ <= maxY + epsilon
-    )
-  }
 
   if (window.face === 'north' || window.face === 'south') {
     if (Math.abs(dz) <= epsilon) return false
@@ -470,12 +458,6 @@ function computeApproachPosition(simBuildings: SimBuilding[], survivor: Survivor
     let bestDist = Infinity
 
     for (const w of building.windows) {
-      // For 'top' apertures, approach from above — always prefer this for balconies
-      if (w.face === 'top') {
-        bestWindow = w
-        bestDist = 0
-        break
-      }
       const windowCenterY = w.sillY + w.height / 2
       const yDist = Math.abs(survivor.y - windowCenterY)
       let wx: number, wz: number
@@ -493,10 +475,6 @@ function computeApproachPosition(simBuildings: SimBuilding[], survivor: Survivor
     }
 
     if (bestWindow) {
-      if (bestWindow.face === 'top') {
-        // Approach from above the balcony enclosure — hover over the survivor
-        return { x: survivor.x, y: building.h + APPROACH_OFFSET, z: survivor.z }
-      }
       const wy = bestWindow.sillY + bestWindow.height / 2
       if (bestWindow.face === 'west')
         return { x: bounds.minX - APPROACH_OFFSET, y: wy, z: bestWindow.axisCenter }

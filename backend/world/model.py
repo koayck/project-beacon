@@ -69,6 +69,15 @@ class WindowAperture:
 
 
 @dataclass(frozen=True)
+class Balcony:
+    """A balcony protruding from one building facade."""
+    floor: int
+    face: WindowFace
+    depth: float   # how far it sticks out from the wall
+    width: float   # lateral extent along the facade
+
+
+@dataclass(frozen=True)
 class Building:
     id: int
     cx: float   # centre X
@@ -77,6 +86,7 @@ class Building:
     d: float    # depth  (Z extent)
     h: float    # height (Y extent)
     windows: tuple[WindowAperture, ...] = ()
+    balcony: Balcony | None = None
 
     # AABB min/max corners
     @property
@@ -91,6 +101,12 @@ class Building:
     def min_y(self) -> float: return 0.0
     @property
     def max_y(self) -> float: return self.h
+
+    def balcony_protrusion(self, face: WindowFace) -> float:
+        """Return how far the balcony protrudes on the given face, or 0."""
+        if self.balcony is not None and self.balcony.face == face:
+            return self.balcony.depth
+        return 0.0
 
     def contains_point(self, x: float, y: float, z: float) -> bool:
         """True if (x,y,z) is strictly inside this building's AABB."""
@@ -199,22 +215,25 @@ class Building:
 
         Waypoints are outside the facade by `standoff` metres and at the
         vertical center of each window to maximize direct indoor visibility.
+        When a balcony protrudes from a face, the standoff is measured from
+        the balcony edge rather than the building wall.
         """
         waypoints: list[dict] = []
         for window in self.windows:
             y = window.sill_y + window.height / 2
             floor = int(window.sill_y // FLOOR_HEIGHT_M) + 1
+            face_standoff = max(standoff, self.balcony_protrusion(window.face) + 1.0)
             if window.face == "north":
                 x = window.axis_center
-                z = self.min_z - standoff
+                z = self.min_z - face_standoff
             elif window.face == "south":
                 x = window.axis_center
-                z = self.max_z + standoff
+                z = self.max_z + face_standoff
             elif window.face == "west":
-                x = self.min_x - standoff
+                x = self.min_x - face_standoff
                 z = window.axis_center
             else:
-                x = self.max_x + standoff
+                x = self.max_x + face_standoff
                 z = window.axis_center
 
             waypoints.append(
@@ -344,11 +363,21 @@ def _build_world(world_json: dict) -> WorldModel:
                 width=w["width"],
                 height=w["height"],
             ))
+        balcony_raw = b.get("balcony")
+        balcony = None
+        if balcony_raw:
+            balcony = Balcony(
+                floor=balcony_raw["floor"],
+                face=balcony_raw["face"],
+                depth=float(balcony_raw["depth"]),
+                width=float(balcony_raw["width"]),
+            )
         buildings.append(Building(
             id=b["id"],
             cx=cx, cz=cz,
             w=float(b["w"]), d=float(b["d"]), h=float(b["h"]),
             windows=tuple(windows),
+            balcony=balcony,
         ))
 
     survivors = [
@@ -368,11 +397,12 @@ def load_world(world_id: int = 1) -> WorldModel:
     Mutates the existing WORLD singleton in-place so that all modules
     which imported ``WORLD`` at startup see the updated data.
     """
-    global FLOOD_LEVEL, CURRENT_WORLD_ID
+    global FLOOD_LEVEL, CURRENT_WORLD_ID, WINDOW_SCAN_STANDOFF_M
     filename = "world.json" if world_id == 1 else f"world{world_id}.json"
     data = _json.loads((_SHARED_DIR / filename).read_text())
     scene = data.get("scene", {})
     FLOOD_LEVEL = scene.get("flood_level_m", 1.4)
+    WINDOW_SCAN_STANDOFF_M = scene.get("window_scan_standoff_m", 2.0)
     fresh = _build_world(data)
     # Mutate in-place so existing references stay valid
     WORLD.buildings[:] = fresh.buildings

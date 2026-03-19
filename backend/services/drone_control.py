@@ -797,8 +797,14 @@ def plan_building_vertical_sweep(
 
     # Window-facing waypoints grouped by floor, with per-face dynamic
     # standoff that shrinks when a neighbouring building is too close.
+    # When a balcony protrudes from a face, increase the minimum standoff
+    # so the drone clears the balcony edge.
     desired_standoff = max(safe_standoff, WINDOW_SCAN_STANDOFF_M)
     face_standoffs = _safe_standoff_per_face(building, desired_standoff)
+    for face in ("north", "south", "east", "west"):
+        protrusion = building.balcony_protrusion(face)
+        if protrusion > 0:
+            face_standoffs[face] = max(face_standoffs[face], protrusion + 1.0)
 
     # Build window waypoints manually using per-face standoffs.
     all_window_wps: list[dict] = []
@@ -827,12 +833,14 @@ def plan_building_vertical_sweep(
     # They receive a rooftop-level perimeter flyaround instead (see below).
 
     # Perimeter corners kept tight (1 m from wall) to avoid colliding
-    # with neighbouring buildings.
+    # with neighbouring buildings.  When a balcony protrudes from a face,
+    # push that face's perimeter outward by the balcony depth so the
+    # drone path clears the balcony geometry.
     perimeter_margin = 1.0
-    p_min_x = building.min_x - perimeter_margin
-    p_max_x = building.max_x + perimeter_margin
-    p_min_z = building.min_z - perimeter_margin
-    p_max_z = building.max_z + perimeter_margin
+    p_min_x = building.min_x - perimeter_margin - building.balcony_protrusion("west")
+    p_max_x = building.max_x + perimeter_margin + building.balcony_protrusion("east")
+    p_min_z = building.min_z - perimeter_margin - building.balcony_protrusion("north")
+    p_max_z = building.max_z + perimeter_margin + building.balcony_protrusion("south")
 
     # Push all four perimeter corners outside any adjacent building.
     # clearance=1.5 > _route_sweep_segment margin (1.0) so the vertical descent
