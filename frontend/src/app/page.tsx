@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic'
 
 // Dynamic import with ssr:false — Three.js requires browser APIs
-const SARScene = dynamic(() => import('@/components/SARScene'), { ssr: false })
+const SARScene = dynamic(() => import('@/components/scene'), { ssr: false })
 
 export default function Home() {
   return (
