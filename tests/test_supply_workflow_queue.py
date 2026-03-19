@@ -15,7 +15,7 @@ from backend.agents.supply_workflow import (
     process_next_supply_target_for_asset,
 )
 from backend.runtime import grpc_client
-from backend.services.drone_control import (
+from backend.services.api.control import (
     clear_detected_survivors,
     find_survivors_in_area,
     register_detected_survivors,
@@ -129,7 +129,7 @@ async def test_process_next_supply_target_reserves_inflight_target(monkeypatch: 
 
     monkeypatch.setattr(grpc_client, "get_status", _status)
 
-    import backend.services.drone_control as drone_control
+    import backend.services.api.control as drone_control
 
     dispatch_calls: list[tuple[str, int | None]] = []
 
@@ -179,7 +179,7 @@ async def test_process_next_supply_target_stops_when_only_completed_targets_rema
 
     monkeypatch.setattr(grpc_client, "get_status", _status)
 
-    import backend.services.drone_control as drone_control
+    import backend.services.api.control as drone_control
 
     dispatch_calls: list[str] = []
 

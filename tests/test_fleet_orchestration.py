@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.services.drone_control import (
+from backend.services.api.control import (
     assign_fleet_to_buildings,
     parallel_fleet_scan,
     parallel_fleet_supply,
@@ -47,7 +47,7 @@ async def test_assign_two_buildings_three_drones_picks_closest():
     ]
     mock_client = _mock_client(["BEACON-01", "BEACON-02", "BEACON-03"], statuses)
 
-    with patch("backend.services.drone_control.grpc_client", mock_client):
+    with patch("backend.services.api.control.grpc_client", mock_client):
         result = await assign_fleet_to_buildings(buildings)
 
     assert "error" not in result
@@ -65,7 +65,7 @@ async def test_assign_more_buildings_than_drones():
     statuses = [_make_status("BEACON-01", 0.5, 0.0)]
     mock_client = _mock_client(["BEACON-01"], statuses)
 
-    with patch("backend.services.drone_control.grpc_client", mock_client):
+    with patch("backend.services.api.control.grpc_client", mock_client):
         result = await assign_fleet_to_buildings(buildings)
 
     assert "error" not in result
@@ -80,7 +80,7 @@ async def test_assign_no_eligible_drones_all_busy():
     statuses = [_make_status("BEACON-01", 0.0, 0.0, status="BLOCKED")]
     mock_client = _mock_client(["BEACON-01"], statuses)
 
-    with patch("backend.services.drone_control.grpc_client", mock_client):
+    with patch("backend.services.api.control.grpc_client", mock_client):
         result = await assign_fleet_to_buildings(buildings)
 
     assert "error" in result
@@ -95,7 +95,7 @@ async def test_assign_no_eligible_drones_low_battery():
     statuses = [_make_status("BEACON-01", 0.0, 0.0, battery=15.0)]
     mock_client = _mock_client(["BEACON-01"], statuses)
 
-    with patch("backend.services.drone_control.grpc_client", mock_client):
+    with patch("backend.services.api.control.grpc_client", mock_client):
         result = await assign_fleet_to_buildings(buildings)
 
     assert "error" in result
@@ -107,7 +107,7 @@ async def test_assign_no_drones_uplinked():
     buildings = [_make_building(0, 0.0, 0.0)]
     mock_client = _mock_client([], [])
 
-    with patch("backend.services.drone_control.grpc_client", mock_client):
+    with patch("backend.services.api.control.grpc_client", mock_client):
         result = await assign_fleet_to_buildings(buildings)
 
     assert "error" in result
@@ -119,7 +119,7 @@ async def test_assign_empty_buildings():
     """Empty building list returns empty assignments immediately."""
     mock_client = _mock_client(["BEACON-01"], [])
 
-    with patch("backend.services.drone_control.grpc_client", mock_client):
+    with patch("backend.services.api.control.grpc_client", mock_client):
         result = await assign_fleet_to_buildings([])
 
     assert result["assignments"] == []
@@ -143,7 +143,7 @@ async def test_assign_greedy_picks_globally_closest():
     statuses = [_make_status("BEACON-01", 0.0, 0.0), _make_status("BEACON-02", 5.0, 0.0)]
     mock_client = _mock_client(["BEACON-01", "BEACON-02"], statuses)
 
-    with patch("backend.services.drone_control.grpc_client", mock_client):
+    with patch("backend.services.api.control.grpc_client", mock_client):
         result = await assign_fleet_to_buildings(buildings)
 
     assert result["total_assigned"] == 2
@@ -177,7 +177,7 @@ async def test_parallel_fleet_scan_runs_concurrently():
         call_order.append(asset_id)
         return _make_scan_result()
 
-    with patch("backend.services.drone_control.sweep_scan_building", side_effect=fake_sweep):
+    with patch("backend.services.api.control.sweep_scan_building", side_effect=fake_sweep):
         result = await parallel_fleet_scan(assignments)
 
     assert result["success"] is True
@@ -196,7 +196,7 @@ async def test_parallel_fleet_scan_sequential_fallback():
     async def fake_sweep(asset_id, target_x, target_z, **_kwargs):
         return _make_scan_result()
 
-    with patch("backend.services.drone_control.sweep_scan_building", side_effect=fake_sweep):
+    with patch("backend.services.api.control.sweep_scan_building", side_effect=fake_sweep):
         result = await parallel_fleet_scan(assignments, unassigned)
 
     assert result["total_buildings_scanned"] == 2
@@ -217,7 +217,7 @@ async def test_parallel_fleet_scan_partial_failure():
             raise RuntimeError("gRPC connection lost")
         return _make_scan_result()
 
-    with patch("backend.services.drone_control.sweep_scan_building", side_effect=fake_sweep):
+    with patch("backend.services.api.control.sweep_scan_building", side_effect=fake_sweep):
         result = await parallel_fleet_scan(assignments)
 
     assert result["total_buildings_scanned"] == 2
@@ -254,7 +254,7 @@ async def test_parallel_fleet_scan_summary_format():
             ],
         }
 
-    with patch("backend.services.drone_control.sweep_scan_building", side_effect=fake_sweep):
+    with patch("backend.services.api.control.sweep_scan_building", side_effect=fake_sweep):
         result = await parallel_fleet_scan(assignments)
 
     assert result["total_survivors"] == 2
@@ -286,7 +286,7 @@ async def test_parallel_fleet_supply_runs_concurrently():
         call_order.append(asset_id)
         return _make_supply_result()
 
-    with patch("backend.services.drone_control.dispatch_supply_to_building", side_effect=fake_dispatch):
+    with patch("backend.services.api.control.dispatch_supply_to_building", side_effect=fake_dispatch):
         result = await parallel_fleet_supply(assignments)
 
     assert result["success"] is True
@@ -305,7 +305,7 @@ async def test_parallel_fleet_supply_sequential_fallback():
     async def fake_dispatch(asset_id: str, building: dict):
         return _make_supply_result()
 
-    with patch("backend.services.drone_control.dispatch_supply_to_building", side_effect=fake_dispatch):
+    with patch("backend.services.api.control.dispatch_supply_to_building", side_effect=fake_dispatch):
         result = await parallel_fleet_supply(assignments, unassigned)
 
     assert result["total_buildings_targeted"] == 2
@@ -324,7 +324,7 @@ async def test_parallel_fleet_supply_partial_failure():
             raise RuntimeError("route blocked")
         return _make_supply_result()
 
-    with patch("backend.services.drone_control.dispatch_supply_to_building", side_effect=fake_dispatch):
+    with patch("backend.services.api.control.dispatch_supply_to_building", side_effect=fake_dispatch):
         result = await parallel_fleet_supply(assignments)
 
     assert result["total_buildings_targeted"] == 2
@@ -351,7 +351,7 @@ async def test_parallel_fleet_supply_summary_format():
     async def fake_dispatch(asset_id: str, building: dict):
         return _make_supply_result()
 
-    with patch("backend.services.drone_control.dispatch_supply_to_building", side_effect=fake_dispatch):
+    with patch("backend.services.api.control.dispatch_supply_to_building", side_effect=fake_dispatch):
         result = await parallel_fleet_supply(assignments)
 
     assert result["total_supplied"] == 1

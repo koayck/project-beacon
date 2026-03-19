@@ -1,7 +1,7 @@
 """Tests for sweep scan summary survivor count formatting."""
 from __future__ import annotations
 
-from backend.services.drone_control import _build_sweep_scan_report
+from backend.services.api.control import _build_sweep_scan_report
 
 
 def test_build_sweep_scan_report_uses_passed_survivor_count() -> None:

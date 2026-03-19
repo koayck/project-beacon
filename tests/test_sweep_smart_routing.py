@@ -5,7 +5,7 @@ import math
 
 import pytest
 
-from backend.services.drone_control import (
+from backend.services.api.control import (
     _build_ring,
     _nearest_corner,
     find_buildings_in_area,

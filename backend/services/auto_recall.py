@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from backend.db.models import MissionLog
 from backend.db.repository import mission_log_repo
 from backend.runtime import grpc_client
-from backend.services.drone_control import return_to_base
+from backend.services.api import return_to_base
 
 logger = logging.getLogger(__name__)
 

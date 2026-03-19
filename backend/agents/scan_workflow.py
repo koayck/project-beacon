@@ -264,7 +264,7 @@ async def assign_drones_to_buildings(tool_context: ToolContext) -> dict:
     initially; remaining buildings stay queued for dynamic pickup.
     When asset_id is "auto" or absent the full fleet is queried for assignments.
     """
-    from backend.services.drone_control import assign_fleet_to_buildings
+    from backend.services.api import assign_fleet_to_buildings
 
     raw = tool_context.state.get("scan_buildings", "{}")
     try:

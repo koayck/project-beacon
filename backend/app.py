@@ -8,6 +8,7 @@ import subprocess
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -32,17 +33,15 @@ from backend.telemetry.ws_bridge import TelemetryBroadcaster
 from backend.licensing.routes import router as license_router
 from backend.mcp.server import beacon_mcp
 from backend.runtime import grpc_client, udp_listener, ws_broadcaster
-from backend.services.fleet import (
+from backend.services.api import (
     discover_fleet,
     ensure_uplink,
+    list_all_drones,
+    recall_swarm,
+    return_to_base as rtb_service,
     restore_registered_connections,
     scan_frequencies as scan_unlinked_frequencies,
-)
-from backend.services.drone_control import (
-    return_to_base as rtb_service,
-    recall_swarm,
     set_drone_speed,
-    list_all_drones,
 )
 from backend.services.auto_recall import AutoRecallMonitor
 
@@ -67,6 +66,12 @@ _AUTO_RECALL_BATTERY_THRESHOLD = float(
 )
 _AUTO_RECALL_COOLDOWN_SECONDS = float(
     os.environ.get("AUTO_RECALL_COOLDOWN_SECONDS", "60")
+)
+_STARLINK_STATUS_FILE = Path(
+    os.environ.get(
+        "STARLINK_MOCK_STATUS_FILE",
+        Path(__file__).resolve().parents[1] / ".starlink-mock-status",
+    )
 )
 
 
@@ -356,6 +361,44 @@ def _build_agent_prompt(req: CommandRequest) -> str:
     return " ".join(prompt_parts)
 
 
+def _read_starlink_mock_status() -> dict[str, object]:
+    status: dict[str, object] = {
+        "mode": "unknown",
+        "updated_at": None,
+        "source": None,
+        "target_ssid": "Starlink",
+        "active_ssids": [],
+        "container_count": 0,
+        "status_file": str(_STARLINK_STATUS_FILE),
+    }
+
+    if not _STARLINK_STATUS_FILE.exists():
+        return status
+
+    try:
+        content = _STARLINK_STATUS_FILE.read_text(encoding="utf-8")
+    except OSError:
+        return status
+
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if key == "active_ssids":
+            status["active_ssids"] = [ssid for ssid in value.split(",") if ssid]
+        elif key == "container_count":
+            try:
+                status["container_count"] = int(value)
+            except ValueError:
+                status["container_count"] = 0
+        elif key in status:
+            status[key] = value if value else None
+    return status
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -370,10 +413,15 @@ async def auto_recall_config() -> dict:
     }
 
 
+@app.get("/network/mock-status")
+async def network_mock_status() -> dict[str, object]:
+    """Return host-driven Starlink tc mock status for frontend visibility."""
+    return _read_starlink_mock_status()
+
+
 @app.post("/drone/{asset_id}/speed")
 async def set_speed(asset_id: str, req: SpeedRequest) -> dict:
     """Set the movement speed for all future commands issued to this drone."""
-    from backend.services.drone_control import set_drone_speed
     set_drone_speed(asset_id, req.speed)
     return {"asset_id": asset_id, "speed": req.speed}
 

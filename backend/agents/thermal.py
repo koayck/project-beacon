@@ -7,7 +7,7 @@ from google.adk.agents import Agent
 
 from backend.agents._mcp import THERMAL_TOOLS, make_toolset
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
-from backend.services.drone_control import get_drone_status, scan_area
+from backend.services.api import get_drone_status, scan_area
 
 _DESCRIPTION = (
     "Handles thermal imaging, area scanning, and survivor detection. "
