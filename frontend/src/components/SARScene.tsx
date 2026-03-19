@@ -19,11 +19,14 @@ import {
 } from '@/lib/api'
 import WORLD from '@shared/world.json'
 import WORLD2 from '@shared/world2.json'
+import WORLD2 from '@shared/world2.json'
 import { BasePad, GridOverlay, Ground, MissionBuildings, SurvivorScanRays, Survivors } from './sar-scene/SceneStructures'
+import { World2Environment } from './sar-scene/World2Environment'
 import { World2Environment } from './sar-scene/World2Environment'
 
 // ── Constants (from shared/world.json) ────────────────────────────────────────
 
+type WindowFace = 'north' | 'south' | 'west' | 'east' | 'top'
 type WindowFace = 'north' | 'south' | 'west' | 'east' | 'top'
 
 interface WorldWindowLayout {
@@ -55,6 +58,7 @@ interface WorldBuilding {
 }
 
 // ── Shared scene constants (identical across worlds) ─────────────────────────
+// ── Shared scene constants (identical across worlds) ─────────────────────────
 const FLOOR_H = WORLD.scene.floor_height_m
 const FLOOR_T = WORLD.scene.floor_slab_thickness_m
 const SURV_HOVER  = WORLD.scene.surv_hover_m
@@ -62,6 +66,28 @@ const FLOOD_LEVEL = WORLD.scene.flood_level_m
 
 const slabY   = (n: number) => (n - 1) * FLOOR_H
 const survY   = (n: number) => slabY(n) + FLOOR_T / 2 + SURV_HOVER
+
+// ── World 1 data ─────────────────────────────────────────────────────────────
+const W1_GRID_CELLS  = 50
+const W1_GRID_SPACING = 2
+const W1_SPAN = W1_GRID_CELLS * W1_GRID_SPACING  // 100
+const W1_CAM_POS: [number, number, number] = [45, 95, 70]
+const W1_FOG: [number, number] = [90, 260]
+const W1_BUILDINGS = [...(WORLD.buildings as WorldBuilding[])].sort((a, b) => a.id - b.id)
+const W1_SURVIVORS = WORLD.survivors.map(s => ({ x: s.x, y: s.y, z: s.z }))
+
+// ── World 2 data (Hat Yai township — 1m grid) ───────────────────────────────
+const W2_GRID_CELLS  = 200
+const W2_GRID_SPACING = 1
+const W2_SPAN = W2_GRID_CELLS * W2_GRID_SPACING  // 200
+const W2_CAM_POS: [number, number, number] = [90, 180, 140]
+const W2_FOG: [number, number] = [160, 450]
+const W2_BUILDINGS = [...(WORLD2.buildings as WorldBuilding[])].sort((a, b) => a.id - b.id)
+const W2_SURVIVORS = WORLD2.survivors.map(s => ({ x: s.x, y: s.y, z: s.z }))
+
+// Drone start position — Y matches pad surface (1.8m platform + 0.12m pad)
+const BASE_Y = 2.0
+const DRONE_START = new THREE.Vector3(0, BASE_Y, 0)
 
 // ── World 1 data ─────────────────────────────────────────────────────────────
 const W1_GRID_CELLS  = 50
@@ -112,6 +138,7 @@ interface SimBuilding {
   w: number
   d: number
   h: number
+  minY?: number
   minY?: number
   windows: SimWindowAperture[]
 }
@@ -224,6 +251,8 @@ function containsPoint(b: SimBuilding, x: number, y: number, z: number): boolean
   const { minX, maxX, minZ, maxZ } = buildingBounds(b)
   const bottomY = b.minY ?? 0
   return minX <= x && x <= maxX && bottomY <= y && y <= b.h && minZ <= z && z <= maxZ
+  const bottomY = b.minY ?? 0
+  return minX <= x && x <= maxX && bottomY <= y && y <= b.h && minZ <= z && z <= maxZ
 }
 
 function containsFloorSlabPoint(b: SimBuilding, x: number, y: number, z: number): boolean {
@@ -231,9 +260,11 @@ function containsFloorSlabPoint(b: SimBuilding, x: number, y: number, z: number)
   const epsilon = 1e-6
   const half = FLOOR_T / 2
   const bottomY = b.minY ?? 0
+  const bottomY = b.minY ?? 0
 
   let level = 0.0
   while (level <= b.h + epsilon) {
+    if (level >= bottomY && level - half - epsilon <= y && y <= level + half + epsilon) return true
     if (level >= bottomY && level - half - epsilon <= y && y <= level + half + epsilon) return true
     level += FLOOR_H
   }
@@ -241,8 +272,14 @@ function containsFloorSlabPoint(b: SimBuilding, x: number, y: number, z: number)
   const hasTopAperture = b.windows.some(w => w.face === 'top')
   if (!hasTopAperture && b.h - half - epsilon <= y && y <= b.h + half + epsilon) return true
   return false
+  // Skip roof slab for buildings with a top aperture (open roof/balcony)
+  const hasTopAperture = b.windows.some(w => w.face === 'top')
+  if (!hasTopAperture && b.h - half - epsilon <= y && y <= b.h + half + epsilon) return true
+  return false
 }
 
+function findBuildingAt(simBuildings: SimBuilding[], x: number, y: number, z: number): SimBuilding | null {
+  for (const b of simBuildings) {
 function findBuildingAt(simBuildings: SimBuilding[], x: number, y: number, z: number): SimBuilding | null {
   for (const b of simBuildings) {
     if (containsPoint(b, x, y, z)) return b
@@ -269,6 +306,21 @@ function segmentIntersectsWindow(
   const maxAxis = window.axisCenter + window.width / 2
   const minY = window.sillY
   const maxY = window.sillY + window.height
+
+  // Top aperture — horizontal plane at building ceiling
+  if (window.face === 'top') {
+    if (Math.abs(dy) <= epsilon) return false
+    const planeY = building.h
+    const t = (planeY - fromY) / dy
+    if (t <= epsilon || t >= 1.0 - epsilon) return false
+    const hitX = fromX + dx * t
+    const hitZ = fromZ + dz * t
+    // For 'top': axisCenter/width = X bounds, sillY/height = Z bounds
+    return (
+      minAxis - epsilon <= hitX && hitX <= maxAxis + epsilon &&
+      minY - epsilon <= hitZ && hitZ <= maxY + epsilon
+    )
+  }
 
   // Top aperture — horizontal plane at building ceiling
   if (window.face === 'top') {
@@ -326,6 +378,7 @@ function hasWindowLineOfSight(
 
 function lineOfSightClear(
   simBuildings: SimBuilding[],
+  simBuildings: SimBuilding[],
   fromX: number,
   fromY: number,
   fromZ: number,
@@ -341,6 +394,7 @@ function lineOfSightClear(
     const sy = fromY + (toY - fromY) * t
     const sz = fromZ + (toZ - fromZ) * t
 
+    for (const b of simBuildings) {
     for (const b of simBuildings) {
       if (!containsPoint(b, sx, sy, sz)) continue
       if (ignored.has(b.id)) {
@@ -387,6 +441,7 @@ function survivorVisibleFromDrone(simBuildings: SimBuilding[], dronePos: THREE.V
   const survivorBuilding = findBuildingAt(simBuildings, survivor.x, survivor.y, survivor.z)
   if (!survivorBuilding) {
     return lineOfSightClear(simBuildings, dronePos.x, dronePos.y, dronePos.z, survivor.x, survivor.y, survivor.z)
+    return lineOfSightClear(simBuildings, dronePos.x, dronePos.y, dronePos.z, survivor.x, survivor.y, survivor.z)
   }
 
   if (!hasWindowLineOfSight(
@@ -402,6 +457,7 @@ function survivorVisibleFromDrone(simBuildings: SimBuilding[], dronePos: THREE.V
   }
 
   return lineOfSightClear(
+    simBuildings,
     simBuildings,
     dronePos.x,
     dronePos.y,
@@ -460,6 +516,8 @@ function detectedSurvivorsFromTelemetryEntry(
 
 function computeApproachPosition(simBuildings: SimBuilding[], survivor: SurvivorPoint): SurvivorPoint {
   const building = findBuildingAt(simBuildings, survivor.x, survivor.y, survivor.z)
+function computeApproachPosition(simBuildings: SimBuilding[], survivor: SurvivorPoint): SurvivorPoint {
+  const building = findBuildingAt(simBuildings, survivor.x, survivor.y, survivor.z)
   if (!building) return survivor  // outside — go directly
 
   const bounds = buildingBounds(building)
@@ -470,6 +528,12 @@ function computeApproachPosition(simBuildings: SimBuilding[], survivor: Survivor
     let bestDist = Infinity
 
     for (const w of building.windows) {
+      // For 'top' apertures, approach from above — always prefer this for balconies
+      if (w.face === 'top') {
+        bestWindow = w
+        bestDist = 0
+        break
+      }
       // For 'top' apertures, approach from above — always prefer this for balconies
       if (w.face === 'top') {
         bestWindow = w
@@ -493,6 +557,10 @@ function computeApproachPosition(simBuildings: SimBuilding[], survivor: Survivor
     }
 
     if (bestWindow) {
+      if (bestWindow.face === 'top') {
+        // Approach from above the balcony enclosure — hover over the survivor
+        return { x: survivor.x, y: building.h + APPROACH_OFFSET, z: survivor.z }
+      }
       if (bestWindow.face === 'top') {
         // Approach from above the balcony enclosure — hover over the survivor
         return { x: survivor.x, y: building.h + APPROACH_OFFSET, z: survivor.z }
@@ -667,10 +735,13 @@ function mergeUniqueSurvivors(
 }
 
 function SupplyCrates({ deliveredTo, survivors }: { deliveredTo: Set<string>; survivors: SurvivorPoint[] }) {
+function SupplyCrates({ deliveredTo, survivors }: { deliveredTo: Set<string>; survivors: SurvivorPoint[] }) {
   const crates = useMemo(() => {
+    return survivors
     return survivors
       .filter(s => deliveredTo.has(survivorKey(s)))
       .map(s => ({ x: s.x, y: s.y, z: s.z }))
+  }, [deliveredTo, survivors])
   }, [deliveredTo, survivors])
 
   const groupRef = useRef<THREE.Group>(null)
@@ -718,6 +789,7 @@ function SupplyCrates({ deliveredTo, survivors }: { deliveredTo: Set<string>; su
 
 // Wave-animated floodwater at a fixed level
 function FloodWater({ worldSpan }: { worldSpan: number }) {
+function FloodWater({ worldSpan }: { worldSpan: number }) {
   const meshRef = useRef<THREE.Mesh>(null)
   const geoRef  = useRef<THREE.PlaneGeometry>(null)
   const timeRef = useRef(0)
@@ -750,6 +822,7 @@ function FloodWater({ worldSpan }: { worldSpan: number }) {
   return (
     <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, FLOOD_LEVEL, 0]} renderOrder={2}>
       <planeGeometry ref={geoRef} args={[worldSpan, worldSpan, 40, 40]} />
+      <planeGeometry ref={geoRef} args={[worldSpan, worldSpan, 40, 40]} />
       <meshStandardMaterial
         color="#1a5a9e"
         transparent
@@ -767,8 +840,10 @@ function FloodWater({ worldSpan }: { worldSpan: number }) {
 
 // Invisible plane that emits world-space intersection points on hover
 function GroundProbe({ onMove, onDoubleClick, worldSpan }: {
+function GroundProbe({ onMove, onDoubleClick, worldSpan }: {
   onMove: (v: THREE.Vector3 | null) => void
   onDoubleClick: (v: THREE.Vector3) => void
+  worldSpan: number
   worldSpan: number
 }) {
   return (
@@ -779,6 +854,7 @@ function GroundProbe({ onMove, onDoubleClick, worldSpan }: {
       onPointerLeave={() => onMove(null)}
       onDoubleClick={e => { e.stopPropagation(); onDoubleClick(e.point) }}
     >
+      <planeGeometry args={[worldSpan, worldSpan]} />
       <planeGeometry args={[worldSpan, worldSpan]} />
       <meshBasicMaterial transparent opacity={0} depthWrite={false} />
     </mesh>
@@ -820,10 +896,17 @@ interface AreaSelection {
 
 function snapToGrid(v: number, spacing: number): number {
   return Math.round(v / spacing) * spacing
+function snapToGrid(v: number, spacing: number): number {
+  return Math.round(v / spacing) * spacing
 }
 
 function selectionFromPoints(a: THREE.Vector3, b: THREE.Vector3, spacing: number): AreaSelection {
+function selectionFromPoints(a: THREE.Vector3, b: THREE.Vector3, spacing: number): AreaSelection {
   return {
+    minX: snapToGrid(Math.min(a.x, b.x), spacing),
+    maxX: snapToGrid(Math.max(a.x, b.x), spacing),
+    minZ: snapToGrid(Math.min(a.z, b.z), spacing),
+    maxZ: snapToGrid(Math.max(a.z, b.z), spacing),
     minX: snapToGrid(Math.min(a.x, b.x), spacing),
     maxX: snapToGrid(Math.max(a.x, b.x), spacing),
     minZ: snapToGrid(Math.min(a.z, b.z), spacing),
@@ -837,9 +920,13 @@ function AreaSelectProbe({
   onDragEnd,
   worldSpan,
   gridSpacing,
+  worldSpan,
+  gridSpacing,
 }: {
   onDragUpdate: (start: THREE.Vector3, end: THREE.Vector3) => void
   onDragEnd: (sel: AreaSelection) => void
+  worldSpan: number
+  gridSpacing: number
   worldSpan: number
   gridSpacing: number
 }) {
@@ -867,10 +954,12 @@ function AreaSelectProbe({
         if (!isDragging.current || !dragStart.current) return
         isDragging.current = false
         const sel = selectionFromPoints(dragStart.current, e.point.clone(), gridSpacing)
+        const sel = selectionFromPoints(dragStart.current, e.point.clone(), gridSpacing)
         dragStart.current = null
         onDragEnd(sel)
       }}
     >
+      <planeGeometry args={[worldSpan, worldSpan]} />
       <planeGeometry args={[worldSpan, worldSpan]} />
       <meshBasicMaterial transparent opacity={0} depthWrite={false} />
     </mesh>
@@ -883,18 +972,23 @@ function AreaHighlight({
   end,
   finalised,
   gridSpacing,
+  gridSpacing,
 }: {
   start: THREE.Vector3
   end: THREE.Vector3
   finalised: boolean
+  gridSpacing: number
   gridSpacing: number
 }) {
   const meshRef = useRef<THREE.Mesh>(null)
   const t = useRef(0)
 
   const sel = selectionFromPoints(start, end, gridSpacing)
+  const sel = selectionFromPoints(start, end, gridSpacing)
   const cx = (sel.minX + sel.maxX) / 2
   const cz = (sel.minZ + sel.maxZ) / 2
+  const w = Math.max(sel.maxX - sel.minX, gridSpacing)
+  const d = Math.max(sel.maxZ - sel.minZ, gridSpacing)
   const w = Math.max(sel.maxX - sel.minX, gridSpacing)
   const d = Math.max(sel.maxZ - sel.minZ, gridSpacing)
 
@@ -1069,6 +1163,20 @@ function TopStatusBar({
   onWorldChange: (world: 1 | 2) => void
 }) {
   const submerged = survivors.filter(p => p.y < floodLevel - 0.2).length
+function TopStatusBar({
+  selectMode,
+  floodLevel,
+  survivors,
+  activeWorld,
+  onWorldChange,
+}: {
+  selectMode: boolean
+  floodLevel: number
+  survivors: SurvivorPoint[]
+  activeWorld: 1 | 2
+  onWorldChange: (world: 1 | 2) => void
+}) {
+  const submerged = survivors.filter(p => p.y < floodLevel - 0.2).length
 
   return (
     <div style={{
@@ -1099,6 +1207,7 @@ function TopStatusBar({
       }} />
 
       {/* Left: Brand + World Tabs */}
+      {/* Left: Brand + World Tabs */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{
@@ -1120,6 +1229,38 @@ function TopStatusBar({
           </span>
         </div>
         <span style={{ color: '#3a4a5a', fontSize: 14 }}>|</span>
+        {/* World tabs */}
+        <div style={{ display: 'flex', gap: 2 }}>
+          {([1, 2] as const).map(w => {
+            const active = activeWorld === w
+            const label = w === 1 ? 'WORLD 1' : 'HAT YAI'
+            return (
+              <button
+                key={w}
+                onClick={() => onWorldChange(w)}
+                style={{
+                  background: active
+                    ? 'rgba(0,180,255,0.15)'
+                    : 'transparent',
+                  border: active
+                    ? '1px solid rgba(0,180,255,0.35)'
+                    : '1px solid rgba(100,120,140,0.2)',
+                  borderRadius: 4,
+                  padding: '3px 10px',
+                  color: active ? '#00ccff' : '#5a6a7a',
+                  fontSize: 11,
+                  fontWeight: active ? 700 : 500,
+                  letterSpacing: 1.2,
+                  cursor: 'pointer',
+                  fontFamily: "'Courier New', monospace",
+                  transition: 'all 0.2s',
+                }}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
         {/* World tabs */}
         <div style={{ display: 'flex', gap: 2 }}>
           {([1, 2] as const).map(w => {
@@ -2456,6 +2597,23 @@ export default function SARScene() {
   const camPos     = activeWorld === 1 ? W1_CAM_POS : W2_CAM_POS
   const fogRange   = activeWorld === 1 ? W1_FOG : W2_FOG
 
+  const [activeWorld, setActiveWorld] = useState<1 | 2>(1)
+
+  const handleWorldChange = useCallback((world: 1 | 2) => {
+    setActiveWorld(world)
+    switchWorld(world).catch(() => {})  // notify backend + drones
+  }, [])
+
+  // ── Per-world derived data ──────────────────────────────────────────────────
+  const worldBuildings = activeWorld === 1 ? W1_BUILDINGS : W2_BUILDINGS
+  const simBuildings   = activeWorld === 1 ? W1_SIM_BUILDINGS : W2_SIM_BUILDINGS
+  const survivorPositions = activeWorld === 1 ? W1_SURVIVORS : W2_SURVIVORS
+  const gridCells  = activeWorld === 1 ? W1_GRID_CELLS : W2_GRID_CELLS
+  const gridSpacing = activeWorld === 1 ? W1_GRID_SPACING : W2_GRID_SPACING
+  const worldSpan  = gridCells * gridSpacing
+  const camPos     = activeWorld === 1 ? W1_CAM_POS : W2_CAM_POS
+  const fogRange   = activeWorld === 1 ? W1_FOG : W2_FOG
+
   const [log, setLog]       = useState<string[]>(['Connecting to backend...'])
   const [uplinked, setUplinked] = useState(false)
   const [hoverPt, setHoverPt]     = useState<THREE.Vector3 | null>(null)
@@ -2858,6 +3016,7 @@ export default function SARScene() {
     if (!t) return
 
     const distToBase = Math.sqrt(t.x ** 2 + (t.y - BASE_Y) ** 2 + t.z ** 2)
+    const distToBase = Math.sqrt(t.x ** 2 + (t.y - BASE_Y) ** 2 + t.z ** 2)
     if (distToBase < BASE_PICKUP_RANGE) {
       cargoPickedUp.current = true
       setHasCargo(true)
@@ -3015,6 +3174,9 @@ export default function SARScene() {
     // Exclude balcony enclosures — they are sub-parts of their parent building.
     const overlapping = simBuildings.filter(b => {
       if (b.name.endsWith(' balcony')) return false
+    // Exclude balcony enclosures — they are sub-parts of their parent building.
+    const overlapping = simBuildings.filter(b => {
+      if (b.name.endsWith(' balcony')) return false
       const bb = buildingBounds(b)
       return bb.minX <= selection.maxX && bb.maxX >= selection.minX &&
              bb.minZ <= selection.maxZ && bb.maxZ >= selection.minZ
@@ -3103,6 +3265,8 @@ export default function SARScene() {
   const scannedSurvivors = useMemo(
     () => scannedSurvivorsFromDrone(simBuildings, survivorPositions, dronePos),
     [dronePos.x, dronePos.y, dronePos.z, simBuildings, survivorPositions],
+    () => scannedSurvivorsFromDrone(simBuildings, survivorPositions, dronePos),
+    [dronePos.x, dronePos.y, dronePos.z, simBuildings, survivorPositions],
   )
   const fleetScannedSurvivors = useMemo(() => {
     const merged = new Map<string, SurvivorPoint>()
@@ -3113,6 +3277,7 @@ export default function SARScene() {
     }
     return [...merged.values()]
   }, [drones, simBuildings, survivorPositions])
+  }, [drones, simBuildings, survivorPositions])
 
   const handleSendSupplies = useCallback((survivor: SurvivorPoint) => {
     const key = survivorKey(survivor)
@@ -3121,6 +3286,7 @@ export default function SARScene() {
       return
     }
     const coords = `(${survivor.x.toFixed(1)}, ${survivor.y.toFixed(1)}, ${survivor.z.toFixed(1)})`
+    const approach = computeApproachPosition(simBuildings, survivor)
     const approach = computeApproachPosition(simBuildings, survivor)
     const approachCoords = `(${approach.x.toFixed(1)}, ${approach.y.toFixed(1)}, ${approach.z.toFixed(1)})`
 
@@ -3169,6 +3335,7 @@ export default function SARScene() {
         `then navigate to exact window drop waypoint ${approachCoords} outside the building and drop from there. ` +
         `Do NOT navigate to the survivor's interior coordinates.`
       : `Deliver emergency supplies to survivor at ${coords}. ` +
+        `First return to base at (0, 2, 0) to collect supplies, ` +
         `First return to base at (0, 2, 0) to collect supplies, ` +
         `then navigate to ${coords} to drop supplies.`
 
@@ -3246,6 +3413,9 @@ export default function SARScene() {
       <Canvas shadows key={activeWorld}>
         <fog attach="fog" args={['#0d0d1f', fogRange[0], fogRange[1]]} />
         <PerspectiveCamera makeDefault position={camPos} fov={60} near={0.1} far={1000} />
+      <Canvas shadows key={activeWorld}>
+        <fog attach="fog" args={['#0d0d1f', fogRange[0], fogRange[1]]} />
+        <PerspectiveCamera makeDefault position={camPos} fov={60} near={0.1} far={1000} />
         <OrbitControls
           ref={orbitRef}
           enabled={!followBeacon && !selectMode}
@@ -3266,11 +3436,17 @@ export default function SARScene() {
         {/* Scene */}
         <Ground span={worldSpan} />
         <GridOverlay span={worldSpan} gridCells={gridCells} />
+        <Ground span={worldSpan} />
+        <GridOverlay span={worldSpan} gridCells={gridCells} />
         <BasePad />
         {activeWorld === 2 && (
           <World2Environment span={worldSpan} floorHeight={FLOOR_H} floorThickness={FLOOR_T} floodLevel={FLOOD_LEVEL} transparentWalls={transparentWalls} />
         )}
+        {activeWorld === 2 && (
+          <World2Environment span={worldSpan} floorHeight={FLOOR_H} floorThickness={FLOOR_T} floodLevel={FLOOD_LEVEL} transparentWalls={transparentWalls} />
+        )}
         <MissionBuildings
+          buildings={worldBuildings}
           buildings={worldBuildings}
           transparentWalls={transparentWalls}
           floorHeight={FLOOR_H}
@@ -3287,6 +3463,8 @@ export default function SARScene() {
           <AreaSelectProbe
             worldSpan={worldSpan}
             gridSpacing={gridSpacing}
+            worldSpan={worldSpan}
+            gridSpacing={gridSpacing}
             onDragUpdate={(start, end) => {
               setDragStart(start)
               setDragEnd(end)
@@ -3301,10 +3479,12 @@ export default function SARScene() {
         ) : (
           <>
             <GroundProbe worldSpan={worldSpan} onMove={setHoverPt} onDoubleClick={handleGroundClick} />
+            <GroundProbe worldSpan={worldSpan} onMove={setHoverPt} onDoubleClick={handleGroundClick} />
             <GroundCursor point={hoverPt} />
           </>
         )}
         {dragStart && dragEnd && (
+          <AreaHighlight start={dragStart} end={dragEnd} finalised={showContextMenu} gridSpacing={gridSpacing} />
           <AreaHighlight start={dragStart} end={dragEnd} finalised={showContextMenu} gridSpacing={gridSpacing} />
         )}
         {Object.values(drones).map(t => (
@@ -3329,6 +3509,7 @@ export default function SARScene() {
           />
         )}
         <SupplyCrates deliveredTo={deliveredTo} survivors={survivorPositions} />
+        <SupplyCrates deliveredTo={deliveredTo} survivors={survivorPositions} />
         <SurvivorScanRays
           enabled={scanRaysEnabled}
           dronePos={dronePos}
@@ -3337,6 +3518,13 @@ export default function SARScene() {
       </Canvas>
 
       {/* Top Status Bar */}
+      <TopStatusBar
+        selectMode={selectMode}
+        floodLevel={FLOOD_LEVEL}
+        survivors={survivorPositions}
+        activeWorld={activeWorld}
+        onWorldChange={handleWorldChange}
+      />
       <TopStatusBar
         selectMode={selectMode}
         floodLevel={FLOOD_LEVEL}
@@ -3382,6 +3570,7 @@ export default function SARScene() {
         <IntelCard
           survivors={intelSurvivors}
           dronePos={dronePos}
+          totalSurvivors={survivorPositions.length}
           totalSurvivors={survivorPositions.length}
           deliveringTo={deliveringTo}
           deliveredTo={deliveredTo}

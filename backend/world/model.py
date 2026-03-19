@@ -16,7 +16,6 @@ from typing import Literal, NamedTuple
 _SHARED_DIR = _pathlib.Path(__file__).parents[2] / "shared"
 
 # ── Load default world at import time ─────────────────────────────────────────
-CURRENT_WORLD_ID: int = 1
 _WORLD_JSON = _json.loads((_SHARED_DIR / "world.json").read_text())
 _S = _WORLD_JSON["scene"]
 

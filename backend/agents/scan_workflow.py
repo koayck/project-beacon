@@ -575,7 +575,10 @@ SWEEP SCAN PROCEDURE
      If any submerged survivors: also append " [CRITICAL: <N> submerged]" to the header line.
    - Error:   "Building at (x=<x>, z=<z>): SCAN ERROR — <error>"
 4. Call save_scan_result(result=<compact_string>).
-5. Output only: "Result saved for building at (x=<x>, z=<z>)."
+5. Check if this is the LAST building ("Remaining: 0" in current_building):
+   - YES: Call finalize_scan() to terminate the LoopAgent cleanly.
+     Output "SCAN_BATCH_COMPLETE" on its own line.
+   - NO: Output only "Result saved for building at (x=<x>, z=<z>)."
 """
 
 _thermal_for_scan = Agent(
