@@ -232,6 +232,7 @@ async def process_next_supply_target_for_asset(asset_id: str, tool_context: Tool
 
     active_assets = _load_json_state(tool_context.state.get("active_supply_assets", "[]"), [])
     if asset_id not in active_assets:
+        tool_context.actions.escalate = True
         return {"done": True, "asset_id": asset_id, "total_dispatched": 0}
 
     status = await runtime_grpc_client.get_status(asset_id)
@@ -298,6 +299,7 @@ async def process_next_supply_target_for_asset(asset_id: str, tool_context: Tool
             tool_context.state["supply_claimed_initial_by_asset"] = json.dumps(claimed_initial)
             tool_context.state["supply_pending_targets"] = json.dumps(pending)
             tool_context.state["supply_inflight_target_keys"] = json.dumps(sorted(inflight_keys))
+            tool_context.actions.escalate = True
             return {"done": True, "asset_id": asset_id, "total_dispatched": dispatched}
 
         tool_context.state["supply_claimed_initial_by_asset"] = json.dumps(claimed_initial)
