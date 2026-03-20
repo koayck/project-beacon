@@ -1,13 +1,74 @@
+<p align="center">
+  <img src="asset/project-beacon-logo.png" alt="Project Beacon" width="600"/>
+</p>
+
 # Project Beacon
 
-Project Beacon is a 3D simulated, cloud-first Ground Control Station for autonomous drone swarms for search and rescue operations. In comms-denied environment, Starlink is used as backup Internet.
+Cloud-first Ground Control Station for autonomous drone swarms in search and rescue operations with optional Starlink backup.
 
-Current default runtime in this repo:
-- FastAPI + Google ADK commander
-- gRPC drone control + UDP telemetry + WebSocket bridge
-- Dockerized drone simulation (5 default drone containers)
-- SQLite persistence (assets, mission logs, licenses)
-- Model default: `gemini-3-flash-preview` (configured in `backend/agents/_model.py`)
+## Why We Built This
+
+First responders need intuitive control systems for autonomous drone swarms during disaster response. Traditional systems require complex manual controls. Project Beacon uses cloud AI to interpret natural language commands and coordinate multi-drone missions with real-time 3D visualization.
+
+## What It Does
+
+Project Beacon translates plain English commands into coordinated drone swarm actions. The system uses Google's Gemini 2.5 Flash for AI orchestration, with optional Starlink connectivity for backup internet in remote locations.
+
+## Features
+
+- Natural language mission control via Google ADK multi-agent system
+- Real-time 3D simulation with React Three Fiber
+- Cloud-first architecture with optional Starlink backup connectivity
+- gRPC-based drone communication in simulated environment
+
+## Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Desktop | Tauri + Next.js (SSG) |
+| Backend | FastAPI + Google ADK + FastMCP |
+| AI | Gemini 2.5 Flash (or local Ollama) |
+| Visualization | React Three Fiber |
+| Drone Control | gRPC + Protobuf |
+| Telemetry | UDP broadcast + WebSocket |
+| Simulation | Docker + Python |
+| Storage | SQLite |
+
+## How the Agent System Works
+
+Commander Agent receives natural language input and routes to specialist agents:
+
+- **Navigation Agent**: flight path planning, sweep patterns, return-to-base
+- **Scan Workflow**: building/area scan orchestration with thermal detection
+- **Supply Workflow**: parallel survivor supply delivery coordination
+
+### Execution Flow
+
+```
+User: "Scan building at -15, -20 for survivors"
+  → Commander Agent (routes task)
+  → Scan Workflow (selects nearest drone)
+  → Navigation Agent (move_to tool via FastMCP)
+  → gRPC client (Protobuf message)
+  → Docker drone container (updates position/battery)
+  → UDP telemetry broadcast
+  → WebSocket relay to frontend
+  → React Three Fiber renders new position
+```
+
+### Agent Architecture
+
+```
+Commander Agent
+    ├─ Navigation Agent
+    │   └─ Tools: move_to, sweep, return, status
+    ├─ Scan Workflow
+    │   └─ Orchestrates: drone selection → navigation → thermal scan → report
+    └─ Supply Workflow
+        └─ Orchestrates: survivor detection → drone assignment → parallel dispatch
+```
+
+All tool calls translate through FastMCP into gRPC commands sent to simulated drone containers running in Docker.
 
 ## Quick Start
 
@@ -16,7 +77,26 @@ Current default runtime in this repo:
 - Python 3.12+
 - `uv`
 - Docker + Docker Compose
-- A valid `GOOGLE_API_KEY` for the default model path
+- Gemini API key (get from [Google AI Studio](https://aistudio.google.com/apikey))
+- Optional: Langfuse account for LLM observability
+
+### Configuration
+
+Create `backend/.env` with your credentials:
+
+```bash
+# Required: Gemini API
+GEMINI_API_KEY=your-gemini-key-here
+GOOGLE_GENAI_USE_VERTEXAI=false
+
+# Optional: Langfuse observability (remove if not using)
+LANGFUSE_PUBLIC_KEY=pk-lf-xxx
+LANGFUSE_SECRET_KEY=sk-lf-xxx
+LANGFUSE_BASE_URL="https://cloud.langfuse.com"
+
+# Optional: self-hosted Langfuse
+# LANGFUSE_HOST=http://localhost:3000
+```
 
 ### Start the stack
 
@@ -27,10 +107,7 @@ uv sync
 # 2) Start simulated drone fleet (beacon-01..beacon-05)
 docker compose up -d --build
 
-# 3) Export model credentials (required for ADK command endpoints)
-export GOOGLE_API_KEY="your-key"
-
-# 4) Start backend API
+# 3) Start backend API (reads backend/.env automatically)
 uv run python -m backend.app
 # or
 uv run python main.py
