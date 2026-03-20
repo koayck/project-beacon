@@ -24,6 +24,7 @@ const EnvironmentSchema = z.object({
     position: tuple3,
     width: z.number().positive(),
     opacity: z.number().min(0).max(1),
+    horizontal: z.boolean().optional(),
   }),
   parks: z.array(tuple4),
   trees: z.object({
@@ -70,6 +71,7 @@ export interface ResolvedWorldEnvironment {
     position: readonly [number, number, number]
     width: number
     opacity: number
+    horizontal?: boolean
   }>
   parks: readonly (readonly [number, number, number, number])[]
   trees: Readonly<{
