@@ -60,7 +60,7 @@ class DroneSimulator:
     ARRIVAL_THRESHOLD = 0.05 # units — close enough to count as arrived
     DEFAULT_SPEED = 5.0      # units/sec
 
-    BASE_Y = 2.0  # pad surface height (1.8m platform + 0.12m pad + margin)
+    BASE_Y = 0.0
 
     def __init__(self, asset_id: str) -> None:
         origin = Vec3(0.0, self.BASE_Y, 0.0)
