@@ -113,6 +113,16 @@ def clear_detected_survivors() -> None:
     service_context.clear_detected_survivors()
 
 
+def register_supplied_targets(rows: Iterable[dict]) -> int:
+    """Persist targets that have already received supplies."""
+    return service_context.register_supplied_targets(rows)
+
+
+def clear_supplied_targets() -> None:
+    """Reset supplied-target memory (used by tests)."""
+    service_context.clear_supplied_targets()
+
+
 
 
 def set_drone_speed(asset_id: str, speed: float) -> None:
