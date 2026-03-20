@@ -57,6 +57,7 @@ services:
       - GRPC_PORT=50051
       - TELEMETRY_HOST=host.docker.internal
       - PYTHONUNBUFFERED=1
+      - INITIAL_BATTERY=12  # slightly above 10% auto-recall threshold for testing
     networks:
       beacon-net:
         ipv4_address: 172.28.0.13
