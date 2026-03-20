@@ -10,6 +10,13 @@ interface AgentMessage {
   ts: number
 }
 
+export interface AgentMetrics {
+  ttft: number | null
+  tps: number | null
+  busy: boolean
+  elapsed: number
+}
+
 interface Props {
   assetId: string
   connected: boolean
@@ -20,6 +27,7 @@ interface Props {
   externalPrompt?: string | null
   onExternalPromptConsumed?: () => void
   externalAssetId?: string | null
+  onMetricsChange?: (metrics: AgentMetrics) => void
 }
 
 const QUICK_ACTIONS = [
@@ -50,7 +58,7 @@ function messagesToText(messages: AgentMessage[]): string {
     .join('\n\n')
 }
 
-export default function CommandPanel({ assetId, connected, uplinked, battery, onCommand, onStop, externalPrompt, onExternalPromptConsumed, externalAssetId }: Props) {
+export default function CommandPanel({ assetId, connected, uplinked, battery, onCommand, onStop, externalPrompt, onExternalPromptConsumed, externalAssetId, onMetricsChange }: Props) {
   const [input, setInput]       = useState('')
   const [busy, setBusy]         = useState(false)
   const [elapsed, setElapsed]   = useState(0)
@@ -68,6 +76,10 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    onMetricsChange?.({ ttft, tps, busy, elapsed })
+  }, [ttft, tps, busy, elapsed, onMetricsChange])
 
   // Auto-submit externally injected prompts (e.g. from area scan)
   useEffect(() => {
@@ -230,7 +242,7 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
           flexShrink: 0,
         }} />
         <span style={{ color: connected ? '#33ff88' : uplinked ? '#ffcc66' : '#ff6666', fontWeight: 'bold', letterSpacing: 1.5, fontSize: 13 }}>
-          {assetId}
+          COMMANDER
         </span>
         <span style={{ color: '#6a7a8a', fontSize: 12 }}>
           {connected ? 'CONNECTED' : uplinked ? 'REGISTERED / OFFLINE' : 'OFFLINE'}
@@ -268,41 +280,8 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
         </div>
       </div>
 
-      {/* Secondary row — metrics */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        padding: '0 14px 6px',
-        borderBottom: '1px solid rgba(60,100,180,0.12)',
-        fontSize: 12,
-      }}>
-        <span style={{ color: '#5a6a7a' }}>ADK / Qwen3.5</span>
-
-        {battery !== null && (
-          <span style={{ color: battery > 30 ? '#88cc66' : '#ff9933' }}>
-            BAT {battery.toFixed(0)}%
-          </span>
-        )}
-
-        {ttft !== null && (
-          <span style={{ color: '#5af' }} title="Time to First Token">
-            <span style={{ color: '#5a6a7a' }}>TTFT </span>
-            {ttft < 1000 ? `${ttft}ms` : `${(ttft / 1000).toFixed(1)}s`}
-          </span>
-        )}
-        {tps !== null && (
-          <span style={{ color: '#5af' }} title="Tokens per Second">
-            <span style={{ color: '#5a6a7a' }}>TPS </span>{tps}
-          </span>
-        )}
-
-        {busy && (
-          <span style={{ color: '#5af', marginLeft: 'auto' }}>
-            <Spinner /> {elapsed > 0 ? `${elapsed}s` : 'inferring'}
-          </span>
-        )}
-      </div>
+      {/* Thin divider under header */}
+      <div style={{ borderBottom: '1px solid rgba(60,100,180,0.12)' }} />
 
       {!minimized && (
         <>
@@ -461,6 +440,11 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
             opacity: (busy || !connected) ? 0.4 : 1,
           }}
         />
+        {busy && (
+          <span style={{ color: '#5af', padding: '0 8px', display: 'flex', alignItems: 'center', fontSize: 12 }}>
+            <Spinner /> {elapsed > 0 ? `${elapsed}s` : '...'}
+          </span>
+        )}
         {busy ? (
           <button
             onClick={() => { onStop?.(); setBusy(false) }}
