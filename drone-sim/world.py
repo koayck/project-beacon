@@ -17,7 +17,8 @@ _WORLD_JSON = json.loads(_WORLD_JSON_PATH.read_text())
 _SCENE = _WORLD_JSON["scene"]
 
 FLOOD_LEVEL: float = float(_SCENE["flood_level_m"])
-SURVIVOR_RANGE: float = 5.0
+SURVIVOR_RANGE: float = 3.0
+INDOOR_SURVIVOR_RANGE: float = 7.5
 FLOOR_HEIGHT: float = 3.0
 FLOOR_SLAB_THICKNESS: float = 0.2
 
@@ -295,12 +296,23 @@ def get_view(x: float, y: float, z: float,
         )
 
     nearby_s: list[SimSurvivor] = []
-    effective_survivor_range = SURVIVOR_RANGE if survivor_range is None else max(float(survivor_range), 0.0)
+    effective_survivor_range = (
+        SURVIVOR_RANGE if survivor_range is None else max(float(survivor_range), 0.0)
+    )
     for s in SURVIVORS:
+        survivor_building = _building_at(s.x, s.y, s.z)
         if not _survivor_visible(s):
             continue
-        if s.dist(x, y, z) <= effective_survivor_range:
-            nearby_s.append(s)
+        distance = s.dist(x, y, z)
+        # Mirror backend policy: outdoors use strict short range; indoors use
+        # a larger bounded range unless caller overrides survivor_range.
+        if survivor_building is None and distance > effective_survivor_range:
+            continue
+        if survivor_building is not None and survivor_range is None and distance > INDOOR_SURVIVOR_RANGE:
+            continue
+        if survivor_building is not None and survivor_range is not None and distance > effective_survivor_range:
+            continue
+        nearby_s.append(s)
 
     nearest_b_dist = min((b.dist_xz(x, z) for b in nearby_b), default=float("inf"))
 
