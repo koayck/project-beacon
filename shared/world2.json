@@ -16,11 +16,6 @@
       "w": 10,
       "d": 15,
       "h": 12,
-      "cx": -15,
-      "cz": -15,
-      "w": 10,
-      "d": 15,
-      "h": 12,
       "windows": [
         {
           "floor": 2,
@@ -61,7 +56,7 @@
           "width": 2,
           "height": 1.6,
           "sill": 0.4
-        }
+        },
         {
           "floor": 2,
           "face": "south",
@@ -159,7 +154,7 @@
           "width": 2,
           "height": 1.6,
           "sill": 0.4
-        }
+        },
         {
           "floor": 3,
           "face": "south",
@@ -254,7 +249,7 @@
           "width": 2,
           "height": 1.6,
           "sill": 0.4
-        }
+        },
         {
           "floor": 1,
           "face": "south",
@@ -344,7 +339,7 @@
           "width": 1.8,
           "height": 1.4,
           "sill": 0.5
-        }
+        },
         {
           "floor": 2,
           "face": "south",
@@ -447,7 +442,7 @@
           "width": 2,
           "height": 1.6,
           "sill": 0.4
-        }
+        },
         {
           "floor": 3,
           "face": "east",
@@ -542,7 +537,7 @@
           "width": 1.6,
           "height": 1.4,
           "sill": 0.5
-        }
+        },
         {
           "floor": 2,
           "face": "south",
