@@ -403,6 +403,18 @@ export default function SARScene() {
     addLog(nextAssetId ? `👁 Following ${nextAssetId}` : '👁 Follow mode enabled (no active drones)')
   }, [addLog, defaultFollowAssetId, followBeacon])
 
+  const handleOrbitStart = useCallback(() => {
+    // Keep hook for future control-state based interactions.
+  }, [])
+
+  const handleScenePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    // Right mouse button begins pan in our control mapping.
+    if (!followBeacon) return
+    if (event.button !== 2) return
+    setFollowBeacon(false)
+    addLog('👁 Follow mode disabled by manual pan')
+  }, [addLog, followBeacon])
+
   const cycleFollowTarget = useCallback((direction: 1 | -1) => {
     if (!followBeacon || activeDroneAssetIds.length === 0) return
 
@@ -1035,20 +1047,40 @@ export default function SARScene() {
   }, [fleetScannedSurvivors])
 
   return (
-    <div className={`relative h-full w-full bg-[#0a0a14] ${selectMode ? 'cursor-crosshair' : 'cursor-default'}`}>
+    <div
+      className={`relative h-full w-full bg-[#0a0a14] ${selectMode ? 'cursor-crosshair' : 'cursor-default'}`}
+      onPointerDown={handleScenePointerDown}
+    >
       <Canvas shadows key={activeWorld}>
         <fog attach="fog" args={['#0d0d1f', fogRange[0], fogRange[1]]} />
         <PerspectiveCamera makeDefault position={camPos} fov={60} near={0.1} far={1000} />
         <OrbitControls
           ref={orbitRef}
-          enabled={!followBeacon && !selectMode}
+          enabled={!selectMode}
+          onStart={handleOrbitStart}
           enableDamping
           dampingFactor={0.08}
+          enablePan
+          enableRotate
+          mouseButtons={{
+            LEFT: THREE.MOUSE.ROTATE,
+            MIDDLE: THREE.MOUSE.DOLLY,
+            RIGHT: THREE.MOUSE.PAN,
+          }}
+          touches={{
+            ONE: THREE.TOUCH.ROTATE,
+            TWO: followBeacon ? THREE.TOUCH.DOLLY_ROTATE : THREE.TOUCH.DOLLY_PAN,
+          }}
           minDistance={5}
           maxDistance={400}
           target={[0, 5, 0]}
         />
-        <FollowBeaconCamera enabled={followBeacon} targetPos={followTargetPos} controlsRef={orbitRef} />
+        <FollowBeaconCamera
+          enabled={followBeacon}
+          targetPos={followTargetPos}
+          followAssetId={followedAssetId}
+          controlsRef={orbitRef}
+        />
         <CameraTracker northAngleRef={northAngleRef} />
 
         {/* Lighting */}
