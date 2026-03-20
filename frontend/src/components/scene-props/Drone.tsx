@@ -16,6 +16,7 @@ interface DroneProps {
   assetId?: string
   headingDeg?: number
   scanTiltDeg?: number
+  battery?: number
 }
 
 export function DroneMesh({
@@ -28,6 +29,7 @@ export function DroneMesh({
   assetId = '',
   headingDeg = 0,
   scanTiltDeg = 0,
+  battery,
 }: DroneProps) {
   void nearbyObstacles
   void nearestObstacleDist
@@ -143,6 +145,13 @@ export function DroneMesh({
           <Html position={[0, 0.9, 0]} center distanceFactor={14} zIndexRange={[0, 0]}>
             <div className="pointer-events-none whitespace-nowrap rounded-[3px] border border-[rgba(0,255,255,0.4)] bg-[rgba(0,16,24,0.82)] px-[7px] py-[2px] font-mono text-[48px] font-bold tracking-[0.05em] text-[#00ffff]">
               {assetId}
+              {battery !== undefined && (
+                <span className={`ml-[8px] text-[36px] font-normal ${
+                  battery > 50 ? 'text-[#44cc66]' : battery > 20 ? 'text-[#ffcc00]' : 'text-[#ff3333]'
+                }`}>
+                  {Math.round(battery)}%
+                </span>
+              )}
             </div>
           </Html>
         )}

@@ -187,20 +187,27 @@ interface ActivityFeedProps {
 }
 
 export function ActivityFeed({ items, busy, onClear }: ActivityFeedProps) {
+  const [collapsed, setCollapsed] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [items.length])
+    if (!collapsed) bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [items.length, collapsed])
 
   return (
     <div className="pointer-events-auto relative flex max-h-full w-[340px] flex-col overflow-hidden rounded-lg border border-l-2 border-[#2090b033] border-l-[#2090b0] bg-[linear-gradient(135deg,rgba(6,8,16,0.88),rgba(4,6,14,0.82))] font-mono text-[13px] leading-[1.6] shadow-[0_4px_30px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(32,144,176,0.08)] backdrop-blur-[12px]">
       <div className="pointer-events-none absolute left-[-30%] top-0 z-0 h-full w-[30%] animate-[beacon-scanLine_5s_linear_infinite] bg-[linear-gradient(90deg,transparent,rgba(32,144,176,0.04),transparent)]" />
 
-      <div className="relative z-[2] flex shrink-0 items-center justify-between border-b border-[rgba(32,144,176,0.15)] bg-[linear-gradient(135deg,rgba(6,8,16,0.95),rgba(4,6,14,0.9))] px-4 pb-[10px] pt-3 tracking-[2px] text-[#c0d0e0]">
+      <button
+        onClick={() => setCollapsed(c => !c)}
+        className="relative z-[2] flex w-full shrink-0 cursor-pointer items-center justify-between border-b border-[rgba(32,144,176,0.15)] border-x-0 border-t-0 bg-[linear-gradient(135deg,rgba(6,8,16,0.95),rgba(4,6,14,0.9))] px-4 pb-[10px] pt-3 text-left font-mono tracking-[2px] text-[#c0d0e0]"
+      >
         <span className="flex items-center gap-2 text-sm font-bold">
           <span className="text-base text-[#2090b0] drop-shadow-[0_0_8px_rgba(32,144,176,0.5)]">◉</span>
           MISSION LOG
+          {collapsed && items.length > 0 && (
+            <span className="text-[11px] font-normal tracking-[0.5px] text-[#5a6a7a]">({items.length})</span>
+          )}
         </span>
         <div className="flex items-center gap-2">
           {busy && (
@@ -209,57 +216,63 @@ export function ActivityFeed({ items, busy, onClear }: ActivityFeedProps) {
               LIVE
             </span>
           )}
-          {items.length > 0 && (
-            <button
-              onClick={onClear}
+          {!collapsed && items.length > 0 && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={e => { e.stopPropagation(); onClear() }}
+              onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); onClear() } }}
               className="cursor-pointer rounded-[3px] border border-[rgba(80,120,200,0.15)] bg-[rgba(20,25,40,0.5)] px-[6px] py-[1px] font-mono text-[11px] leading-[18px] text-[#6a7a8a] transition-colors duration-150"
               title="Clear mission log"
             >
               CLR
-            </button>
+            </span>
           )}
+          <span className="text-[10px] text-[#556]">{collapsed ? '▸' : '▾'}</span>
         </div>
-      </div>
+      </button>
 
-      {items.length === 0 ? (
-        <div className="relative z-[1] px-4 py-3 text-center text-xs italic text-[#6a7a8a]">
-          Awaiting mission orders...
-        </div>
-      ) : (
-        <div className="relative z-[1] flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-[14px] pb-[10px] pt-1">
-          {items.map((item, idx) => {
-            const cat = CATEGORY_STYLE[item.category] ?? CATEGORY_STYLE.system
-            const isLast = idx === items.length - 1
-            return (
-              <div
-                key={item.id}
-                className={`flex items-start gap-2 rounded-[3px] border-b border-[rgba(50,60,80,0.3)] px-[6px] py-[5px] ${isLast ? 'animate-[beacon-slideIn_0.3s_ease-out]' : ''} ${isLast && busy ? cat.glowClass : 'bg-transparent'}`}
-              >
-                <div className="flex w-4 shrink-0 flex-col items-center pt-0.5">
-                  <span className={`text-sm leading-none ${cat.colorClass}`}>{item.icon}</span>
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className={`text-[13px] ${item.category === 'reasoning' ? 'font-normal italic' : 'font-semibold'} ${cat.colorClass}`}>
-                      {item.label}
-                    </span>
-                    <span className="shrink-0 text-[11px] tabular-nums text-[#5a6a7a]">
-                      {missionTime(item.ts)}
-                    </span>
+      {!collapsed && (
+        items.length === 0 ? (
+          <div className="relative z-[1] px-4 py-3 text-center text-xs italic text-[#6a7a8a]">
+            Awaiting mission orders...
+          </div>
+        ) : (
+          <div className="relative z-[1] flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-[14px] pb-[10px] pt-1">
+            {items.map((item, idx) => {
+              const cat = CATEGORY_STYLE[item.category] ?? CATEGORY_STYLE.system
+              const isLast = idx === items.length - 1
+              return (
+                <div
+                  key={item.id}
+                  className={`flex items-start gap-2 rounded-[3px] border-b border-[rgba(50,60,80,0.3)] px-[6px] py-[5px] ${isLast ? 'animate-[beacon-slideIn_0.3s_ease-out]' : ''} ${isLast && busy ? cat.glowClass : 'bg-transparent'}`}
+                >
+                  <div className="flex w-4 shrink-0 flex-col items-center pt-0.5">
+                    <span className={`text-sm leading-none ${cat.colorClass}`}>{item.icon}</span>
                   </div>
-                  {item.thinkingLines && item.thinkingLines.length > 0 ? (
-                    <ThinkingEntry lines={item.thinkingLines} streaming={busy && isLast} />
-                  ) : item.detail ? (
-                    <div className={`mt-px break-words whitespace-pre-wrap text-xs ${cat.detailClass}`}>
-                      {item.detail}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className={`text-[13px] ${item.category === 'reasoning' ? 'font-normal italic' : 'font-semibold'} ${cat.colorClass}`}>
+                        {item.label}
+                      </span>
+                      <span className="shrink-0 text-[11px] tabular-nums text-[#5a6a7a]">
+                        {missionTime(item.ts)}
+                      </span>
                     </div>
-                  ) : null}
+                    {item.thinkingLines && item.thinkingLines.length > 0 ? (
+                      <ThinkingEntry lines={item.thinkingLines} streaming={busy && isLast} />
+                    ) : item.detail ? (
+                      <div className={`mt-px break-words whitespace-pre-wrap text-xs ${cat.detailClass}`}>
+                        {item.detail}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-            )
-          })}
-          <div ref={bottomRef} />
-        </div>
+              )
+            })}
+            <div ref={bottomRef} />
+          </div>
+        )
       )}
     </div>
   )
