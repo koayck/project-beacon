@@ -5,6 +5,11 @@ import json
 import math
 from collections.abc import Awaitable, Callable
 
+
+def _normalize_scan_route_error(message: object, fallback: str) -> str:
+    text = str(message) if message is not None else fallback
+    return text.replace("return route", "scan route")
+
 async def sweep_scan_building(
     asset_id: str,
     *,
@@ -117,11 +122,15 @@ async def sweep_scan_building(
             }
         wait_result = await wait_until_waypoint_reached(
             asset_id, move_wp["x"], move_wp["y"], move_wp["z"],
+            exclude_building_id=building_id,
         )
         if not wait_result.get("ok", False):
             return {
                 "asset_id": asset_id,
-                "error": wait_result.get("error", "Could not reach building rooftop"),
+                "error": _normalize_scan_route_error(
+                    wait_result.get("error"),
+                    "Could not reach building rooftop",
+                ),
                 "status": wait_result.get("status"),
                 "completed_waypoints": 0,
             }
@@ -188,7 +197,10 @@ async def sweep_scan_building(
             if not wait_result.get("ok", False):
                 return {
                     "asset_id": asset_id,
-                    "error": wait_result.get("error", "Could not reach first sweep waypoint"),
+                    "error": _normalize_scan_route_error(
+                        wait_result.get("error"),
+                        "Could not reach first sweep waypoint",
+                    ),
                     "status": wait_result.get("status"),
                     "completed_waypoints": 0,
                 }
@@ -214,7 +226,10 @@ async def sweep_scan_building(
         if not wait_result.get("ok", False):
             return {
                 "asset_id": asset_id,
-                "error": wait_result.get("error", "Sweep waypoint not reached"),
+                "error": _normalize_scan_route_error(
+                    wait_result.get("error"),
+                    "Sweep waypoint not reached",
+                ),
                 "failed_waypoint": wp,
                 "status": wait_result.get("status"),
                 "completed_waypoints": index - 1,
@@ -243,7 +258,10 @@ async def sweep_scan_building(
         if not scan_wait.get("ok", False):
             return {
                 "asset_id": asset_id,
-                "error": scan_wait.get("error", "Scan hold not reached"),
+                "error": _normalize_scan_route_error(
+                    scan_wait.get("error"),
+                    "Scan hold not reached",
+                ),
                 "failed_scan_waypoint": wp,
                 "status": scan_wait.get("status"),
                 "completed_waypoints": index - 1,

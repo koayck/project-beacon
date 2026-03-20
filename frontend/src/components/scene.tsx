@@ -248,8 +248,19 @@ export default function SARScene() {
           && !reservedKeys.has(key)
         )
       })
+      const availableKnown = survivorPositions.filter((survivor) => {
+        const key = survivorKey(survivor)
+        return (
+          !deliveredToRef.current.has(key)
+          && !deliveringToRef.current.has(key)
+          && !reservedKeys.has(key)
+        )
+      })
 
       const exactDetectedTarget = availableDetected.find(
+        (survivor) => distanceBetweenPoints(survivor, dispatchSurvivor) <= SUPPLY_DISPATCH_TARGET_TOLERANCE
+      )
+      const exactKnownTarget = availableKnown.find(
         (survivor) => distanceBetweenPoints(survivor, dispatchSurvivor) <= SUPPLY_DISPATCH_TARGET_TOLERANCE
       )
       const targetByBuilding = nearestBuilding
@@ -257,8 +268,22 @@ export default function SARScene() {
           survivorAssociatedBuildingId(simBuildings, worldBuildings, survivor) === nearestBuilding.building.id
         ))
         : null
+      const knownTargetByBuilding = nearestBuilding
+        ? availableKnown.find((survivor) => (
+          survivorAssociatedBuildingId(simBuildings, worldBuildings, survivor) === nearestBuilding.building.id
+        ))
+        : null
       const fallbackTarget = availableDetected[0]
-      const target = exactDetectedTarget ?? targetByBuilding ?? fallbackTarget
+      const fallbackKnownTarget = availableKnown[0]
+      const target = (
+        exactDetectedTarget
+        ?? exactKnownTarget
+        ?? targetByBuilding
+        ?? knownTargetByBuilding
+        ?? fallbackTarget
+        ?? fallbackKnownTarget
+        ?? dispatchSurvivor
+      )
       if (!target) continue
 
       const key = survivorKey(target)
@@ -291,7 +316,7 @@ export default function SARScene() {
     } else if (dispatches.length > 0) {
       addLog('ℹ No detected survivors available for supply visualization')
     }
-  }, [addLog, drones, queueSupplyThrow, simBuildings, worldBuildings])
+  }, [addLog, drones, queueSupplyThrow, simBuildings, survivorPositions, worldBuildings])
 
   useEffect(() => {
     deliveredToRef.current = deliveredTo
