@@ -56,6 +56,12 @@ def plan_building_vertical_sweep(
         }
 
     face_standoffs = _safe_standoff_per_face(building, safe_standoff)
+    # When a balcony protrudes from a face, increase the minimum standoff                                          
+    # so the drone clears the balcony edge.                                                                               
+    for face in ("north", "south", "east", "west"):                                                                
+        protrusion = building.balcony_protrusion(face)                                                             
+        if protrusion > 0:                                                                                         
+            face_standoffs[face] = max(face_standoffs[face], protrusion + 1.0)
 
     all_window_wps: list[dict] = []
     for window in building.windows:
@@ -83,11 +89,13 @@ def plan_building_vertical_sweep(
 
     floor_levels = sorted({round(w["y"], 2) for w in above_flood})
 
+    # When a balcony protrudes from a face, push that face's perimeter
+    # outward by the balcony depth so the drone path clears the balcony geometry.
     perimeter_margin = 1.0
-    p_min_x = building.min_x - perimeter_margin
-    p_max_x = building.max_x + perimeter_margin
-    p_min_z = building.min_z - perimeter_margin
-    p_max_z = building.max_z + perimeter_margin
+    p_min_x = building.min_x - perimeter_margin - building.balcony_protrusion("west")
+    p_max_x = building.max_x + perimeter_margin + building.balcony_protrusion("east")
+    p_min_z = building.min_z - perimeter_margin - building.balcony_protrusion("north")
+    p_max_z = building.max_z + perimeter_margin + building.balcony_protrusion("south")
 
     _CORNER_CLEARANCE = 1.5
     nw_x, nw_z = _push_xz_clear(p_min_x, p_min_z, building.id, clearance=_CORNER_CLEARANCE)
