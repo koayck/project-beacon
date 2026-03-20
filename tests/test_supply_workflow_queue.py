@@ -16,10 +16,19 @@ from backend.agents.supply_workflow import (
 )
 from backend.runtime import grpc_client
 from backend.services.api.control import (
+    clear_supplied_targets,
     clear_detected_survivors,
     find_survivors_in_area,
     register_detected_survivors,
+    register_supplied_targets,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_supply_memory() -> None:
+    clear_supplied_targets()
+    yield
+    clear_supplied_targets()
 
 
 def test_dedupe_targets_normalizes_mixed_id_types() -> None:
@@ -52,6 +61,42 @@ def test_prepare_parallel_supply_dispatch_returns_no_targets_message() -> None:
     report = build_aggregated_supply_report(tool_context)
     assert report["summary"] == "No survivors detected in the selected area. Supply dispatch skipped."
     assert report["total_targets"] == 0
+
+
+def test_build_aggregated_supply_report_excludes_skipped_from_total_supplied() -> None:
+    tool_context = SimpleNamespace(
+        state={
+            "supply_no_targets": False,
+            "supply_total_targets": 2,
+            "supply_results_structured": json.dumps(
+                [
+                    {
+                        "asset_id": "BEACON-01",
+                        "target": {"id": 1, "x": 10.0, "z": -10.0},
+                        "success": True,
+                        "skipped": False,
+                        "message": "sent",
+                        "supply_result": {"success": True},
+                    },
+                    {
+                        "asset_id": "BEACON-02",
+                        "target": {"id": 1, "x": 10.0, "z": -10.0},
+                        "success": False,
+                        "skipped": True,
+                        "message": "skipped",
+                        "supply_result": {"success": True, "skipped": True},
+                    },
+                ]
+            ),
+        },
+        actions=SimpleNamespace(escalate=False),
+    )
+
+    report = build_aggregated_supply_report(tool_context)
+    assert report["total_supplied"] == 1
+    assert report["failed_targets"] == 0
+    assert report["skipped_targets"] == 1
+    assert "SKIPPED TARGETS: 1" in report["summary"]
 
 
 def test_find_survivors_in_area_requires_all_detected_before_supply() -> None:
@@ -120,6 +165,22 @@ async def test_assign_drones_disables_execution_stage_when_no_targets() -> None:
     restored = await assign_drones_to_supply_targets(restore_context)
     assert restored["total_assigned"] == 1
     assert len(_supply_execution_stage.sub_agents) == 3
+
+
+@pytest.mark.asyncio
+async def test_assign_drones_skips_already_supplied_targets() -> None:
+    register_supplied_targets([{"id": 99, "x": 20.0, "y": 6.65, "z": -16.0}])
+    tool_context = SimpleNamespace(
+        state={
+            "supply_targets": (
+                '{"asset_id":"BEACON-01","survivors":[{"id":99,"x":20.0,"y":6.65,"z":-16.0}]}'
+            )
+        },
+        actions=SimpleNamespace(escalate=False),
+    )
+    result = await assign_drones_to_supply_targets(tool_context)
+    assert result["total_assigned"] == 0
+    assert "No survivors detected" in result["note"]
 
 
 @pytest.mark.asyncio
@@ -211,4 +272,43 @@ async def test_process_next_supply_target_stops_when_only_completed_targets_rema
     assert result["done"] is True
     assert result["total_dispatched"] == 1
     assert dispatch_calls == []
-    assert tool_context.actions.escalate is True
+    assert tool_context.actions.escalate is False
+
+
+@pytest.mark.asyncio
+async def test_process_next_supply_target_skips_globally_supplied_pending_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _status(_asset_id: str) -> dict:
+        return {"x": 0.0, "z": 0.0}
+
+    monkeypatch.setattr(grpc_client, "get_status", _status)
+
+    import backend.services.api.control as drone_control
+
+    async def _dispatch(_asset_id: str, _building: dict) -> dict:
+        return {"success": True, "waypoint_count": 3}
+
+    monkeypatch.setattr(drone_control, "dispatch_supply_to_building", _dispatch)
+
+    register_supplied_targets([{"id": 55, "x": 24.0, "y": 3.0, "z": -14.0}])
+
+    tool_context = SimpleNamespace(
+        state={
+            "active_supply_assets": '["BEACON-01"]',
+            "supply_initial_target_by_asset": '{"BEACON-01":{"id":101,"x":20.0,"y":3.0,"z":-10.0}}',
+            "supply_pending_targets": '[{"id":55,"x":24.0,"y":3.0,"z":-14.0}]',
+            "supply_claimed_initial_by_asset": '{"BEACON-01":true}',
+            "supply_done_count_by_asset": '{"BEACON-01":1}',
+            "supply_results_by_asset": '{"BEACON-01":[]}',
+            "supply_results_list": "[]",
+            "supply_results_structured": "[]",
+            "supply_completed_target_keys": "[]",
+            "supply_inflight_target_keys": "[]",
+        },
+        actions=SimpleNamespace(escalate=False),
+    )
+
+    result = await process_next_supply_target_for_asset("BEACON-01", tool_context)
+    assert result["done"] is True
+    assert json.loads(tool_context.state["supply_pending_targets"]) == []
