@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { DroneMap } from '@/lib/ws'
 
 
@@ -48,12 +49,27 @@ function statusGlowClass(status: string): string {
 }
 
 export function DroneStatusPanel({ drones }: { drones: DroneMap }) {
+  const [collapsed, setCollapsed] = useState(false)
   const entries = Object.values(drones)
   if (entries.length === 0) return null
 
   return (
     <div className="flex flex-col gap-1.5">
-      {entries.map(d => {
+      <button
+        type="button"
+        onClick={() => setCollapsed(c => !c)}
+        className="flex w-full items-center justify-between rounded-md border border-[rgba(100,180,255,0.12)] bg-[linear-gradient(135deg,rgba(6,8,16,0.92),rgba(4,6,14,0.86))] px-3 py-1.5 font-mono text-xs tracking-wide text-[#8ab4d0] backdrop-blur-[12px] transition-colors hover:border-[rgba(100,180,255,0.25)] hover:text-[#a0ccee]"
+      >
+        <span className="flex items-center gap-2">
+          <span className="text-[10px] text-[#5a8aaa]">■</span>
+          FLEET STATUS
+          <span className="text-[10px] text-[#5a7a8a]">[{entries.length}]</span>
+        </span>
+        <span className={`text-[10px] transition-transform duration-200 ${collapsed ? '-rotate-90' : 'rotate-0'}`}>
+          ▼
+        </span>
+      </button>
+      {!collapsed && entries.map(d => {
         const cardClass = droneCardClass(d.status)
         const statusClass = statusTextColorClass(d.status)
         const statusGlow = statusGlowClass(d.status)
