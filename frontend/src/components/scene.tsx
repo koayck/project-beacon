@@ -79,6 +79,7 @@ import {
   survivorKey,
 } from '../../constants/missionConstants'
 import { ActivityFeed, IntelCard, nextActivityId, parseEventToActivity, type ActivityCategory, type ActivityItem } from './panels/StatPanel'
+import { MetricsPanel } from './panels/MetricsPanel'
 import { DroneMesh } from './scene-props/Drone'
 import { SupplyCrates } from './scene-props/SupplyCrate'
 import type { SurvivorPoint, WorldBuilding } from '../types/worldTypes'
@@ -141,6 +142,12 @@ export default function SARScene() {
   const autoRecallDismissedRef = useRef<Set<string>>(new Set())
   const autoRecallTriggeredRef = useRef<Set<string>>(new Set())
   const autoRecallInFlightRef = useRef<Set<string>>(new Set())
+  // ── Performance metrics state ──────────────────────────────────────────────
+  const [missionStartTs, setMissionStartTs] = useState<number | null>(null)
+  const [lastTtftMs, setLastTtftMs] = useState<number | null>(null)
+  const survivorDetectionTsRef = useRef<Map<string, number>>(new Map())
+  const [survivorDetectionTimestamps, setSurvivorDetectionTimestamps] = useState<Map<string, number>>(new Map())
+  const [survivorDeliveryTimestamps, setSurvivorDeliveryTimestamps] = useState<Map<string, number>>(new Map())
   // ── Area selection state ─────────────────────────────────────────────────────
   const [selectMode, setSelectMode]       = useState(false)
   const [dragStart, setDragStart]         = useState<THREE.Vector3 | null>(null)
@@ -675,6 +682,7 @@ export default function SARScene() {
     backendSupplyDispatchSeenRef.current = false
     addLog(`⬆ ${prompt}`)
     setAgentBusy(true)
+    setMissionStartTs(prev => prev ?? Date.now())
     setActivities(prev => [...prev, { id: nextActivityId(), icon: '◆', label: prompt.length > 50 ? prompt.slice(0, 47) + '...' : prompt, ts: Date.now(), status: 'done', category: 'dispatch' as ActivityCategory }])
     const effectiveAssetId = assetIdOverride ?? ASSET_ID
     try {
@@ -752,7 +760,12 @@ export default function SARScene() {
             setRouteArrived(true)
           }
         }
-        if (event.type === 'done') addLog('✓ Agent responded')
+        if (event.type === 'done') {
+          addLog('✓ Agent responded')
+          if (event.ttft_ms !== null && event.ttft_ms !== undefined) {
+            setLastTtftMs(event.ttft_ms)
+          }
+        }
       }
     } catch (e: unknown) {
       if (e instanceof Error && e.name === 'AbortError') {
@@ -857,6 +870,7 @@ export default function SARScene() {
     if (!activeThrow) return
     const key = survivorKey(activeThrow.to)
     setDeliveredTo(prev => new Set(prev).add(key))
+    setSurvivorDeliveryTimestamps(prev => new Map(prev).set(key, Date.now()))
     setDeliveringTo(prev => {
       const next = new Set(prev)
       next.delete(key)
@@ -984,6 +998,17 @@ export default function SARScene() {
   useEffect(() => {
     detectedSurvivorsRef.current = intelSurvivors
     detectedSurvivorKeysRef.current = detectedSurvivorKeys
+    // Record detection timestamps for new survivors
+    const now = Date.now()
+    let changed = false
+    for (const s of intelSurvivors) {
+      const key = survivorKey(s)
+      if (!survivorDetectionTsRef.current.has(key)) {
+        survivorDetectionTsRef.current.set(key, now)
+        changed = true
+      }
+    }
+    if (changed) setSurvivorDetectionTimestamps(new Map(survivorDetectionTsRef.current))
   }, [intelSurvivors, detectedSurvivorKeys])
   const survivorStatsByBuilding = useMemo(() => {
     const stats: Record<number, { detected: number; supplied: number }> = {}
@@ -1086,6 +1111,7 @@ export default function SARScene() {
             assetId={t.asset_id}
             headingDeg={t.heading_deg}
             scanTiltDeg={t.scan_tilt_deg}
+            battery={t.battery}
           />
         ))}
         {activeThrow && (
@@ -1108,9 +1134,20 @@ export default function SARScene() {
         networkMockStatus={networkMockStatus}
       />
 
-      {/* Left panel — Mission Log */}
-      <div className="pointer-events-auto absolute left-4 top-[60px] flex max-h-[calc(100%-180px)] flex-col">
+      {/* Left panel — Mission Log + Metrics */}
+      <div className="pointer-events-auto absolute left-4 top-[60px] flex max-h-[calc(100%-180px)] flex-col gap-2">
         <ActivityFeed items={activities} busy={agentBusy} onClear={() => setActivities([])} />
+        <MetricsPanel
+          missionStartTs={missionStartTs}
+          activities={activities}
+          detectedCount={intelSurvivors.length}
+          rescuedCount={deliveredTo.size}
+          totalSurvivors={survivorPositions.length}
+          drones={drones}
+          lastTtftMs={lastTtftMs}
+          survivorDetectionTimestamps={survivorDetectionTimestamps}
+          survivorDeliveryTimestamps={survivorDeliveryTimestamps}
+        />
       </div>
       {!selectMode && <CoordOverlay point={hoverPt} copied={copied} />}
       <CompassLabels northAngleRef={northAngleRef} />
