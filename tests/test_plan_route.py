@@ -266,3 +266,30 @@ class TestBlockedRetry:
             "BEACON-01", 50.0, 10.0, 50.0, blocked_retries=2,
         )
         assert result["ok"] is False
+
+    @pytest.mark.asyncio
+    async def test_recovers_from_blocked_during_replanned_subwaypoint(self, _mock_client):
+        """A second BLOCKED during re-plan execution should still recover when retries remain."""
+        _mock_client.get_status.side_effect = [
+            # initial wait poll -> blocked
+            {"asset_id": "BEACON-01", "x": 5.0, "y": 10.0, "z": 5.0, "battery": 70, "status": "BLOCKED"},
+            # plan_route(current status)
+            {"asset_id": "BEACON-01", "x": 5.0, "y": 10.0, "z": 5.0, "battery": 70, "status": "IDLE"},
+            # sub-wait for first re-planned waypoint -> blocked again
+            {"asset_id": "BEACON-01", "x": 7.0, "y": 10.0, "z": 7.0, "battery": 69, "status": "BLOCKED"},
+            # nested plan_route(current status)
+            {"asset_id": "BEACON-01", "x": 7.0, "y": 10.0, "z": 7.0, "battery": 69, "status": "IDLE"},
+            # nested sub-wait reaches target waypoint
+            {"asset_id": "BEACON-01", "x": 10.0, "y": 10.0, "z": 10.0, "battery": 68, "status": "IDLE"},
+            # final status after success
+            {"asset_id": "BEACON-01", "x": 10.0, "y": 10.0, "z": 10.0, "battery": 68, "status": "IDLE"},
+            # outer caller final status fetch
+            {"asset_id": "BEACON-01", "x": 10.0, "y": 10.0, "z": 10.0, "battery": 68, "status": "IDLE"},
+        ]
+        _mock_client.move_to.return_value = {"success": True}
+
+        result = await _wait_until_waypoint_reached(
+            "BEACON-01", 10.0, 10.0, 10.0, blocked_retries=2,
+        )
+
+        assert result["ok"] is True

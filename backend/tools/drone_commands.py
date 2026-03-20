@@ -93,6 +93,7 @@ async def sweep_scan_building(
             target_z=float(wp["z"]),
             target_y=float(wp["y"]),
             snap_to_building_center=False,
+            exclude_building_id=preplan.get("building", {}).get("id"),
         )
         if isinstance(route, dict) and "error" in route:
             return {
@@ -125,6 +126,7 @@ async def sweep_scan_building(
                 float(move_wp["x"]),
                 float(move_wp["y"]),
                 float(move_wp["z"]),
+                exclude_building_id=preplan.get("building", {}).get("id"),
             )
             if not wait_result.get("ok", False):
                 return {
@@ -145,7 +147,13 @@ async def sweep_scan_building(
                 "completed_waypoints": index - 1,
             }
 
-        scan_wait = await _wait_until_waypoint_reached(asset_id, wp["x"], wp["y"], wp["z"])
+        scan_wait = await _wait_until_waypoint_reached(
+            asset_id,
+            wp["x"],
+            wp["y"],
+            wp["z"],
+            exclude_building_id=preplan.get("building", {}).get("id"),
+        )
         if not scan_wait.get("ok", False):
             return {
                 "asset_id": asset_id,

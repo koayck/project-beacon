@@ -252,7 +252,7 @@ async def _wait_until_waypoint_reached(
                         tolerance=tolerance,
                         timeout_s=timeout_s,
                         poll_s=poll_s,
-                        blocked_retries=0,
+                        blocked_retries=max(blocked_retries - 1, 0),
                         exclude_building_id=exclude_building_id,
                     )
                     if not sub["ok"]:
