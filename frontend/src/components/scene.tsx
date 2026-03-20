@@ -116,6 +116,9 @@ export default function SARScene() {
   const [scanRaysEnabled, setScanRaysEnabled] = useState(true)
   const [deliveredTo, setDeliveredTo] = useState<Set<string>>(new Set())
   const [deliveringTo, setDeliveringTo] = useState<Set<string>>(new Set())
+  const deliveredToRef = useRef<Set<string>>(new Set())
+  const deliveringToRef = useRef<Set<string>>(new Set())
+  const processedSupplyDispatchKeysRef = useRef<Set<string>>(new Set())
   const [activities, setActivities] = useState<ActivityItem[]>([])
   const [agentBusy, setAgentBusy] = useState(false)
   const [hasCargo, setHasCargo] = useState(false)
@@ -220,6 +223,10 @@ export default function SARScene() {
     const reservedKeys = new Set<string>()
     let queued = 0
     for (const dispatch of dispatches) {
+      const dispatchKey = `${dispatch.survivor.x.toFixed(3)},${dispatch.survivor.y.toFixed(3)},${dispatch.survivor.z.toFixed(3)}`
+      if (processedSupplyDispatchKeysRef.current.has(dispatchKey)) {
+        continue
+      }
       const dispatchSurvivor: SurvivorPoint = {
         x: dispatch.survivor.x,
         y: dispatch.survivor.y,
@@ -236,8 +243,8 @@ export default function SARScene() {
       const availableDetected = detectedSurvivorsRef.current.filter((survivor) => {
         const key = survivorKey(survivor)
         return (
-          !deliveredTo.has(key)
-          && !deliveringTo.has(key)
+          !deliveredToRef.current.has(key)
+          && !deliveringToRef.current.has(key)
           && !reservedKeys.has(key)
         )
       })
@@ -256,7 +263,13 @@ export default function SARScene() {
 
       const key = survivorKey(target)
       reservedKeys.add(key)
-      setDeliveringTo(prev => new Set(prev).add(key))
+      setDeliveringTo(prev => {
+        const next = new Set(prev)
+        next.add(key)
+        deliveringToRef.current = next
+        return next
+      })
+      processedSupplyDispatchKeysRef.current.add(dispatchKey)
 
       const telemetryEntry = drones[dispatch.asset_id]
       const fallbackFrom = (
@@ -278,7 +291,15 @@ export default function SARScene() {
     } else if (dispatches.length > 0) {
       addLog('ℹ No detected survivors available for supply visualization')
     }
-  }, [addLog, deliveredTo, deliveringTo, drones, queueSupplyThrow, simBuildings, worldBuildings])
+  }, [addLog, drones, queueSupplyThrow, simBuildings, worldBuildings])
+
+  useEffect(() => {
+    deliveredToRef.current = deliveredTo
+  }, [deliveredTo])
+
+  useEffect(() => {
+    deliveringToRef.current = deliveringTo
+  }, [deliveringTo])
 
   useEffect(() => {
     if (activeThrow || throwQueueRef.current.length === 0) return
