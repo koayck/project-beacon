@@ -34,3 +34,5 @@ frontend/node_modules/
 # Logs
 *.log
 logs/
+
+.env.example
