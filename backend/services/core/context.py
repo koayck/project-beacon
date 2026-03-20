@@ -54,3 +54,19 @@ def clear_detected_survivors() -> None:
 
 def get_detected_survivor_ids() -> set[int]:
     return survivor_registry.get_detected_survivor_ids()
+
+
+def register_supplied_target(target: dict) -> bool:
+    return survivor_registry.register_supplied_target(target)
+
+
+def register_supplied_targets(rows: Iterable[dict]) -> int:
+    return survivor_registry.register_supplied_targets(rows)
+
+
+def clear_supplied_targets() -> None:
+    survivor_registry.clear_supplied_targets()
+
+
+def get_supplied_target_keys() -> set[str]:
+    return survivor_registry.get_supplied_target_keys()

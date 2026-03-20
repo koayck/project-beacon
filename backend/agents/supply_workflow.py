@@ -11,6 +11,7 @@ from google.adk.tools.tool_context import ToolContext
 
 from backend.agents._mcp import make_toolset
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
+from backend.services.core import context as service_context
 
 _SUPPLY_QUEUE_LOCK = asyncio.Lock()
 _PARALLEL_BEACON_IDS = ["BEACON-01"]
@@ -57,6 +58,15 @@ def _dedupe_targets(targets: list[dict]) -> list[dict]:
     return deduped
 
 
+def _filter_unsupplied_targets(targets: list[dict]) -> list[dict]:
+    supplied_keys = service_context.get_supplied_target_keys()
+    return [
+        target
+        for target in targets
+        if isinstance(target, dict) and _target_key(target) not in supplied_keys
+    ]
+
+
 async def assign_drones_to_supply_targets(tool_context: ToolContext) -> dict:
     """
     Read state["supply_targets"], assign closest available drones, and persist
@@ -65,7 +75,9 @@ async def assign_drones_to_supply_targets(tool_context: ToolContext) -> dict:
     from backend.services.api import assign_fleet_to_buildings
 
     supply_data = _load_json_state(tool_context.state.get("supply_targets", "{}"), {})
-    survivors: list[dict] = _dedupe_targets(supply_data.get("survivors", []))
+    survivors: list[dict] = _filter_unsupplied_targets(
+        _dedupe_targets(supply_data.get("survivors", []))
+    )
     asset_id: str = supply_data.get("asset_id", "auto") or "auto"
 
     if asset_id.upper() not in ("AUTO", "", "UNKNOWN"):
@@ -212,7 +224,6 @@ async def process_next_supply_target_for_asset(asset_id: str, tool_context: Tool
 
     active_assets = _load_json_state(tool_context.state.get("active_supply_assets", "[]"), [])
     if asset_id not in active_assets:
-        tool_context.actions.escalate = True
         return {"done": True, "asset_id": asset_id, "total_dispatched": 0}
 
     status = await runtime_grpc_client.get_status(asset_id)
@@ -226,7 +237,9 @@ async def process_next_supply_target_for_asset(asset_id: str, tool_context: Tool
 
     async with _SUPPLY_QUEUE_LOCK:
         initial_by_asset = _load_json_state(tool_context.state.get("supply_initial_target_by_asset", "{}"), {})
-        pending = _load_json_state(tool_context.state.get("supply_pending_targets", "[]"), [])
+        pending = _filter_unsupplied_targets(
+            _load_json_state(tool_context.state.get("supply_pending_targets", "[]"), [])
+        )
         claimed_initial = _load_json_state(tool_context.state.get("supply_claimed_initial_by_asset", "{}"), {})
         done_count = _load_json_state(tool_context.state.get("supply_done_count_by_asset", "{}"), {})
         completed_keys = set(_load_json_state(tool_context.state.get("supply_completed_target_keys", "[]"), []))
@@ -277,7 +290,6 @@ async def process_next_supply_target_for_asset(asset_id: str, tool_context: Tool
             tool_context.state["supply_claimed_initial_by_asset"] = json.dumps(claimed_initial)
             tool_context.state["supply_pending_targets"] = json.dumps(pending)
             tool_context.state["supply_inflight_target_keys"] = json.dumps(sorted(inflight_keys))
-            tool_context.actions.escalate = True
             return {"done": True, "asset_id": asset_id, "total_dispatched": dispatched}
 
         tool_context.state["supply_claimed_initial_by_asset"] = json.dumps(claimed_initial)
@@ -285,8 +297,14 @@ async def process_next_supply_target_for_asset(asset_id: str, tool_context: Tool
         tool_context.state["supply_inflight_target_keys"] = json.dumps(sorted(inflight_keys))
 
     supply_result = await dispatch_supply_to_building(asset_id=asset_id, building=target)
-    success = "error" not in supply_result
-    if success:
+    skipped = bool(supply_result.get("skipped", False))
+    success = "error" not in supply_result and not skipped
+    if skipped:
+        line = (
+            f"Target at (x={float(target['x']):.1f}, z={float(target['z']):.1f}) "
+            f"[{asset_id}]: SUPPLY SKIPPED — already delivered."
+        )
+    elif success:
         line = (
             f"Target at (x={float(target['x']):.1f}, z={float(target['z']):.1f}) "
             f"[{asset_id}]: SUPPLY SENT. Waypoints: {supply_result.get('waypoint_count', '?')}."
@@ -315,13 +333,15 @@ async def process_next_supply_target_for_asset(asset_id: str, tool_context: Tool
                 "asset_id": asset_id,
                 "target": target,
                 "success": success,
+                "skipped": skipped,
                 "message": line,
                 "supply_result": supply_result,
             }
         )
         inflight_keys.discard(target_key or _target_key(target))
-        if success:
+        if success or skipped:
             completed_keys.add(_target_key(target))
+            service_context.register_supplied_target(target)
         tool_context.state["supply_done_count_by_asset"] = json.dumps(done_count)
         tool_context.state["supply_results_by_asset"] = json.dumps(result_map)
         tool_context.state["supply_results_list"] = json.dumps(all_results)
@@ -360,6 +380,7 @@ def build_aggregated_supply_report(tool_context: ToolContext) -> dict:
 
     total_supplied = 0
     failed = 0
+    skipped_targets = 0
     grouped_lines: dict[str, list[str]] = {}
     for row in rows:
         if not isinstance(row, dict):
@@ -368,6 +389,8 @@ def build_aggregated_supply_report(tool_context: ToolContext) -> dict:
         message = str(row.get("message", "")).strip()
         if bool(row.get("success")):
             total_supplied += 1
+        elif bool(row.get("skipped")):
+            skipped_targets += 1
         else:
             failed += 1
         grouped_lines.setdefault(asset_id, []).append(message)
@@ -387,12 +410,17 @@ def build_aggregated_supply_report(tool_context: ToolContext) -> dict:
         else f"TOTAL SUPPLY DISPATCHED: {total_supplied}"
     )
     failure_line = f"FAILED TARGETS: {failed}" if failed > 0 else "FAILED TARGETS: 0"
+    skipped_line = (
+        f"SKIPPED TARGETS: {skipped_targets}"
+        if skipped_targets > 0
+        else "SKIPPED TARGETS: 0"
+    )
     summary = (
         f"{div}\n"
         f"  AREA SUPPLY DISPATCH COMPLETE — {total_targets} survivor(s)\n"
         f"{div}\n"
         + ("\n".join(lines) if lines else "No supply dispatch results recorded.")
-        + f"\n{thin}\n{total_line}\n{failure_line}\n{div}"
+        + f"\n{thin}\n{total_line}\n{failure_line}\n{skipped_line}\n{div}"
     )
     return {
         "success": True,
@@ -400,6 +428,7 @@ def build_aggregated_supply_report(tool_context: ToolContext) -> dict:
         "total_targets": total_targets,
         "total_supplied": total_supplied,
         "failed_targets": failed,
+        "skipped_targets": skipped_targets,
         "results": rows,
     }
 

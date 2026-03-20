@@ -5,7 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.agents.scan_workflow import build_aggregated_scan_report, pick_next_building_for_asset
+from backend.agents.scan_workflow import (
+    build_aggregated_scan_report,
+    pick_next_building_for_asset,
+    prepare_parallel_fleet_scan,
+)
 from backend.runtime import grpc_client
 
 
@@ -60,3 +64,44 @@ def test_build_aggregated_scan_report_splits_cross_building_survivor_group() -> 
     assert "BEACON-01\nBuilding at (x=-15.0, z=-20.0): 4 survivor(s) across 4 level(s). Waypoints: 19." in result["summary"]
     assert "Building at (x=-23.0, z=-22.0): 1 survivor(s)" in result["summary"]
     assert "  - Survivor 7: (-23.0, 12.65, -22.0)" in result["summary"]
+
+
+def test_prepare_parallel_fleet_scan_dedupes_duplicate_buildings() -> None:
+    tool_context = SimpleNamespace(
+        state={
+            "fleet_assignments": json.dumps(
+                {
+                    "assignments": [
+                        {
+                            "asset_id": "BEACON-01",
+                            "building": {"id": 4, "x": -23.0, "z": -28.0, "height": 21.0},
+                            "distance_m": 0.0,
+                        },
+                        {
+                            "asset_id": "BEACON-02",
+                            "building": {"id": 4, "x": -23.0, "z": -28.0, "height": 21.0},
+                            "distance_m": 1.0,
+                        },
+                    ],
+                    "unassigned_buildings": [
+                        {"id": 4, "x": -23.0, "z": -28.0, "height": 21.0},
+                        {"id": 9, "x": -10.0, "z": -12.0, "height": 18.0},
+                        {"id": 9, "x": -10.0, "z": -12.0, "height": 18.0},
+                    ],
+                }
+            )
+        },
+        actions=SimpleNamespace(escalate=False),
+    )
+
+    result = prepare_parallel_fleet_scan(tool_context)
+
+    assert result["success"] is True
+    assert result["queued_buildings"] == 2
+
+    initial = json.loads(tool_context.state["scan_initial_building_by_asset"])
+    pending = json.loads(tool_context.state["scan_pending_buildings"])
+
+    assert initial["BEACON-01"]["id"] == 4
+    assert len(pending) == 1
+    assert pending[0]["id"] == 9

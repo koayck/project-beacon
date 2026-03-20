@@ -47,6 +47,37 @@ _RESULT_SURVIVOR_LINE_RE = re.compile(
 _CROSS_BUILDING_SURVIVOR_DISTANCE_M = 6.0
 
 
+def _building_dedupe_key(building: dict) -> tuple[str, str] | None:
+    if not isinstance(building, dict):
+        return None
+
+    building_id = building.get("id")
+    if isinstance(building_id, int) and building_id >= 0:
+        return ("id", str(building_id))
+
+    x = building.get("x")
+    z = building.get("z")
+    if isinstance(x, (int, float)) and isinstance(z, (int, float)):
+        # Coordinate fallback for ad-hoc targets where id may be -1 or absent.
+        return ("coord", f"{float(x):.3f},{float(z):.3f}")
+
+    return None
+
+
+def _dedupe_buildings(buildings: list[dict]) -> list[dict]:
+    seen: set[tuple[str, str]] = set()
+    unique: list[dict] = []
+    for building in buildings:
+        key = _building_dedupe_key(building)
+        if key is None:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(building)
+    return unique
+
+
 # ── Queue FunctionTools ────────────────────────────────────────────────────────
 
 def pick_next_building(tool_context: ToolContext) -> dict:
@@ -287,7 +318,10 @@ async def assign_drones_to_buildings(tool_context: ToolContext) -> dict:
     except (json.JSONDecodeError, TypeError):
         scan_data = {}
 
-    buildings: list[dict] = scan_data.get("buildings", [])
+    buildings_raw: list[dict] = scan_data.get("buildings", [])
+    buildings = _dedupe_buildings(buildings_raw)
+    scan_data["buildings"] = buildings
+    tool_context.state["scan_buildings"] = json.dumps(scan_data)
     asset_id: str = scan_data.get("asset_id", "auto") or "auto"
 
     if asset_id.upper() not in ("AUTO", "", "UNKNOWN"):
@@ -332,16 +366,32 @@ def prepare_parallel_fleet_scan(tool_context: ToolContext) -> dict:
         return {"error": "No drone assignments available. Cannot proceed with scan."}
 
     initial_by_drone: dict[str, dict] = {}
-    pending: list[dict] = list(data.get("unassigned_buildings", []))
+    assigned_keys: set[tuple[str, str]] = set()
+    pending_raw: list[dict] = list(data.get("unassigned_buildings", []))
     for row in assignments:
         aid = row.get("asset_id")
         building = row.get("building")
         if not aid or not isinstance(building, dict):
             continue
-        if aid not in initial_by_drone:
+        key = _building_dedupe_key(building)
+        if aid not in initial_by_drone and key is not None and key not in assigned_keys:
             initial_by_drone[aid] = building
+            assigned_keys.add(key)
         else:
-            pending.append(building)
+            pending_raw.append(building)
+
+    used_keys = {
+        key
+        for key in (_building_dedupe_key(building) for building in initial_by_drone.values())
+        if key is not None
+    }
+    pending: list[dict] = []
+    for building in _dedupe_buildings(pending_raw):
+        key = _building_dedupe_key(building)
+        if key is None or key in used_keys:
+            continue
+        used_keys.add(key)
+        pending.append(building)
 
     if not initial_by_drone:
         return {"error": "No valid assignments available. Cannot proceed with scan."}
