@@ -569,7 +569,7 @@ SWEEP SCAN PROCEDURE
    Also note whether state["current_building"] contains "Remaining: 0" — this means it is the LAST building.
 2. Call sweep_scan_building(asset_id, target_x=x, target_z=z) — always pass the building coordinates explicitly.
 3. Build a compact result string from the tool response:
-   - Success: "Building at (x=<x>, z=<z>): <unique_survivor_count> survivor(s) across <level_count> level(s). Waypoints: <waypoint_count>."
+   - Success: "Building at (x=<x>, z=<z>): <reported_survivor_count> survivor(s) across <level_count> level(s). Waypoints: <waypoint_count>."
      If unique_survivor_count > 0, append a newline and one line per survivor from unique_survivors_detected:
        "  - Survivor <id>: (<x>, <y>, <z>)[SUBMERGED — CRITICAL]" (include SUBMERGED tag only if submerged=true)
      If any submerged survivors: also append " [CRITICAL: <N> submerged]" to the header line.
@@ -677,7 +677,7 @@ SWEEP SCAN PROCEDURE
    Also note whether state["{current_key}"] contains "Remaining: 0" — this means no queued building remains after this one.
 2. Call sweep_scan_building(asset_id, target_x=x, target_z=z) — always pass building coordinates explicitly.
 3. Build a compact result string from the tool response:
-   - Success: "Building at (x=<x>, z=<z>): <unique_survivor_count> survivor(s) across <level_count> level(s). Waypoints: <waypoint_count>."
+   - Success: "Building at (x=<x>, z=<z>): <reported_survivor_count> survivor(s) across <level_count> level(s). Waypoints: <waypoint_count>."
      If unique_survivor_count > 0, append survivor lines:
        "  - Survivor <id>: (<x>, <y>, <z>)[SUBMERGED — CRITICAL]".
    - Error:   "Building at (x=<x>, z=<z>): SCAN ERROR — <error>"
