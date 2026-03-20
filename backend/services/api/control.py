@@ -407,6 +407,7 @@ async def dispatch_supply_to_building(asset_id: str, building: dict) -> dict:
         return_to_base_fn=return_to_base,
         plan_route_fn=plan_route,
         move_drone_to_fn=move_drone_to,
+        wait_until_waypoint_reached_fn=_wait_until_waypoint_reached,
         get_status_fn=grpc_client.get_status,
     )
 
