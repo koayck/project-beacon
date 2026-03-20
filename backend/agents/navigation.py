@@ -1,68 +1,62 @@
 """
 Navigation Agent — flight path planning and drone movement.
+
+REFACTORED: Now uses orchestrator for deterministic logic.
+Agent handles reasoning and operator communication only.
 """
 from __future__ import annotations
 
 from google.adk.agents import Agent
+from google.adk.tools import FunctionTool
 
-from backend.agents._mcp import NAV_TOOLS, make_toolset
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
+from backend.orchestrator.navigation import (
+    execute_navigation_sequence,
+    execute_return_to_base,
+)
+from backend.services.api.control import (
+    get_drone_status,
+    plan_sweep_pattern,
+)
 
 _INSTRUCTION = """You are a navigation specialist for autonomous drones.
 
 COORDINATES: X=East, Y=Up, Z=South. Home pad at (0, 2, 0).
 
-MOVE PROCEDURE
-1. Call plan_route(asset_id, target_x, target_z, target_y).
-   - Omit target_y unless the operator gave a specific altitude.
-2. If plan_route returns {"error": "No clear route found"}:
-   - Call get_drone_status(asset_id) and retry plan_route with target_y=max(current_y+5, 10).
-   - If it still returns error, retry once more with target_y=max(current_y+10, 15).
-   - If retry 2 also fails, report the route failure and stop. Do NOT call move_drone_to.
-3. Once plan_route succeeds, report the "summary" to the operator.
-4. For each waypoint in "waypoints", call move_drone_to(asset_id, wp.x, wp.y, wp.z).
-5. After the final move: "BEACON-XX arrived at (x, y, z)."
+HYBRID ARCHITECTURE:
+- For movement commands, call execute_navigation_sequence() — this handles all retry logic,
+  altitude escalation, and waypoint execution automatically.
+- For return-home, call execute_return_to_base() — this handles obstacle-aware routing.
+- For status queries, call get_drone_status().
 
-BLOCKED RECOVERY: if a move reports BLOCKED, call get_drone_status(asset_id) and
-recompute using plan_route from the live position before continuing.
+MOVE PROCEDURE
+1. Call execute_navigation_sequence(asset_id, target_x, target_z, target_y).
+   - Omit target_y (pass None) unless the operator specified exact altitude.
+   - The orchestrator handles: route planning, altitude escalation on blocked routes,
+     waypoint execution, and re-routing on obstacles.
+2. Report the result to the operator in clear language:
+   - Success: "BEACON-XX arrived at (x, y, z). Route: [summary]."
+   - Failure: "Navigation failed: [error]. [suggestion]."
 
 RETURN PROCEDURE
-1. For return-home commands, call return_to_base(asset_id).
-2. return_to_base already performs obstacle-aware routing before final landing.
-3. If it returns an "error", report it and stop.
+1. Call execute_return_to_base(asset_id).
+2. Report result to operator.
 
-EXAMPLE — scan building (Y auto-calculated)
-  "Navigate BEACON-01 to building at (-15, -20)"
-  → plan_route("BEACON-01", -15.0, -20.0)
-  → 3 waypoints: climb to 15m, cruise, descend to 17m (building top 12m + 5m)
-  → move_drone_to for each waypoint
-  → "BEACON-01 arrived at (-15.0, 17.0, -20.0). Route: 3 waypoints, over strategy."
+SWEEP PROCEDURE (advanced planning)
+1. Call plan_sweep_pattern to generate waypoints for area coverage.
+2. For each waypoint, call execute_navigation_sequence.
 
-EXAMPLE — explicit altitude
-  "Move BEACON-01 to (10, 20, -5)"
-  → plan_route("BEACON-01", 10.0, -5.0, 20.0)
-  → 1 waypoint: direct path clear
-  → move_drone_to("BEACON-01", 10.0, 20.0, -5.0)
-  → "BEACON-01 moving to (10.0, 20.0, -5.0)."
+EXAMPLES:
+- "Navigate BEACON-01 to building at (-15, -20)"
+  → execute_navigation_sequence("BEACON-01", -15.0, -20.0)
+  → Report: "BEACON-01 arrived at (-15.0, 17.0, -20.0). Route: 3 waypoints, over strategy."
 
-SWEEP PROCEDURE (unchanged)
-1. Call plan_sweep_pattern to get waypoints.
-2. Move through waypoints in sequence.
+- "Move BEACON-01 to (10, 20, -5)"
+  → execute_navigation_sequence("BEACON-01", 10.0, -5.0, 20.0)
+  → Report: "BEACON-01 moving to (10.0, 20.0, -5.0)."
+
+Keep responses concise and operational.
 """
-
-_SCAN_MODE_PREFIX = """SCAN TARGET NORMALISATION (scan workflow only)
-1. Call resolve_scan_target(target_x, target_z) first.
-2. If matched_building=true:
-   - Use resolved_target.x/z (building center) for plan_route coordinates.
-   - Set target_y = building.height + 5 (hover above rooftop, NOT recommended_scan_y).
-   - Do NOT pass snap_to_building_center — the sweep agent handles floor-level
-     navigation once the drone is positioned above the rooftop.
-3. Call plan_route(asset_id, resolved_x, resolved_z, target_y).
-4. Include building bounds (min/max X/Z) from tool output in your operator update.
-
-"""
-
-_TOOLS = NAV_TOOLS
 
 _DESCRIPTION = (
     "Handles all drone movement and flight path planning. "
@@ -71,11 +65,10 @@ _DESCRIPTION = (
 )
 
 
-def make_navigation_agent(name: str = "navigation_agent", scan_mode: bool = False) -> Agent:
+def make_navigation_agent(name: str = "navigation_agent") -> Agent:
     """
     Factory — ADK requires each agent instance to have exactly one parent.
     Call this once per parent (commander, scan_workflow) to get separate instances.
-    Each call creates a fresh McpToolset so ADK's single-parent rule is satisfied.
     """
     return Agent(
         name=name,
@@ -83,8 +76,13 @@ def make_navigation_agent(name: str = "navigation_agent", scan_mode: bool = Fals
         description=_DESCRIPTION,
         generate_content_config=QWEN3_GEN_CONFIG,
         output_key="nav_result",
-        instruction=f"{_SCAN_MODE_PREFIX}{_INSTRUCTION}" if scan_mode else _INSTRUCTION,
-        tools=[make_toolset(_TOOLS)],
+        instruction=_INSTRUCTION,
+        tools=[
+            FunctionTool(execute_navigation_sequence),
+            FunctionTool(execute_return_to_base),
+            FunctionTool(get_drone_status),
+            FunctionTool(plan_sweep_pattern),
+        ],
     )
 
 
