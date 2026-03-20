@@ -256,6 +256,20 @@ export default function SARScene() {
         }, null as { building: WorldBuilding; dist: number } | null)
         : null
 
+      // Exact coordinate match: allow re-matching survivors already in deliveringTo
+      // so that deliveries initiated by handleSendSupplies complete their throw animation
+      // when the backend supply dispatch arrives for the same survivor.
+      const exactDetectedTarget = detectedSurvivorsRef.current.find((survivor) => {
+        const key = survivorKey(survivor)
+        return (
+          !deliveredTo.has(key)
+          && !reservedKeys.has(key)
+          && distanceBetweenPoints(survivor, dispatchSurvivor) <= 0.8
+        )
+      })
+
+      // For building-based and fallback matching, exclude deliveringTo to prevent
+      // double dispatches to the same survivor from different triggers.
       const availableDetected = detectedSurvivorsRef.current.filter((survivor) => {
         const key = survivorKey(survivor)
         return (
@@ -273,9 +287,6 @@ export default function SARScene() {
         )
       })
 
-      const exactDetectedTarget = availableDetected.find(
-        (survivor) => distanceBetweenPoints(survivor, dispatchSurvivor) <= SUPPLY_DISPATCH_TARGET_TOLERANCE
-      )
       const exactKnownTarget = availableKnown.find(
         (survivor) => distanceBetweenPoints(survivor, dispatchSurvivor) <= SUPPLY_DISPATCH_TARGET_TOLERANCE
       )
