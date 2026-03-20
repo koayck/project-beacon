@@ -32,7 +32,9 @@ export const DRONE_START = new THREE.Vector3(0, BASE_Y, 0)
 export const FOLLOW_CAMERA_OFFSET = new THREE.Vector3(18, 14, 18)
 
 export const SURVIVOR_SENSOR_RANGE = 5.0
-export const SWEEP_SCAN_SENSOR_RANGE = SURVIVOR_SENSOR_RANGE
+// Match backend default sweep scan radius so telemetry-driven in-scan highlights
+// appear as soon as survivors are detected at window/perimeter waypoints.
+export const SWEEP_SCAN_SENSOR_RANGE = 8.0
 export const SUPPLY_DISPATCH_TARGET_TOLERANCE = 0.8
 export const ROUTE_ARRIVAL_TOLERANCE = 2.0
 export const BASE_PICKUP_RANGE = 3.0
