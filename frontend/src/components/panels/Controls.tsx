@@ -3,8 +3,6 @@ interface ControlsProps {
   onToggleFollow: () => void
   transparentWalls: boolean
   onToggleWalls: () => void
-  scanRaysEnabled: boolean
-  onToggleScanRays: () => void
   selectMode: boolean
 }
 
@@ -13,8 +11,6 @@ export function Controls({
   onToggleFollow,
   transparentWalls,
   onToggleWalls,
-  scanRaysEnabled,
-  onToggleScanRays,
   selectMode,
 }: ControlsProps) {
   const buttonClass = (enabled: boolean, onClasses: string, offClasses: string) =>
@@ -67,16 +63,6 @@ export function Controls({
           )}
         >
           WALLS {transparentWalls ? 'X-RAY' : 'SOLID'}
-        </button>
-        <button
-          onClick={onToggleScanRays}
-          className={buttonClass(
-            scanRaysEnabled,
-            'border-[rgba(255,120,150,0.4)] bg-[rgba(255,70,110,0.15)] text-[#ff9fb3]',
-            'border-[rgba(40,50,70,0.5)] bg-[rgba(15,20,30,0.6)] text-[#4a5a6a]',
-          )}
-        >
-          RAYS {scanRaysEnabled ? 'ON' : 'OFF'}
         </button>
       </div>
     </div>
