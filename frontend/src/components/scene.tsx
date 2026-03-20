@@ -19,7 +19,7 @@ import {
   type NetworkMockStatus,
   type SupplyDispatchEvent,
 } from '@/lib/api'
-import { BasePad, GridOverlay, Ground, MissionBuildings, SurvivorScanRays, Survivors } from './scene-props/SceneStructures'
+import { BasePad, GridOverlay, Ground, MissionBuildings, Survivors } from './scene-props/SceneStructures'
 import { World2Environment } from './scene-props/World2Environment'
 import {
   AreaContextMenu,
@@ -113,7 +113,6 @@ export default function SARScene() {
   const [copied, setCopied]       = useState(false)
   const [followBeacon, setFollowBeacon] = useState(false)
   const [transparentWalls, setTransparentWalls] = useState(false)
-  const [scanRaysEnabled, setScanRaysEnabled] = useState(true)
   const [deliveredTo, setDeliveredTo] = useState<Set<string>>(new Set())
   const [deliveringTo, setDeliveringTo] = useState<Set<string>>(new Set())
   const deliveredToRef = useRef<Set<string>>(new Set())
@@ -368,14 +367,6 @@ export default function SARScene() {
     setTransparentWalls(prev => {
       const next = !prev
       addLog(next ? '🧱 Target walls set to transparent' : '🧱 Target walls set to solid')
-      return next
-    })
-  }, [addLog])
-
-  const toggleScanRays = useCallback(() => {
-    setScanRaysEnabled(prev => {
-      const next = !prev
-      addLog(next ? '📡 Survivor scan rays enabled' : '📡 Survivor scan rays disabled')
       return next
     })
   }, [addLog])
@@ -1028,11 +1019,6 @@ export default function SARScene() {
           />
         )}
         <SupplyCrates deliveredTo={deliveredTo} survivors={survivorPositions} />
-        <SurvivorScanRays
-          enabled={scanRaysEnabled}
-          dronePos={dronePos}
-          survivors={scannedSurvivors}
-        />
       </Canvas>
 
       {/* Top Status Bar */}
@@ -1057,8 +1043,6 @@ export default function SARScene() {
           onToggleFollow={toggleFollowBeacon}
           transparentWalls={transparentWalls}
           onToggleWalls={toggleWallTransparency}
-          scanRaysEnabled={scanRaysEnabled}
-          onToggleScanRays={toggleScanRays}
           selectMode={selectMode}
         />
         <DroneStatusPanel drones={drones} />
