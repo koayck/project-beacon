@@ -6,7 +6,7 @@ Pure orchestration functions for thermal scanning and survivor detection.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from backend.services.api.control import (
@@ -22,31 +22,31 @@ from backend.orchestrator.navigation import (
 @dataclass
 class Building:
     """Building target for scanning."""
-    id: Optional[int]
     center_x: float
     center_z: float
     height: float
+    id: Optional[int] = None
     name: Optional[str] = None
 
 
-@dataclass
+@dataclass(kw_only=True)
 class BuildingScanResult:
     """Result of scanning a single building."""
     success: bool
-    building: Building
     survivors_detected: int
     battery_remaining: float
     scan_summary: str
+    building: Building
     error: Optional[str] = None
 
     @classmethod
     def failure(cls, building: Building, error: str) -> "BuildingScanResult":
         return cls(
             success=False,
-            building=building,
             survivors_detected=0,
             battery_remaining=0.0,
             scan_summary="",
+            building=building,
             error=error
         )
 
@@ -60,10 +60,10 @@ class BuildingScanResult:
     ) -> "BuildingScanResult":
         return cls(
             success=True,
-            building=building,
             survivors_detected=survivors,
             battery_remaining=battery_remaining,
             scan_summary=summary,
+            building=building,
             error=None
         )
 
