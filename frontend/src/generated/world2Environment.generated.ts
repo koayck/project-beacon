@@ -301,31 +301,13 @@ export const WORLD2_ENV = {
       "roofColor": "#E8D5B0"
     },
     {
-      "cx": 38,
-      "cz": 38,
-      "w": 4,
-      "d": 12,
-      "h": 12,
-      "bodyColor": "#B5D4E8",
-      "roofColor": "#A0C4D8"
-    },
-    {
       "cx": -42,
       "cz": 38,
       "w": 4,
       "d": 12,
       "h": 12,
-      "bodyColor": "#F0E0A8",
-      "roofColor": "#F5E8A0"
-    },
-    {
-      "cx": -46,
-      "cz": 38,
-      "w": 4,
-      "d": 12,
-      "h": 9,
-      "bodyColor": "#E8B5B0",
-      "roofColor": "#D4A09A"
+      "bodyColor": "#F5E6C8",
+      "roofColor": "#E8D5B0"
     },
     {
       "cx": -50,
@@ -333,35 +315,8 @@ export const WORLD2_ENV = {
       "w": 4,
       "d": 12,
       "h": 12,
-      "bodyColor": "#B0D8C0",
-      "roofColor": "#A0C8B0"
-    },
-    {
-      "cx": -6,
-      "cz": -42,
-      "w": 4,
-      "d": 12,
-      "h": 12,
-      "bodyColor": "#C2DDE8",
-      "roofColor": "#B5D4E8"
-    },
-    {
-      "cx": -10,
-      "cz": -42,
-      "w": 4,
-      "d": 12,
-      "h": 9,
       "bodyColor": "#F5E6C8",
       "roofColor": "#E8D5B0"
-    },
-    {
-      "cx": -14,
-      "cz": -42,
-      "w": 4,
-      "d": 12,
-      "h": 12,
-      "bodyColor": "#E8B5B0",
-      "roofColor": "#D4A09A"
     },
     {
       "cx": -18,
@@ -369,17 +324,8 @@ export const WORLD2_ENV = {
       "w": 4,
       "d": 12,
       "h": 9,
-      "bodyColor": "#F5E8A0",
-      "roofColor": "#E8DC90"
-    },
-    {
-      "cx": -22,
-      "cz": -42,
-      "w": 4,
-      "d": 12,
-      "h": 12,
-      "bodyColor": "#B0D8C0",
-      "roofColor": "#A0C8B0"
+      "bodyColor": "#F5E6C8",
+      "roofColor": "#E8D5B0"
     },
     {
       "cx": 6,
@@ -387,17 +333,8 @@ export const WORLD2_ENV = {
       "w": 4,
       "d": 12,
       "h": 9,
-      "bodyColor": "#E8E4E0",
-      "roofColor": "#D8D4D0"
-    },
-    {
-      "cx": 10,
-      "cz": -42,
-      "w": 4,
-      "d": 12,
-      "h": 12,
-      "bodyColor": "#C89478",
-      "roofColor": "#B88468"
+      "bodyColor": "#F5E6C8",
+      "roofColor": "#E8D5B0"
     },
     {
       "cx": 14,
@@ -405,21 +342,12 @@ export const WORLD2_ENV = {
       "w": 4,
       "d": 12,
       "h": 9,
-      "bodyColor": "#F0C4BE",
-      "roofColor": "#E8B5B0"
-    },
-    {
-      "cx": 18,
-      "cz": -42,
-      "w": 4,
-      "d": 12,
-      "h": 12,
-      "bodyColor": "#D4A09A",
-      "roofColor": "#C89488"
+      "bodyColor": "#F5E6C8",
+      "roofColor": "#E8D5B0"
     },
     {
       "cx": 42,
-      "cz": -12,
+      "cz": -4,
       "w": 12,
       "d": 4,
       "h": 9,
@@ -428,48 +356,12 @@ export const WORLD2_ENV = {
     },
     {
       "cx": 42,
-      "cz": -8,
-      "w": 12,
-      "d": 4,
-      "h": 12,
-      "bodyColor": "#B5D4E8",
-      "roofColor": "#A0C4D8"
-    },
-    {
-      "cx": 42,
-      "cz": -4,
-      "w": 12,
-      "d": 4,
-      "h": 9,
-      "bodyColor": "#F5E8A0",
-      "roofColor": "#E8DC90"
-    },
-    {
-      "cx": 42,
-      "cz": 0,
-      "w": 12,
-      "d": 4,
-      "h": 12,
-      "bodyColor": "#E8B5B0",
-      "roofColor": "#D4A09A"
-    },
-    {
-      "cx": 42,
       "cz": 4,
       "w": 12,
       "d": 4,
       "h": 9,
-      "bodyColor": "#B0D8C0",
-      "roofColor": "#A0C8B0"
-    },
-    {
-      "cx": 42,
-      "cz": 8,
-      "w": 12,
-      "d": 4,
-      "h": 12,
-      "bodyColor": "#E8E4E0",
-      "roofColor": "#D8D4D0"
+      "bodyColor": "#F5E6C8",
+      "roofColor": "#E8D5B0"
     },
     {
       "cx": 42,
@@ -477,35 +369,8 @@ export const WORLD2_ENV = {
       "w": 12,
       "d": 4,
       "h": 9,
-      "bodyColor": "#C89478",
-      "roofColor": "#B88468"
-    },
-    {
-      "cx": -50,
-      "cz": -12,
-      "w": 12,
-      "d": 4,
-      "h": 12,
-      "bodyColor": "#C2DDE8",
-      "roofColor": "#B5D4E8"
-    },
-    {
-      "cx": -50,
-      "cz": -8,
-      "w": 12,
-      "d": 4,
-      "h": 9,
-      "bodyColor": "#F0C4BE",
-      "roofColor": "#E8B5B0"
-    },
-    {
-      "cx": -50,
-      "cz": -4,
-      "w": 12,
-      "d": 4,
-      "h": 12,
-      "bodyColor": "#F0E0A8",
-      "roofColor": "#F5E8A0"
+      "bodyColor": "#F5E6C8",
+      "roofColor": "#E8D5B0"
     },
     {
       "cx": -50,
@@ -513,32 +378,14 @@ export const WORLD2_ENV = {
       "w": 12,
       "d": 4,
       "h": 9,
-      "bodyColor": "#D4A09A",
-      "roofColor": "#C89488"
-    },
-    {
-      "cx": -50,
-      "cz": 4,
-      "w": 12,
-      "d": 4,
-      "h": 12,
-      "bodyColor": "#C0E0D0",
-      "roofColor": "#B0D8C0"
+      "bodyColor": "#F5E6C8",
+      "roofColor": "#E8D5B0"
     },
     {
       "cx": -50,
       "cz": 8,
       "w": 12,
       "d": 4,
-      "h": 9,
-      "bodyColor": "#F0ECE8",
-      "roofColor": "#E8E4E0"
-    },
-    {
-      "cx": 6,
-      "cz": 52,
-      "w": 4,
-      "d": 12,
       "h": 9,
       "bodyColor": "#F5E6C8",
       "roofColor": "#E8D5B0"
@@ -549,35 +396,8 @@ export const WORLD2_ENV = {
       "w": 4,
       "d": 12,
       "h": 12,
-      "bodyColor": "#B5D4E8",
-      "roofColor": "#A0C4D8"
-    },
-    {
-      "cx": 14,
-      "cz": 52,
-      "w": 4,
-      "d": 12,
-      "h": 9,
-      "bodyColor": "#E8B5B0",
-      "roofColor": "#D4A09A"
-    },
-    {
-      "cx": 18,
-      "cz": 52,
-      "w": 4,
-      "d": 12,
-      "h": 12,
-      "bodyColor": "#F5E8A0",
-      "roofColor": "#E8DC90"
-    },
-    {
-      "cx": 22,
-      "cz": 52,
-      "w": 4,
-      "d": 12,
-      "h": 9,
-      "bodyColor": "#B0D8C0",
-      "roofColor": "#A0C8B0"
+      "bodyColor": "#F5E6C8",
+      "roofColor": "#E8D5B0"
     },
     {
       "cx": -6,
@@ -585,17 +405,8 @@ export const WORLD2_ENV = {
       "w": 4,
       "d": 12,
       "h": 12,
-      "bodyColor": "#E8E4E0",
-      "roofColor": "#D8D4D0"
-    },
-    {
-      "cx": -10,
-      "cz": 52,
-      "w": 4,
-      "d": 12,
-      "h": 9,
-      "bodyColor": "#F0C4BE",
-      "roofColor": "#E8B5B0"
+      "bodyColor": "#F5E6C8",
+      "roofColor": "#E8D5B0"
     },
     {
       "cx": -14,
@@ -603,47 +414,11 @@ export const WORLD2_ENV = {
       "w": 4,
       "d": 12,
       "h": 12,
-      "bodyColor": "#C2DDE8",
-      "roofColor": "#B5D4E8"
-    },
-    {
-      "cx": -6,
-      "cz": -52,
-      "w": 4,
-      "d": 12,
-      "h": 12,
-      "bodyColor": "#C89478",
-      "roofColor": "#B88468"
+      "bodyColor": "#F5E6C8",
+      "roofColor": "#E8D5B0"
     },
     {
       "cx": -10,
-      "cz": -52,
-      "w": 4,
-      "d": 12,
-      "h": 9,
-      "bodyColor": "#E8E4E0",
-      "roofColor": "#D8D4D0"
-    },
-    {
-      "cx": -14,
-      "cz": -52,
-      "w": 4,
-      "d": 12,
-      "h": 12,
-      "bodyColor": "#F0C4BE",
-      "roofColor": "#E8B5B0"
-    },
-    {
-      "cx": -18,
-      "cz": -52,
-      "w": 4,
-      "d": 12,
-      "h": 9,
-      "bodyColor": "#D4A09A",
-      "roofColor": "#C89488"
-    },
-    {
-      "cx": 42,
       "cz": -52,
       "w": 4,
       "d": 12,
@@ -657,37 +432,19 @@ export const WORLD2_ENV = {
       "w": 4,
       "d": 12,
       "h": 12,
-      "bodyColor": "#B5D4E8",
-      "roofColor": "#A0C4D8"
+      "bodyColor": "#F5E6C8",
+      "roofColor": "#E8D5B0"
     }
   ],
   "midRiseSpecs": [
     {
-      "cx": 55,
-      "cz": 45,
-      "w": 16,
-      "d": 14,
-      "h": 24,
-      "bodyColor": "#466291",
-      "roofColor": "#5A76A5"
-    },
-    {
       "cx": -55,
       "cz": -50,
       "w": 14,
       "d": 14,
       "h": 21,
-      "bodyColor": "#374E76",
-      "roofColor": "#4B628A"
-    },
-    {
-      "cx": 50,
-      "cz": -50,
-      "w": 14,
-      "d": 14,
-      "h": 30,
-      "bodyColor": "#303E52",
-      "roofColor": "#445266"
+      "bodyColor": "#F5E6C8",
+      "roofColor": "#E8D5B0"
     },
     {
       "cx": -55,
@@ -695,35 +452,8 @@ export const WORLD2_ENV = {
       "w": 16,
       "d": 14,
       "h": 21,
-      "bodyColor": "#52769E",
-      "roofColor": "#668AB2"
-    },
-    {
-      "cx": 60,
-      "cz": 0,
-      "w": 14,
-      "d": 16,
-      "h": 15,
-      "bodyColor": "#A86C48",
-      "roofColor": "#B9805A"
-    },
-    {
-      "cx": -60,
-      "cz": 0,
-      "w": 14,
-      "d": 16,
-      "h": 18,
-      "bodyColor": "#34486E",
-      "roofColor": "#485C82"
-    },
-    {
-      "cx": 0,
-      "cz": 60,
-      "w": 18,
-      "d": 14,
-      "h": 18,
-      "bodyColor": "#768A98",
-      "roofColor": "#8A9EAC"
+      "bodyColor": "#F5E6C8",
+      "roofColor": "#E8D5B0"
     },
     {
       "cx": 0,
@@ -731,17 +461,8 @@ export const WORLD2_ENV = {
       "w": 16,
       "d": 12,
       "h": 15,
-      "bodyColor": "#CDBEA0",
-      "roofColor": "#DACDAF"
-    },
-    {
-      "cx": 65,
-      "cz": 25,
-      "w": 12,
-      "d": 12,
-      "h": 18,
-      "bodyColor": "#94483E",
-      "roofColor": "#A55A4E"
+      "bodyColor": "#F5E6C8",
+      "roofColor": "#E8D5B0"
     },
     {
       "cx": -65,
@@ -749,17 +470,8 @@ export const WORLD2_ENV = {
       "w": 10,
       "d": 12,
       "h": 21,
-      "bodyColor": "#3C5070",
-      "roofColor": "#506484"
-    },
-    {
-      "cx": 65,
-      "cz": -25,
-      "w": 12,
-      "d": 12,
-      "h": 15,
-      "bodyColor": "#628E73",
-      "roofColor": "#76A287"
+      "bodyColor": "#F5E6C8",
+      "roofColor": "#E8D5B0"
     },
     {
       "cx": -65,
@@ -767,26 +479,8 @@ export const WORLD2_ENV = {
       "w": 12,
       "d": 10,
       "h": 15,
-      "bodyColor": "#B2946E",
-      "roofColor": "#C3A580"
-    },
-    {
-      "cx": 75,
-      "cz": 0,
-      "w": 10,
-      "d": 10,
-      "h": 12,
-      "bodyColor": "#C6B696",
-      "roofColor": "#D4C6A8"
-    },
-    {
-      "cx": -75,
-      "cz": 0,
-      "w": 10,
-      "d": 10,
-      "h": 12,
-      "bodyColor": "#B2AFA5",
-      "roofColor": "#C0BEB4"
+      "bodyColor": "#F5E6C8",
+      "roofColor": "#E8D5B0"
     }
   ]
 } as const
