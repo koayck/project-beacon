@@ -206,34 +206,55 @@ async def sweep_scan_building(
                 }
 
     for index, wp in enumerate(plan["waypoints"], start=1):
-        move_result = await move_to(
-            asset_id, wp["x"], wp["y"], wp["z"],
-            get_speed(asset_id),
+        leg_route = await plan_route_fn(
+            asset_id=asset_id,
+            target_x=wp["x"],
+            target_z=wp["z"],
+            target_y=wp["y"],
+            exclude_building_id=building_id,
         )
-        if not move_result.get("success", True):
+        if "error" in leg_route:
             return {
                 "asset_id": asset_id,
-                "error": "Failed while moving to sweep waypoint",
+                "error": "Sweep waypoint route blocked",
                 "failed_waypoint": wp,
-                "move_result": move_result,
+                "route_error": leg_route["error"],
+                "route_obstacles": leg_route.get("obstacles", []),
                 "completed_waypoints": index - 1,
             }
 
-        wait_result = await wait_until_waypoint_reached(
-            asset_id, wp["x"], wp["y"], wp["z"],
-            exclude_building_id=building_id,
-        )
-        if not wait_result.get("ok", False):
-            return {
-                "asset_id": asset_id,
-                "error": _normalize_scan_route_error(
-                    wait_result.get("error"),
-                    "Sweep waypoint not reached",
-                ),
-                "failed_waypoint": wp,
-                "status": wait_result.get("status"),
-                "completed_waypoints": index - 1,
-            }
+        for move_wp in leg_route.get("waypoints", []):
+            move_result = await move_to(
+                asset_id, move_wp["x"], move_wp["y"], move_wp["z"],
+                get_speed(asset_id),
+            )
+            if not move_result.get("success", True):
+                return {
+                    "asset_id": asset_id,
+                    "error": "Failed while moving to sweep waypoint",
+                    "failed_waypoint": wp,
+                    "move_result": move_result,
+                    "completed_waypoints": index - 1,
+                }
+
+            wait_result = await wait_until_waypoint_reached(
+                asset_id,
+                move_wp["x"],
+                move_wp["y"],
+                move_wp["z"],
+                exclude_building_id=building_id,
+            )
+            if not wait_result.get("ok", False):
+                return {
+                    "asset_id": asset_id,
+                    "error": _normalize_scan_route_error(
+                        wait_result.get("error"),
+                        "Sweep waypoint not reached",
+                    ),
+                    "failed_waypoint": wp,
+                    "status": wait_result.get("status"),
+                    "completed_waypoints": index - 1,
+                }
 
         if wp.get("transit"):
             continue

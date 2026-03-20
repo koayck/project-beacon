@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -105,3 +106,42 @@ def test_prepare_parallel_fleet_scan_dedupes_duplicate_buildings() -> None:
     assert initial["BEACON-01"]["id"] == 4
     assert len(pending) == 1
     assert pending[0]["id"] == 9
+
+
+@pytest.mark.asyncio
+async def test_pick_next_building_concurrent_claims_do_not_reissue_initial(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _status(_asset_id: str) -> dict:
+        return {"x": 0.0, "z": 0.0}
+
+    monkeypatch.setattr(grpc_client, "get_status", _status)
+
+    tool_context = SimpleNamespace(
+        state={
+            "active_fleet_assets": '["BEACON-01","BEACON-04"]',
+            "scan_initial_building_by_asset": json.dumps(
+                {
+                    "BEACON-01": {"id": 3, "x": 12.0, "z": -27.0, "height": 9.0},
+                    "BEACON-04": {"id": 4, "x": -28.0, "z": -28.0, "height": 21.0},
+                }
+            ),
+            "scan_pending_buildings": "[]",
+            "scan_claimed_initial_by_asset": '{"BEACON-01":false,"BEACON-04":false}',
+            "scan_done_count_by_asset": '{"BEACON-01":0,"BEACON-04":0}',
+            "scan_results_list": "[]",
+            "scan_total_buildings": 2,
+            "scan_summary_emitted": False,
+        },
+        actions=SimpleNamespace(escalate=False),
+    )
+
+    first, second = await asyncio.gather(
+        pick_next_building_for_asset("BEACON-01", tool_context),
+        pick_next_building_for_asset("BEACON-04", tool_context),
+    )
+
+    assert first["done"] is False
+    assert second["done"] is False
+
+    follow_up = await pick_next_building_for_asset("BEACON-04", tool_context)
+    assert follow_up["done"] is True
+    assert follow_up["total_scanned"] == 1
