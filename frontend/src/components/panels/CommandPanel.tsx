@@ -7,6 +7,7 @@ import { setFleetSpeed, recallFleet } from '@/lib/api'
 interface AgentMessage {
   role: 'user' | 'agent'
   lines: string[]
+  thinking: string[]
   ts: number
 }
 
@@ -92,8 +93,8 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
       setElapsed(0)
       setTtft(null)
       setTps(null)
-      setMessages(prev => [...prev, { role: 'user', lines: [externalPrompt], ts: Date.now() }])
-      setMessages(prev => [...prev, { role: 'agent', lines: [], ts: Date.now() }])
+      setMessages(prev => [...prev, { role: 'user', lines: [externalPrompt], thinking: [], ts: Date.now() }])
+      setMessages(prev => [...prev, { role: 'agent', lines: [], thinking: [], ts: Date.now() }])
       setBusy(true)
       onCommand(externalPrompt, (event) => {
         if (event.type === 'heartbeat') {
@@ -125,7 +126,7 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
       if (last?.role === 'agent') {
         return [...prev.slice(0, -1), { ...last, lines: [...last.lines, line] }]
       }
-      return [...prev, { role: 'agent', lines: [line], ts: Date.now() }]
+      return [...prev, { role: 'agent', lines: [line], thinking: [], ts: Date.now() }]
     })
   }
 
@@ -173,8 +174,8 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
     setElapsed(0)
     setTtft(null)
     setTps(null)
-    setMessages(prev => [...prev, { role: 'user', lines: [text], ts: Date.now() }])
-    setMessages(prev => [...prev, { role: 'agent', lines: [], ts: Date.now() }])
+    setMessages(prev => [...prev, { role: 'user', lines: [text], thinking: [], ts: Date.now() }])
+    setMessages(prev => [...prev, { role: 'agent', lines: [], thinking: [], ts: Date.now() }])
     setBusy(true)
 
     try {
@@ -286,15 +287,15 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
       {!minimized && (
         <>
           <div style={{
-            height: logHeight,
-            transition: 'height 0.2s ease',
-            overflowY: 'auto',
-            overflowX: 'hidden',
-            padding: '8px 14px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 6,
-          }}>
+              height: logHeight,
+              transition: 'height 0.2s ease',
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              padding: '8px 14px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+            }}>
             {messages.length === 0 && (
               <div style={{ color: '#5a6a7a', fontStyle: 'italic', marginTop: 4 }}>
                 {connected ? 'Type a natural language command...' : 'Waiting for backend connection...'}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from "react"
+import { useState, useEffect, useRef } from "react"
 import type { AgentStreamEvent } from '@/lib/api'
 
 export type ActivityCategory = 'dispatch' | 'agent' | 'reasoning' | 'movement' | 'scan' | 'complete' | 'error' | 'system'
@@ -10,6 +10,7 @@ export interface ActivityItem {
   icon: string
   label: string
   detail?: string
+  thinkingLines?: string[]
   ts: number
   status: 'active' | 'done' | 'error'
   category: ActivityCategory
@@ -82,6 +83,10 @@ export function parseEventToActivity(event: AgentStreamEvent): ActivityItem | nu
     return { id: nextActivityId(), icon: '⟡', label: name.replace(/_/g, ' '), detail: `[${agent}]`, ts: Date.now(), status: 'active', category: 'system' }
   }
 
+  if (event.type === 'thinking') {
+    return { id: nextActivityId(), icon: '◇', label: 'Agent reasoning', thinkingLines: [event.text], ts: Date.now(), status: 'active', category: 'reasoning' }
+  }
+
   if (event.type === 'text' || event.type === 'final') {
     const t = event.text
     const arriveMatch = t.match(/arrived at \(([^)]+)\)/)
@@ -121,6 +126,57 @@ export function parseEventToActivity(event: AgentStreamEvent): ActivityItem | nu
   }
 
   return null
+}
+
+
+function ThinkingEntry({ lines, streaming }: { lines: string[]; streaming: boolean }) {
+  const [open, setOpen] = useState(false)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (open && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [open, lines.length])
+
+  return (
+    <div className="mt-px">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex w-full cursor-pointer items-center gap-1.5 border-none bg-transparent p-0 text-left font-mono text-[11px] text-[#daa832]"
+        style={{ opacity: 0.85 }}
+      >
+        <span style={{
+          display: 'inline-block',
+          transition: 'transform 0.15s',
+          transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
+          fontSize: 9,
+        }}>&#9654;</span>
+        {streaming && (
+          <span className="inline-block h-[5px] w-[5px] animate-pulse rounded-full bg-[#daa832] shadow-[0_0_6px_#daa832]" />
+        )}
+        <span style={{ letterSpacing: 1 }}>COT</span>
+        <span className="text-[#7a6a3a]">({lines.length} steps)</span>
+      </button>
+      {open && (
+        <div
+          ref={scrollRef}
+          className="mt-1 overflow-y-auto border-l-2 border-[rgba(220,170,50,0.2)] pl-2"
+          style={{ maxHeight: 160 }}
+        >
+          {lines.map((line, i) => (
+            <div
+              key={i}
+              className="mb-1 text-[11px] italic leading-[1.5] text-[#b89a40]"
+              style={{ opacity: 0.8 }}
+            >
+              {line}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 
@@ -191,11 +247,13 @@ export function ActivityFeed({ items, busy, onClear }: ActivityFeedProps) {
                       {missionTime(item.ts)}
                     </span>
                   </div>
-                  {item.detail && (
+                  {item.thinkingLines && item.thinkingLines.length > 0 ? (
+                    <ThinkingEntry lines={item.thinkingLines} streaming={busy && isLast} />
+                  ) : item.detail ? (
                     <div className={`mt-px break-words whitespace-pre-wrap text-xs ${cat.detailClass}`}>
                       {item.detail}
                     </div>
-                  )}
+                  ) : null}
                 </div>
               </div>
             )

@@ -688,6 +688,10 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                 if not event.content or not event.content.parts:
                     continue
                 for part in event.content.parts:
+                    if getattr(part, "thought", False) and part.text and part.text.strip():
+                        payload = {"type": "thinking", "text": part.text, "agent": event.author}
+                        yield f"data: {json.dumps(payload)}\n\n"
+                        continue
                     if part.function_call:
                         payload = {
                             "type": "tool_call",

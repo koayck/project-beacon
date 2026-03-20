@@ -699,6 +699,16 @@ export default function SARScene() {
         const activity = parseEventToActivity(event)
         if (activity) {
           setActivities(prev => {
+            // Aggregate thinking into a single entry
+            if (activity.category === 'reasoning' && activity.thinkingLines && prev.length > 0) {
+              const last = prev[prev.length - 1]
+              if (last.category === 'reasoning' && last.thinkingLines) {
+                const merged = [...last.thinkingLines, ...activity.thinkingLines]
+                const updated = [...prev]
+                updated[updated.length - 1] = { ...last, thinkingLines: merged, label: `Agent reasoning` }
+                return updated
+              }
+            }
             if (activity.label === 'Moving to waypoint' && prev.length > 0) {
               const last = prev[prev.length - 1]
               if (last.label === 'Moving to waypoint') {
