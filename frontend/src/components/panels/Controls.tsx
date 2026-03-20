@@ -3,6 +3,10 @@ interface ControlsProps {
   onToggleFollow: () => void
   transparentWalls: boolean
   onToggleWalls: () => void
+  followedAssetId: string | null
+  activeAssetIds: string[]
+  onFollowPrevious: () => void
+  onFollowNext: () => void
   selectMode: boolean
 }
 
@@ -11,10 +15,17 @@ export function Controls({
   onToggleFollow,
   transparentWalls,
   onToggleWalls,
+  followedAssetId,
+  activeAssetIds,
+  onFollowPrevious,
+  onFollowNext,
   selectMode,
 }: ControlsProps) {
   const buttonClass = (enabled: boolean, onClasses: string, offClasses: string) =>
     `flex-1 rounded border px-[6px] py-[6px] text-center font-mono text-[11px] tracking-[0.5px] transition-all duration-150 ${enabled ? onClasses : offClasses}`
+
+  const followIndex = followedAssetId ? activeAssetIds.indexOf(followedAssetId) : -1
+  const canCycleTargets = activeAssetIds.length > 1
 
   return (
     <div className={`pointer-events-auto min-w-[210px] rounded-lg border p-[10px_12px] font-mono text-xs leading-[1.6] text-[#8899aa] backdrop-blur-[12px] ${
@@ -65,6 +76,29 @@ export function Controls({
           WALLS {transparentWalls ? 'X-RAY' : 'SOLID'}
         </button>
       </div>
+      {followBeacon && activeAssetIds.length > 0 && (
+        <div className="mt-2 flex items-center gap-1">
+          <button
+            onClick={onFollowPrevious}
+            disabled={!canCycleTargets}
+            className="w-7 rounded border border-[rgba(90,140,255,0.4)] bg-[rgba(40,130,255,0.12)] px-[4px] py-[4px] text-[11px] text-[#9fd0ff] disabled:border-[rgba(40,50,70,0.5)] disabled:bg-[rgba(15,20,30,0.6)] disabled:text-[#4a5a6a]"
+            aria-label="Follow previous drone"
+          >
+            ←
+          </button>
+          <div className="flex-1 rounded border border-[rgba(40,50,70,0.45)] bg-[rgba(12,17,28,0.7)] px-[8px] py-[4px] text-center text-[10px] tracking-[0.5px] text-[#8fa5bc]">
+            TARGET {followedAssetId ?? 'N/A'} {followIndex >= 0 ? `(${followIndex + 1}/${activeAssetIds.length})` : ''}
+          </div>
+          <button
+            onClick={onFollowNext}
+            disabled={!canCycleTargets}
+            className="w-7 rounded border border-[rgba(90,140,255,0.4)] bg-[rgba(40,130,255,0.12)] px-[4px] py-[4px] text-[11px] text-[#9fd0ff] disabled:border-[rgba(40,50,70,0.5)] disabled:bg-[rgba(15,20,30,0.6)] disabled:text-[#4a5a6a]"
+            aria-label="Follow next drone"
+          >
+            →
+          </button>
+        </div>
+      )}
     </div>
   )
 }

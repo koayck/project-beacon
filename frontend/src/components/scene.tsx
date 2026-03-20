@@ -112,6 +112,7 @@ export default function SARScene() {
   const [hoverPt, setHoverPt]     = useState<THREE.Vector3 | null>(null)
   const [copied, setCopied]       = useState(false)
   const [followBeacon, setFollowBeacon] = useState(false)
+  const [followedAssetId, setFollowedAssetId] = useState<string | null>(ASSET_ID)
   const [transparentWalls, setTransparentWalls] = useState(false)
   const [deliveredTo, setDeliveredTo] = useState<Set<string>>(new Set())
   const [deliveringTo, setDeliveringTo] = useState<Set<string>>(new Set())
@@ -171,11 +172,27 @@ export default function SARScene() {
     copiedTimer.current = setTimeout(() => setCopied(false), 1500)
   }, [])
   const drones = useTelemetry(WS_URL)
+  const activeDroneAssetIds = useMemo(
+    () => Object.values(drones).map(entry => entry.asset_id).sort((a, b) => a.localeCompare(b)),
+    [drones]
+  )
+
+  const defaultFollowAssetId = useMemo(() => {
+    if (activeDroneAssetIds.includes(ASSET_ID)) return ASSET_ID
+    return activeDroneAssetIds[0] ?? null
+  }, [activeDroneAssetIds])
 
   const telemetry = drones[ASSET_ID] ?? null
   const dronePos = useMemo(
     () => telemetry ? new THREE.Vector3(telemetry.x, telemetry.y, telemetry.z) : DRONE_START.clone(),
     [telemetry?.x, telemetry?.y, telemetry?.z]
+  )
+  const followedTelemetry = followedAssetId ? (drones[followedAssetId] ?? null) : null
+  const followTargetPos = useMemo(
+    () => followedTelemetry
+      ? new THREE.Vector3(followedTelemetry.x, followedTelemetry.y, followedTelemetry.z)
+      : DRONE_START.clone(),
+    [followedTelemetry?.x, followedTelemetry?.y, followedTelemetry?.z]
   )
   const droneStatus = telemetry?.status ?? 'IDLE'
   const battery   = telemetry?.battery ?? null
@@ -356,12 +373,42 @@ export default function SARScene() {
   }, [autoRecallPrompt, addLog])
 
   const toggleFollowBeacon = useCallback(() => {
-    setFollowBeacon(prev => {
-      const next = !prev
-      addLog(next ? `👁 Following ${ASSET_ID}` : '👁 Follow mode disabled')
-      return next
-    })
-  }, [addLog])
+    if (followBeacon) {
+      setFollowBeacon(false)
+      addLog('👁 Follow mode disabled')
+      return
+    }
+
+    const nextAssetId = defaultFollowAssetId
+    setFollowedAssetId(nextAssetId)
+    setFollowBeacon(true)
+    addLog(nextAssetId ? `👁 Following ${nextAssetId}` : '👁 Follow mode enabled (no active drones)')
+  }, [addLog, defaultFollowAssetId, followBeacon])
+
+  const cycleFollowTarget = useCallback((direction: 1 | -1) => {
+    if (!followBeacon || activeDroneAssetIds.length === 0) return
+
+    const currentId = (
+      followedAssetId && activeDroneAssetIds.includes(followedAssetId)
+        ? followedAssetId
+        : defaultFollowAssetId
+    )
+    if (!currentId) return
+
+    const currentIndex = activeDroneAssetIds.indexOf(currentId)
+    const nextIndex = (currentIndex + direction + activeDroneAssetIds.length) % activeDroneAssetIds.length
+    const nextId = activeDroneAssetIds[nextIndex]
+    setFollowedAssetId(nextId)
+    addLog(`👁 Following ${nextId}`)
+  }, [activeDroneAssetIds, addLog, defaultFollowAssetId, followBeacon, followedAssetId])
+
+  const followPreviousBeacon = useCallback(() => {
+    cycleFollowTarget(-1)
+  }, [cycleFollowTarget])
+
+  const followNextBeacon = useCallback(() => {
+    cycleFollowTarget(1)
+  }, [cycleFollowTarget])
 
   const toggleWallTransparency = useCallback(() => {
     setTransparentWalls(prev => {
@@ -449,6 +496,15 @@ export default function SARScene() {
       addLog(`→ ${ASSET_ID} moving to (${telemetry.x.toFixed(1)}, ${telemetry.y.toFixed(1)}, ${telemetry.z.toFixed(1)})`)
     }
   }, [telemetry?.status])
+
+  useEffect(() => {
+    if (activeDroneAssetIds.length === 0) {
+      if (followedAssetId !== null) setFollowedAssetId(null)
+      return
+    }
+    if (followedAssetId && activeDroneAssetIds.includes(followedAssetId)) return
+    setFollowedAssetId(defaultFollowAssetId)
+  }, [activeDroneAssetIds, defaultFollowAssetId, followedAssetId])
 
   useEffect(() => {
     if (autoRecallThreshold === null) return
@@ -946,7 +1002,7 @@ export default function SARScene() {
           maxDistance={400}
           target={[0, 5, 0]}
         />
-        <FollowBeaconCamera enabled={followBeacon} targetPos={dronePos} controlsRef={orbitRef} />
+        <FollowBeaconCamera enabled={followBeacon} targetPos={followTargetPos} controlsRef={orbitRef} />
         <CameraTracker northAngleRef={northAngleRef} />
 
         {/* Lighting */}
@@ -1043,6 +1099,10 @@ export default function SARScene() {
           onToggleFollow={toggleFollowBeacon}
           transparentWalls={transparentWalls}
           onToggleWalls={toggleWallTransparency}
+          followedAssetId={followedAssetId}
+          activeAssetIds={activeDroneAssetIds}
+          onFollowPrevious={followPreviousBeacon}
+          onFollowNext={followNextBeacon}
           selectMode={selectMode}
         />
         <DroneStatusPanel drones={drones} />
