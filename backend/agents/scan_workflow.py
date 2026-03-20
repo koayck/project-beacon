@@ -32,7 +32,7 @@ from google.adk.tools import FunctionTool
 from google.adk.tools.tool_context import ToolContext
 
 from backend.agents._mcp import FLEET_TOOLS, NAV_TOOLS, THERMAL_TOOLS, make_toolset
-from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
+from backend.agents._model import GEN_CONFIG, MODEL
 
 _SCAN_QUEUE_LOCK = asyncio.Lock()
 _RESULT_ASSET_PREFIX_RE = re.compile(r"^\[(?P<asset>[A-Za-z0-9_-]+)\]\s*(?P<body>.*)$", re.DOTALL)
@@ -591,12 +591,12 @@ _PICKER_INSTRUCTION = """You manage the building scan queue.
 
 _building_picker_agent = Agent(
     name="building_picker_agent",
-    model=QWEN3_INSTRUCT,
+    model=MODEL,
     description=(
         "Pops the next building from the scan queue and emits a navigation target, "
         "or exits the loop when all buildings have been scanned."
     ),
-    generate_content_config=QWEN3_GEN_CONFIG,
+    generate_content_config=GEN_CONFIG,
     output_key="current_building",
     instruction=_PICKER_INSTRUCTION,
     tools=[_pick_tool],
@@ -627,9 +627,9 @@ MOVE PROCEDURE
 
 _nav_for_scan = Agent(
     name="navigation_agent_scan",
-    model=QWEN3_INSTRUCT,
+    model=MODEL,
     description="Navigates the drone to the current scan target building.",
-    generate_content_config=QWEN3_GEN_CONFIG,
+    generate_content_config=GEN_CONFIG,
     output_key="nav_result",
     instruction=_NAV_INSTRUCTION,
     tools=[make_toolset(NAV_TOOLS)],
@@ -668,9 +668,9 @@ SWEEP SCAN PROCEDURE
 
 _thermal_for_scan = Agent(
     name="thermal_agent_scan",
-    model=QWEN3_INSTRUCT,
+    model=MODEL,
     description="Sweep-scans the current building and silently accumulates the result. Generates the final report after the last building.",
-    generate_content_config=QWEN3_GEN_CONFIG,
+    generate_content_config=GEN_CONFIG,
     instruction=_SILENT_THERMAL_INSTRUCTION,
     tools=[make_toolset(THERMAL_TOOLS), _save_tool],
 )
@@ -772,9 +772,9 @@ SWEEP SCAN PROCEDURE
 
     picker_agent = Agent(
         name=f"building_picker_agent_{suffix}",
-        model=QWEN3_INSTRUCT,
+        model=MODEL,
         description=f"Picks next building for {asset_id}.",
-        generate_content_config=QWEN3_GEN_CONFIG,
+        generate_content_config=GEN_CONFIG,
         output_key=current_key,
         instruction=picker_instruction,
         tools=[pick_tool],
@@ -782,9 +782,9 @@ SWEEP SCAN PROCEDURE
 
     nav_agent = Agent(
         name=f"navigation_agent_scan_{suffix}",
-        model=QWEN3_INSTRUCT,
+        model=MODEL,
         description=f"Navigates {asset_id} to current scan target.",
-        generate_content_config=QWEN3_GEN_CONFIG,
+        generate_content_config=GEN_CONFIG,
         output_key=nav_key,
         instruction=nav_instruction,
         tools=[make_toolset(NAV_TOOLS)],
@@ -792,9 +792,9 @@ SWEEP SCAN PROCEDURE
 
     thermal_agent = Agent(
         name=f"thermal_agent_scan_{suffix}",
-        model=QWEN3_INSTRUCT,
+        model=MODEL,
         description=f"Sweep-scans current building for {asset_id} and saves compact results.",
-        generate_content_config=QWEN3_GEN_CONFIG,
+        generate_content_config=GEN_CONFIG,
         instruction=thermal_instruction,
         tools=[make_toolset(THERMAL_TOOLS), save_tool],
     )
@@ -846,9 +846,9 @@ _REPORT_INSTRUCTION = """You produce the final consolidated scan report — but 
 
 _scan_report_agent = Agent(
     name="scan_report_agent",
-    model=QWEN3_INSTRUCT,
+    model=MODEL,
     description="Reads accumulated scan results and emits a single consolidated final report.",
-    generate_content_config=QWEN3_GEN_CONFIG,
+    generate_content_config=GEN_CONFIG,
     instruction=_REPORT_INSTRUCTION,
     tools=[_build_report_tool],
 )
@@ -872,9 +872,9 @@ _FLEET_ASSIGNER_INSTRUCTION = """You assign available drones to buildings for a 
 
 _fleet_assigner_agent = Agent(
     name="fleet_assigner_agent",
-    model=QWEN3_INSTRUCT,
+    model=MODEL,
     description="Assigns the closest available IDLE drones to buildings using proximity-based greedy matching.",
-    generate_content_config=QWEN3_GEN_CONFIG,
+    generate_content_config=GEN_CONFIG,
     instruction=_FLEET_ASSIGNER_INSTRUCTION,
     tools=[_assign_drones_tool],
 )
@@ -889,9 +889,9 @@ _FLEET_EXECUTOR_INSTRUCTION = """You execute the fleet scan missions for all ass
 
 _fleet_scan_prep_agent = Agent(
     name="fleet_scan_prep_agent",
-    model=QWEN3_INSTRUCT,
+    model=MODEL,
     description="Prepares a parallel fleet mission queue for LoopAgent execution.",
-    generate_content_config=QWEN3_GEN_CONFIG,
+    generate_content_config=GEN_CONFIG,
     instruction=_FLEET_EXECUTOR_INSTRUCTION,
     tools=[_prepare_fleet_scan_tool],
 )
@@ -932,12 +932,12 @@ Each building object must have: id, x, z, height, bounds{min_x,max_x,min_z,max_z
 
 _scan_resolver_agent = Agent(
     name="scan_resolver_agent",
-    model=QWEN3_INSTRUCT,
+    model=MODEL,
     description=(
         "Resolves the scan target — a single building or all buildings in an area — "
         "and stores the list for the scan loop."
     ),
-    generate_content_config=QWEN3_GEN_CONFIG,
+    generate_content_config=GEN_CONFIG,
     output_key="scan_buildings",
     instruction=_RESOLVER_INSTRUCTION,
     tools=[make_toolset(["resolve_scan_target", "find_buildings_in_area"])],

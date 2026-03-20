@@ -10,17 +10,25 @@ from google.adk.tools import FunctionTool
 from google.adk.tools.tool_context import ToolContext
 
 from backend.agents._mcp import make_toolset
-from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
+from backend.agents._model import GEN_CONFIG, MODEL
 from backend.services.core import context as service_context
 
 _SUPPLY_QUEUE_LOCK = asyncio.Lock()
 _PARALLEL_BEACON_IDS = ["BEACON-01"]
 
 
+def _strip_code_fences(raw: str) -> str:
+    stripped = raw.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.split("\n", 1)[-1]
+        stripped = stripped.rsplit("```", 1)[0]
+    return stripped.strip()
+
+
 def _load_json_state(value: object, fallback):
     try:
         if isinstance(value, str):
-            return json.loads(value)
+            return json.loads(_strip_code_fences(value))
         return value if value is not None else fallback
     except (json.JSONDecodeError, TypeError):
         return fallback
@@ -462,9 +470,9 @@ def _make_asset_supply_loop(asset_id: str) -> LoopAgent:
 
     worker_agent = Agent(
         name=f"supply_worker_agent_{suffix}",
-        model=QWEN3_INSTRUCT,
+        model=MODEL,
         description=f"Dispatches queued supply targets for {asset_id}.",
-        generate_content_config=QWEN3_GEN_CONFIG,
+        generate_content_config=GEN_CONFIG,
         instruction=worker_instruction,
         tools=[process_tool],
     )
@@ -540,9 +548,9 @@ Each survivor object must have: id, x, y, z.
 
 _supply_resolver_agent = Agent(
     name="supply_resolver_agent",
-    model=QWEN3_INSTRUCT,
+    model=MODEL,
     description="Resolves supply targets as a survivor list.",
-    generate_content_config=QWEN3_GEN_CONFIG,
+    generate_content_config=GEN_CONFIG,
     output_key="supply_targets",
     instruction=_SUPPLY_RESOLVER_INSTRUCTION,
     tools=[make_toolset(["find_survivors_in_area"])],
@@ -563,9 +571,9 @@ _SUPPLY_ASSIGNER_INSTRUCTION = """You assign available drones to survivor target
 
 _supply_assigner_agent = Agent(
     name="supply_assigner_agent",
-    model=QWEN3_INSTRUCT,
+    model=MODEL,
     description="Assigns closest available IDLE drones to survivor targets.",
-    generate_content_config=QWEN3_GEN_CONFIG,
+    generate_content_config=GEN_CONFIG,
     instruction=_SUPPLY_ASSIGNER_INSTRUCTION,
     tools=[_assign_supply_tool],
 )
@@ -581,9 +589,9 @@ _SUPPLY_EXECUTOR_INSTRUCTION = """You execute supply dispatch for all assigned d
 
 _supply_prep_agent = Agent(
     name="supply_prep_agent",
-    model=QWEN3_INSTRUCT,
+    model=MODEL,
     description="Prepares a parallel survivor dispatch queue for LoopAgent execution.",
-    generate_content_config=QWEN3_GEN_CONFIG,
+    generate_content_config=GEN_CONFIG,
     instruction=_SUPPLY_EXECUTOR_INSTRUCTION,
     tools=[_prepare_supply_tool],
 )
@@ -598,9 +606,9 @@ _SUPPLY_REPORT_INSTRUCTION = """You produce the final consolidated supply report
 
 _supply_report_agent = Agent(
     name="supply_report_agent",
-    model=QWEN3_INSTRUCT,
+    model=MODEL,
     description="Reads accumulated supply results and emits one consolidated final report.",
-    generate_content_config=QWEN3_GEN_CONFIG,
+    generate_content_config=GEN_CONFIG,
     instruction=_SUPPLY_REPORT_INSTRUCTION,
     tools=[_build_supply_report_tool],
 )

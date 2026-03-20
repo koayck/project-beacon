@@ -6,7 +6,7 @@ from __future__ import annotations
 from google.adk.agents import Agent
 
 from backend.agents._mcp import NAV_TOOLS, make_toolset
-from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
+from backend.agents._model import GEN_CONFIG, MODEL
 
 _INSTRUCTION = """You are a navigation specialist for autonomous drones.
 
@@ -79,9 +79,9 @@ def make_navigation_agent(name: str = "navigation_agent", scan_mode: bool = Fals
     """
     return Agent(
         name=name,
-        model=QWEN3_INSTRUCT,
+        model=MODEL,
         description=_DESCRIPTION,
-        generate_content_config=QWEN3_GEN_CONFIG,
+        generate_content_config=GEN_CONFIG,
         output_key="nav_result",
         instruction=f"{_SCAN_MODE_PREFIX}{_INSTRUCTION}" if scan_mode else _INSTRUCTION,
         tools=[make_toolset(_TOOLS)],

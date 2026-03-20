@@ -1,16 +1,12 @@
 """
 Shared model and generation configs for all ADK agents.
 
-Per-agent temperature tuning for Qwen3 4B Q4_K_M:
+Per-agent temperature tuning:
   commander:  temp=0.5  — routing decisions need precision, less hallucination
-  sub-agents: temp=0.7  — balanced creativity for tool selection
+  sub-agents: temp=0.7  — balanced creativity for tool reasoning
 
-Qwen3 instruct (non-thinking) base params: top_p=0.95, top_k=20
-presence_penalty kept at 1.0 (1.5 caused model to avoid repeating tool names).
-
-Note: ThinkingConfig(thinking_budget=0) is Gemini-specific and gets silently
-dropped by litellm.drop_params for ollama_chat. Real thinking control for Qwen3
-on Ollama is the `think` kwarg passed directly to LiteLlm.
+Uses native Gemini 2.5 Flash via ADK (no LiteLLM wrapper) with thinking enabled
+so chain-of-thought reasoning is visible in the response stream.
 """
 from __future__ import annotations
 
@@ -21,7 +17,6 @@ from typing import Any
 
 import litellm
 from dotenv import load_dotenv
-from google.adk.models.lite_llm import LiteLlm
 from google.genai import types as genai_types
 
 load_dotenv()
@@ -91,31 +86,35 @@ def _configure_langfuse() -> None:
     )
     _logger.info("Langfuse observability enabled")
 
-model = "gemini/gemini-2.5-flash"
+# To switch to local Ollama (offline), replace MODEL with a LiteLlm wrapper
+# and remove thinking_config from the GenerateContentConfig below:
+#
+#   from google.adk.models.lite_llm import LiteLlm
+#   MODEL = LiteLlm("ollama_chat/qwen3.5:4b-q4_K_M", api_base="http://localhost:11434")
+#
+MODEL = "gemini-2.5-flash"
 
 # Drop unsupported params silently (e.g. presence_penalty not supported by ollama_chat)
 litellm.drop_params = True
 _configure_langfuse()
 
-QWEN3_INSTRUCT = LiteLlm(
-    # model="ollama_chat/qwen3.5:4b-q4_K_M",
-    model,
-    # api_base="http://100.68.65.126:11434",
-    # think=False,  # Ollama-native: disables Qwen3 extended thinking (80s → 7s)
+_THINKING_CONFIG = genai_types.ThinkingConfig(
+    include_thoughts=True,
+    thinking_budget=4096,
 )
 
 # Commander: lower temperature for precise routing decisions
-QWEN3_GEN_CONFIG_COMMANDER = genai_types.GenerateContentConfig(
+GEN_CONFIG_COMMANDER = genai_types.GenerateContentConfig(
     temperature=0.5,
     top_p=0.95,
     top_k=20,
-    # presence_penalty=1.0,
+    thinking_config=_THINKING_CONFIG,
 )
 
 # Sub-agents (navigation, thermal): slightly higher temperature for tool reasoning
-QWEN3_GEN_CONFIG = genai_types.GenerateContentConfig(
+GEN_CONFIG = genai_types.GenerateContentConfig(
     temperature=0.7,
     top_p=0.95,
     top_k=20,
-    # presence_penalty=1.0,
+    thinking_config=_THINKING_CONFIG,
 )

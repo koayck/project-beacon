@@ -1,12 +1,13 @@
 """
 Thermal Agent — thermal imaging and survivor detection.
 """
+
 from __future__ import annotations
 
 from google.adk.agents import Agent
 
 from backend.agents._mcp import THERMAL_TOOLS, make_toolset
-from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
+from backend.agents._model import GEN_CONFIG, MODEL
 from backend.services.api import get_drone_status, scan_area
 
 _DESCRIPTION = (
@@ -62,9 +63,9 @@ def make_thermal_agent(name: str = "thermal_agent") -> Agent:
     """
     return Agent(
         name=name,
-        model=QWEN3_INSTRUCT,
+        model=MODEL,
         description=_DESCRIPTION,
-        generate_content_config=QWEN3_GEN_CONFIG,
+        generate_content_config=GEN_CONFIG,
         output_key="thermal_result",
         instruction=_INSTRUCTION,
         tools=[make_toolset(THERMAL_TOOLS)],

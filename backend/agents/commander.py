@@ -4,16 +4,16 @@ from __future__ import annotations
 from google.adk.agents import Agent
 
 from backend.agents._mcp import SWARM_TOOLS, make_toolset
-from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
+from backend.agents._model import GEN_CONFIG, MODEL
 from backend.agents.navigation import navigation_agent
 from backend.agents.scan_workflow import scan_workflow
 from backend.agents.supply_workflow import supply_workflow
 
 commander = Agent(
     name="commander",
-    model=QWEN3_INSTRUCT,
+    model=MODEL,
     description="Root agent. Routes drone swarm commands to the correct specialist sub-agent.",
-    generate_content_config=QWEN3_GEN_CONFIG,
+    generate_content_config=GEN_CONFIG,
     instruction="""You are the Ground Control Station commander for an autonomous drone swarm.
 
 You receive natural language commands and route them to the correct specialist:
