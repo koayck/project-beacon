@@ -96,10 +96,10 @@ export function IntelCard({
           {deliveredCount > 0 && <StatCounter value={deliveredCount} label="SUPPLIED" color="#44ccff" />}
         </div>
 
-        <div className="mb-2 flex justify-between text-[11px] text-[#7a8a9a]">
+        {/* <div className="mb-2 flex justify-between text-[11px] text-[#7a8a9a]">
           <span>SENSOR @ ({dronePos.x.toFixed(1)}, {dronePos.y.toFixed(1)}, {dronePos.z.toFixed(1)})</span>
           <span className="text-[#8899aa]">{SURVIVOR_SENSOR_RANGE}m</span>
-        </div>
+        </div> */}
       </div>
 
       <div className="relative z-[1] max-h-[220px] overflow-y-auto px-[14px] pb-[10px] pt-0">
