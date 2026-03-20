@@ -66,6 +66,7 @@ _NORMAL_SPEED = 5.0
 _MIN_ELIGIBLE_BATTERY_PCT = 20
 # _FAST_SPEED = 20.0
 _drone_speeds: dict[str, float] = {}
+_move_locks: dict[str, asyncio.Lock] = {}
 # Default sweep radius should cover window-standoff waypoints (~6m to interior
 # survivors in current maps) without requiring the operator to specify radius.
 DEFAULT_SWEEP_SCAN_RADIUS = 8.0
@@ -133,6 +134,14 @@ def get_drone_speed(asset_id: str) -> float:
     return _drone_speeds.get(asset_id, _NORMAL_SPEED)
 
 
+def _get_move_lock(asset_id: str) -> asyncio.Lock:
+    lock = _move_locks.get(asset_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _move_locks[asset_id] = lock
+    return lock
+
+
 def set_client(client: DroneGrpcClient | None) -> None:
     """Override the active gRPC client for tests; None restores runtime default."""
     global grpc_client
@@ -177,9 +186,38 @@ async def move_drone_to(
     y: float,
     z: float,
     speed: float | None = None,
+    *,
+    exclude_building_id: int | None = None,
 ) -> dict:
-    target_speed = get_drone_speed(asset_id) if speed is None else speed
-    return await grpc_client.move_to(asset_id, x, y, z, target_speed)
+    lock = _get_move_lock(asset_id)
+    async with lock:
+        target_speed = get_drone_speed(asset_id) if speed is None else speed
+        command_result = await grpc_client.move_to(asset_id, x, y, z, target_speed)
+        if not command_result.get("success", False):
+            return command_result
+
+        wait_result = await _wait_until_waypoint_reached(
+            asset_id,
+            float(x),
+            float(y),
+            float(z),
+            exclude_building_id=exclude_building_id,
+        )
+        if wait_result.get("ok", False):
+            return {
+                **command_result,
+                "reached": True,
+                "status": wait_result.get("status"),
+            }
+
+        error = str(wait_result.get("error", "Waypoint not reached"))
+        return {
+            "success": False,
+            "message": error,
+            "error": error,
+            "status": wait_result.get("status"),
+            "command_result": command_result,
+        }
 
 
 async def list_all_drones() -> dict:

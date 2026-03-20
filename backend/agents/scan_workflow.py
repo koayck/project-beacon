@@ -427,9 +427,6 @@ async def pick_next_building_for_asset(asset_id: str, tool_context: ToolContext)
     """Claim next building for this beacon: initial slot first, then closest pending building."""
     raw_assets = tool_context.state.get("active_fleet_assets", "[]")
     raw_initial = tool_context.state.get("scan_initial_building_by_asset", "{}")
-    raw_pending = tool_context.state.get("scan_pending_buildings", "[]")
-    raw_claimed = tool_context.state.get("scan_claimed_initial_by_asset", "{}")
-    raw_done_count = tool_context.state.get("scan_done_count_by_asset", "{}")
     try:
         active_assets = json.loads(raw_assets) if isinstance(raw_assets, str) else raw_assets
     except (json.JSONDecodeError, TypeError):
@@ -438,23 +435,15 @@ async def pick_next_building_for_asset(asset_id: str, tool_context: ToolContext)
         initial_by_asset = json.loads(raw_initial) if isinstance(raw_initial, str) else raw_initial
     except (json.JSONDecodeError, TypeError):
         initial_by_asset = {}
-    try:
-        pending = json.loads(raw_pending) if isinstance(raw_pending, str) else raw_pending
-    except (json.JSONDecodeError, TypeError):
-        pending = []
-    try:
-        claimed_initial = json.loads(raw_claimed) if isinstance(raw_claimed, str) else raw_claimed
-    except (json.JSONDecodeError, TypeError):
-        claimed_initial = {}
-    try:
-        done_count = json.loads(raw_done_count) if isinstance(raw_done_count, str) else raw_done_count
-    except (json.JSONDecodeError, TypeError):
-        done_count = {}
-
     # Gracefully handle state not yet propagated from prep agent.
     # If active_assets is empty but we have an initial building, proceed anyway.
+    raw_pending_preview = tool_context.state.get("scan_pending_buildings", "[]")
+    try:
+        pending_preview = json.loads(raw_pending_preview) if isinstance(raw_pending_preview, str) else raw_pending_preview
+    except (json.JSONDecodeError, TypeError):
+        pending_preview = []
     has_initial = isinstance(initial_by_asset.get(asset_id), dict)
-    if asset_id not in active_assets and not has_initial and not pending:
+    if asset_id not in active_assets and not has_initial and not pending_preview:
         tool_context.actions.escalate = True
         return {"done": True, "asset_id": asset_id, "total_scanned": 0}
 
@@ -470,6 +459,22 @@ async def pick_next_building_for_asset(asset_id: str, tool_context: ToolContext)
         drone_z = float(sz)
 
     async with _SCAN_QUEUE_LOCK:
+        raw_pending = tool_context.state.get("scan_pending_buildings", "[]")
+        raw_claimed = tool_context.state.get("scan_claimed_initial_by_asset", "{}")
+        raw_done_count = tool_context.state.get("scan_done_count_by_asset", "{}")
+        try:
+            pending = json.loads(raw_pending) if isinstance(raw_pending, str) else raw_pending
+        except (json.JSONDecodeError, TypeError):
+            pending = []
+        try:
+            claimed_initial = json.loads(raw_claimed) if isinstance(raw_claimed, str) else raw_claimed
+        except (json.JSONDecodeError, TypeError):
+            claimed_initial = {}
+        try:
+            done_count = json.loads(raw_done_count) if isinstance(raw_done_count, str) else raw_done_count
+        except (json.JSONDecodeError, TypeError):
+            done_count = {}
+
         scanned = int(done_count.get(asset_id, 0))
         claimed = bool(claimed_initial.get(asset_id, False))
         building: dict | None = None

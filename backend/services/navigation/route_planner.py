@@ -33,6 +33,22 @@ def _no_eligible_drones_result(statuses: list[dict | Exception]) -> dict:
     }
 
 
+def _dedupe_consecutive_waypoints(waypoints: list[dict]) -> list[dict]:
+    deduped: list[dict] = []
+    last_key: tuple[float, float, float] | None = None
+    for wp in waypoints:
+        key = (
+            round(float(wp["x"]), 4),
+            round(float(wp["y"]), 4),
+            round(float(wp["z"]), 4),
+        )
+        if key == last_key:
+            continue
+        deduped.append(wp)
+        last_key = key
+    return deduped
+
+
 async def select_best_drone(target_x: float, target_z: float) -> dict:
     """Select the best available drone for a mission near (target_x, target_z)."""
     client = context.get_grpc_client()
@@ -198,6 +214,7 @@ async def plan_route(
             {"x": target_x, "y": clearance_y, "z": target_z, "reason": "cruise above obstacles"},
             {"x": target_x, "y": target_y, "z": target_z, "reason": "descend to scan altitude"},
         ]
+        waypoints = _dedupe_consecutive_waypoints(waypoints)
         return {
             "asset_id": asset_id,
             "from": {"x": cx, "y": cy, "z": cz},
@@ -229,46 +246,77 @@ async def plan_route(
 
     perp_x = -dz / length
     perp_z = dx / length
-    mid_x = (cx + target_x) / 2
-    mid_z = (cz + target_z) / 2
     max_half_w = max(max(building.w, building.d) / 2 for building in obstacles)
-    offset_dist = max_half_w + 5.0
-    fly_y = max(target_y, clearance_y)
+    base_offset = max_half_w + 5.0
+    base_fly_y = max(target_y, clearance_y)
 
-    for sign in (1.0, -1.0):
-        wp_x = mid_x + sign * perp_x * offset_dist
-        wp_z = mid_z + sign * perp_z * offset_dist
-        seg1 = _filter(world.obstacles_in_path(cx, cy, cz, wp_x, fly_y, wp_z, samples=40, margin=1.0))
-        seg2 = _filter(
-            world.obstacles_in_path(
-                wp_x,
-                fly_y,
-                wp_z,
-                target_x,
-                target_y,
-                target_z,
-                samples=40,
-                margin=1.0,
-            )
-        )
-        if not seg1 and not seg2:
-            waypoints = [
-                {"x": wp_x, "y": fly_y, "z": wp_z, "reason": "detour around obstacle"},
-                {"x": target_x, "y": target_y, "z": target_z, "reason": "proceed to target"},
-            ]
-            return {
-                "asset_id": asset_id,
-                "from": {"x": cx, "y": cy, "z": cz},
-                "to": {"x": target_x, "y": target_y, "z": target_z},
-                "waypoints": waypoints,
-                "obstacle_count": len(obstacles),
-                "strategy": "around",
-                "summary": (
-                    f"2 waypoints, clearing {len(obstacles)} obstacle via around. "
-                    f"Scan alt={target_y}m.{window_summary_suffix}"
-                ),
-                **({"target_resolution": target_resolution} if target_resolution else {}),
-            }
+    split_ratios = (0.35, 0.5, 0.65)
+    offset_scale = (1.0, 1.5, 2.0)
+    fly_y_candidates = (base_fly_y, base_fly_y + 5.0, base_fly_y + 10.0)
+
+    for ratio in split_ratios:
+        mid_x = cx + (target_x - cx) * ratio
+        mid_z = cz + (target_z - cz) * ratio
+        for scale in offset_scale:
+            offset_dist = base_offset * scale
+            for sign in (1.0, -1.0):
+                wp_x = mid_x + sign * perp_x * offset_dist
+                wp_z = mid_z + sign * perp_z * offset_dist
+                for fly_y in fly_y_candidates:
+                    seg1 = _filter(
+                        world.obstacles_in_path(
+                            cx,
+                            cy,
+                            cz,
+                            wp_x,
+                            fly_y,
+                            wp_z,
+                            samples=40,
+                            margin=1.0,
+                        )
+                    )
+                    seg2 = _filter(
+                        world.obstacles_in_path(
+                            wp_x,
+                            fly_y,
+                            wp_z,
+                            target_x,
+                            target_y,
+                            target_z,
+                            samples=40,
+                            margin=1.0,
+                        )
+                    )
+                    if not seg1 and not seg2:
+                        waypoints = _dedupe_consecutive_waypoints(
+                            [
+                                {
+                                    "x": wp_x,
+                                    "y": fly_y,
+                                    "z": wp_z,
+                                    "reason": "detour around obstacle",
+                                },
+                                {
+                                    "x": target_x,
+                                    "y": target_y,
+                                    "z": target_z,
+                                    "reason": "proceed to target",
+                                },
+                            ]
+                        )
+                        return {
+                            "asset_id": asset_id,
+                            "from": {"x": cx, "y": cy, "z": cz},
+                            "to": {"x": target_x, "y": target_y, "z": target_z},
+                            "waypoints": waypoints,
+                            "obstacle_count": len(obstacles),
+                            "strategy": "around",
+                            "summary": (
+                                f"{len(waypoints)} waypoint(s), clearing {len(obstacles)} obstacle via around. "
+                                f"Scan alt={target_y}m.{window_summary_suffix}"
+                            ),
+                            **({"target_resolution": target_resolution} if target_resolution else {}),
+                        }
 
     return {
         "asset_id": asset_id,

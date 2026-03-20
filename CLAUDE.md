@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**Project Beacon** is an zero-cloud, offline-first Ground Control Station (GCS) for autonomous drone swarms in comms-denied environments (disaster zones, search & rescue). It uses a "Bring Your Own Compute" (BYOC) architecture — local LLMs via Ollama, zero cloud dependency.
+**Project Beacon** is a cloud-first Ground Control Station (GCS) for autonomous drone swarms in search and rescue operations. It uses Gemini 2.5 Flash (via Google AI API) for natural language command interpretation and multi-agent orchestration. Starlink provides backup internet connectivity in remote deployment scenarios. The system coordinates drone fleets through gRPC communication with real-time telemetry visualization.
 
 ## Architecture
 
@@ -16,7 +16,7 @@
 │  │  React Three     │         │  │   ├─ Commander Agent      │  │
 │  │  Fiber (3D twin) │◀────────│  │   ├─ Navigation Agent     │  │
 │  │                  │  WS     │  │   └─ Thermal Agent        │  │
-│  └──────────────────┘         │  ├─ LiteLLM → Ollama (local) │  │
+│  └──────────────────┘         │  ├─ Gemini 2.5 Flash (API)  │  │
 │                               │  ├─ FastMCP (tool bridge)    │  │
 │                               │  └─ SQLite (mission logs)    │  │
 │                               └──────────────┬───────────────┘  │
@@ -43,7 +43,7 @@ User clicks "Deploy Swarm"
   ▼
 Tauri UI ──HTTP──▶ FastAPI ──▶ ADK Commander Agent
                                     │
-                              LiteLLM → Ollama (Qwen 3.5 4B)
+                              Gemini 2.5 Flash (via API)
                                     │
                               ADK tool call output
                                     │
@@ -65,47 +65,67 @@ project-beacon/
 ├── backend/
 │   ├── __init__.py
 │   ├── app.py                # FastAPI application entry point
+│   ├── runtime.py            # Shared runtime state (gRPC client, telemetry)
 │   ├── agents/               # Google ADK agent definitions
-│   │   ├── commander.py      # Root agent — routes to sub-agents
-│   │   ├── navigation.py     # Flight path planning
-│   │   └── thermal.py        # Thermal/camera feed analysis
-│   ├── tools/                # FastMCP tool definitions (LLM → gRPC)
-│   │   ├── drone_commands.py # move_to, return_home, scan_area
-│   │   └── swarm_ops.py      # deploy_swarm, recall_swarm
+│   │   ├── commander.py      # Root agent — routes to workflows/agents
+│   │   ├── navigation.py     # Flight path planning and movement
+│   │   ├── thermal.py        # Thermal/camera feed analysis
+│   │   ├── scan_workflow.py  # Area/building scan orchestration
+│   │   ├── supply_workflow.py # Survivor supply dispatch orchestration
+│   │   ├── _model.py         # Shared Gemini model config + Langfuse
+│   │   └── _mcp.py           # MCP tool filtering per agent
+│   ├── mcp/                  # FastMCP server
+│   │   └── server.py         # MCP tools exposed to agents
+│   ├── tools/                # Tool implementations
+│   │   └── drone_commands.py # move_to, scan_area, status, etc.
+│   ├── services/             # Business logic layer
+│   │   ├── api.py            # Fleet management, uplink, discovery
+│   │   └── auto_recall.py    # Low-battery auto-return monitoring
 │   ├── grpc/
-│   │   ├── drone.proto       # Protobuf schema
-│   │   ├── drone_pb2.py      # Generated stubs (do not edit)
-│   │   └── client.py         # gRPC client for sending commands
+│   │   ├── beacon.proto      # Protobuf schema
+│   │   ├── beacon_pb2.py     # Generated stubs (do not edit)
+│   │   ├── beacon_pb2_grpc.py # Generated gRPC stubs
+│   │   └── client.py         # gRPC client for drone commands
 │   ├── telemetry/
 │   │   ├── udp_listener.py   # Receives drone heartbeats/coords
-│   │   └── ws_bridge.py      # Forwards telemetry to frontend via WebSocket
-│   └── db/
-│       ├── schema.sql        # SQLite DDL
-│       ├── models.py         # Pydantic models
-│       └── repository.py     # Data access layer
+│   │   └── ws_bridge.py      # WebSocket relay to frontend
+│   ├── db/
+│   │   ├── schema.sql        # SQLite DDL
+│   │   ├── models.py         # Pydantic models (Asset, MissionLog)
+│   │   └── repository.py     # Data access layer
+│   ├── licensing/            # Offline license validation
+│   │   ├── routes.py         # License activation/status endpoints
+│   │   ├── models.py         # License key models
+│   │   └── validator.py      # Format validation logic
+│   └── world/                # World state management
+│       ├── model.py          # World data structures
+│       └── vision.py         # Survivor tracking
 ├── drone-sim/
 │   ├── Dockerfile
 │   ├── sim.py                # Pure Python drone state machine
 │   ├── grpc_server.py        # Receives commands from commander
-│   └── telemetry.py          # Broadcasts UDP heartbeat + coords
+│   └── telemetry.py          # UDP heartbeat broadcaster
 ├── frontend/                 # Next.js + Tauri + React Three Fiber
 │   ├── src/
 │   │   ├── app/              # Next.js pages (SSG)
 │   │   ├── components/
-│   │   │   ├── radar/        # 3D digital twin canvas
-│   │   │   ├── spawner/      # Developer spawner panel
-│   │   │   └── dashboard/    # Commander tactical dashboard
+│   │   │   ├── three/        # 3D visualization components
+│   │   │   ├── ui/           # Dashboard UI components
+│   │   │   └── license/      # License activation flow
 │   │   └── lib/
-│   │       ├── ws.ts         # WebSocket client for telemetry
-│   │       └── api.ts        # HTTP client for FastAPI sidecar
+│   │       ├── ws.ts         # WebSocket telemetry client
+│   │       └── api.ts        # HTTP API client
 │   ├── src-tauri/            # Tauri Rust shell
 │   ├── next.config.mjs       # output: 'export' (SSG)
 │   └── package.json
 ├── proto/                    # Source-of-truth .proto files
 │   └── beacon.proto
-├── docker-compose.yml        # Drone swarm network
+├── scripts/
+│   └── gen_proto.sh          # Protobuf code generation
+├── tests/
+│   └── test_adk_cli.py       # Integration test (full pipeline)
+├── docker-compose.yml        # 5-drone simulation fleet
 ├── pyproject.toml
-├── test.py                   # Ursina visual prototype (standalone demo)
 └── CLAUDE.md
 ```
 
@@ -113,115 +133,117 @@ project-beacon/
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| Desktop shell | Tauri | Native window, filesystem access, sidecar management |
-| Frontend | Next.js (SSG, `output: 'export'`) | Static HTML/JS/CSS bundled into Tauri |
-| 3D visualization | React Three Fiber | Digital twin radar, drone model rendering |
-| API server | FastAPI | Python sidecar, all business logic |
+| Desktop shell | Tauri | Native window, process management |
+| Frontend | Next.js (SSG) | Static bundled UI |
+| 3D visualization | React Three Fiber | Real-time drone position rendering |
+| API server | FastAPI | Python backend, all business logic |
 | AI orchestration | Google ADK | Multi-agent framework with tool calling |
-| LLM routing | LiteLLM | Abstracts Ollama as OpenAI-compatible endpoint |
-| Local LLM | Qwen 3.5 (4B) via Ollama | Offline inference, zero cloud |
-| Tool bridge | FastMCP | Translates ADK tool calls → Python functions |
-| Drone comms | gRPC + Protobuf | Low-latency commands to drone containers |
-| Drone simulation | Pure Python (dataclasses) | Lightweight state machine in Docker |
-| Telemetry | UDP broadcast + WebSocket relay | Drone coords → frontend in real-time |
-| Storage | SQLite | Local mission logs, asset registry |
-| Networking | Docker bridge network | Simulated MANET with isolated IPs |
-| Python packaging | uv | Dependency management |
+| LLM | Gemini 2.5 Flash (gemini-3-flash-preview) | Natural language understanding via Google AI API |
+| Observability | Langfuse (optional) | LLM tracing when credentials provided |
+| Tool bridge | FastMCP | Exposes MCP tools to ADK agents |
+| Drone comms | gRPC + Protobuf | Low-latency command/response |
+| Drone simulation | Python + Docker | Stateful drone containers with physics |
+| Telemetry | UDP broadcast → WebSocket relay | Real-time position streaming to UI |
+| Storage | SQLite | Mission logs, asset registry, licenses |
+| Networking | Docker bridge network | Isolated container communication |
+| Python packaging | uv | Fast dependency management |
 
 ## ADK Agent Design
 
-```
-Commander Agent (root)
-│   Role: Receives natural language commands, decides which
-│         sub-agent handles the task, aggregates results.
-│
-├── Navigation Agent
-│     Tools: move_drone_to(asset_id, x, y, z)
-│            plan_sweep_pattern(area_bounds, spacing)
-│            return_to_base(asset_id)
-│     Role: Flight path computation, waypoint generation.
-│
-└── Thermal Agent
-      Tools: scan_area(asset_id, x, y, z, radius)
-             get_thermal_feed(asset_id)
-      Role: Thermal camera analysis, survivor detection.
-```
+Current implementation uses three main components:
 
-All agents use `LiteLLM` pointed at `http://localhost:11434` (Ollama). No external API calls.
+### Commander Agent
+- **Role**: Root agent that receives natural language, routes to workflows/agents
+- **Routing logic**: Analyzes prompt, delegates to Navigation Agent or orchestration workflows
+- **Temperature**: 0.5 for precise routing decisions
 
-## Key Workflows
+### Navigation Agent
+- **Role**: Direct drone movement, sweep patterns, status queries
+- **Tools**: `move_to`, `return_to_base`, `get_status`, `plan_sweep`
+- **Temperature**: 0.7 for balanced tool reasoning
 
-### 1. Developer Spawner (Simulation Setup)
-1. User selects asset class (Scout Quadcopter) → clicks **"Initialize Virtual Asset"**
-2. FastAPI calls `docker run` to spin up a `drone-sim` container
-3. Container starts gRPC server + UDP heartbeat broadcaster
-4. Container appears as a network node on the Docker bridge
+### Workflows (Multi-Agent Orchestration)
 
-### 2. Drone Discovery & Uplink
-1. User clicks **"Scan Local Frequencies"** → animated radar sweep in R3F
-2. FastAPI `udp_listener` collects heartbeats from Docker containers
-3. Unpaired assets populate: `BEACON-01 | SIGNAL: 98%`
-4. User clicks **"Establish Uplink"** → FastAPI opens gRPC channel, registers in SQLite
-5. R3F injects 3D drone model mapped to live telemetry coordinates
+**Scan Workflow** (`scan_workflow.py`)
+- Orchestrates building/area scans for survivor detection
+- Steps: drone selection → navigation → thermal scan loop → survivor report
+- Uses both Navigation Agent tools and direct thermal scanning
 
-### 3. Mission Execution (Deploy Swarm)
-1. User types natural language command in Tauri UI
-2. Frontend sends HTTP POST to FastAPI → ADK Commander Agent
-3. Commander routes to Navigation/Thermal agent → LiteLLM → Ollama
-4. Agent returns tool call → FastMCP executes corresponding Python function
-5. Function fires gRPC protobuf to target drone container(s)
-6. Drone sim updates state (X/Y/Z, battery, status)
-7. Drone broadcasts telemetry via UDP → FastAPI relays via WebSocket → R3F renders
+**Supply Workflow** (`supply_workflow.py`)
+- Coordinates parallel supply delivery to multiple survivors
+- Steps: survivor discovery → drone assignment → concurrent dispatch → confirmation
 
-## Implementation Phases
+All agents use Gemini 2.5 Flash via Google AI API with thinking enabled (chain-of-thought visible in stream). Optional Langfuse observability when `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set.
 
-### Phase 1: Drone Simulation Layer
-**Goal:** A working drone that receives gRPC commands and broadcasts telemetry.
+## Key Workflows (Current Implementation)
 
-- [ ] Define `proto/beacon.proto` (MoveTo, GetStatus, Heartbeat messages)
-- [ ] Build `drone-sim/sim.py` — pure Python drone state machine (position, battery, status)
-- [ ] Build `drone-sim/grpc_server.py` — receives commands, updates sim state
-- [ ] Build `drone-sim/telemetry.py` — UDP heartbeat broadcaster (ID, position, battery, timestamp)
-- [ ] Create `drone-sim/Dockerfile`
-- [ ] Create `docker-compose.yml` with 3 drone containers on isolated bridge network
-- [ ] **Test:** `grpcurl` sends MoveTo → drone position changes → UDP heartbeat reflects new coords
+### 1. Drone Discovery & Uplink
+1. Backend starts → `UDPTelemetryListener` begins listening on port 5005
+2. Docker drone containers broadcast heartbeats every 1 second
+3. User calls `GET /scan` → returns unpaired drones discovered via UDP
+4. User calls `POST /uplink/BEACON-01` → opens gRPC channel, registers in SQLite
+5. Telemetry streaming begins via WebSocket at `ws://localhost:8000/ws/telemetry`
 
-### Phase 2: Backend Sidecar (FastAPI + gRPC Client)
-**Goal:** FastAPI that can send commands to drones and relay telemetry to frontend.
+### 2. Natural Language Mission Execution
+1. User sends prompt: `"Scan building at -15, -20 for survivors"`
+2. `POST /command/stream` → Commander Agent receives prompt
+3. Commander analyzes intent, routes to Scan Workflow
+4. Scan Workflow:
+   - Queries fleet via MCP tool `get_fleet_status`
+   - Selects nearest available drone
+   - Calls `move_to` tool → gRPC command to drone
+   - Executes thermal scan loop
+   - Compiles survivor report with coordinates
+5. Drone updates position → UDP telemetry → WebSocket → UI updates
+6. Mission logged to SQLite `mission_logs` table
 
-- [ ] Scaffold `backend/app.py` — FastAPI with CORS, lifespan events
-- [ ] Build `backend/grpc/client.py` — gRPC client for drone commands
-- [ ] Build `backend/telemetry/udp_listener.py` — async listener for drone heartbeats
-- [ ] Build `backend/telemetry/ws_bridge.py` — WebSocket endpoint forwarding telemetry
-- [ ] Build `backend/db/` — SQLite schema, repository pattern for asset registry
-- [ ] REST endpoints: `POST /spawn`, `POST /uplink/{asset_id}`, `POST /command`, `GET /assets`
-- [ ] **Test:** curl spawns drone → uplink → send move command → WebSocket streams position updates
+### 3. Auto-Recall (Low Battery Protection)
+1. `AutoRecallMonitor` runs in background (if `AUTO_RECALL_ENABLED=true`)
+2. Monitors telemetry stream for battery levels
+3. When battery < threshold (default 10%), triggers `return_to_base`
+4. Per-drone cooldown prevents repeated recalls
+5. Events logged for debugging
 
-### Phase 3: AI Brain (ADK + FastMCP)
-**Goal:** Natural language commands are interpreted by local LLM and executed.
+## Implementation Status
 
-- [ ] Install Ollama + pull Qwen 3.5 (4B)
-- [ ] Configure LiteLLM to point at Ollama
-- [ ] Build `backend/agents/commander.py` — ADK root agent
-- [ ] Build `backend/agents/navigation.py` — with `move_drone_to`, `plan_sweep_pattern` tools
-- [ ] Build `backend/agents/thermal.py` — with `scan_area`, `get_thermal_feed` tools
-- [ ] Build `backend/tools/` — FastMCP tool definitions that call gRPC client
-- [ ] Wire ADK into FastAPI `POST /command` endpoint
-- [ ] **Test:** POST "scan building at coordinates 5,0,5 for survivors" → agent picks correct tool → gRPC fires → drone moves
+### ✅ Phase 1: Drone Simulation Layer
+- ✅ `proto/beacon.proto` with MoveTo, GetStatus, Heartbeat, ScanArea, SetSpeed messages
+- ✅ `drone-sim/sim.py` — Python drone state machine with physics
+- ✅ `drone-sim/grpc_server.py` — command receiver
+- ✅ `drone-sim/telemetry.py` — UDP broadcaster
+- ✅ `docker-compose.yml` with 5 drone containers (beacon-01 through beacon-05)
 
-### Phase 4: Frontend (Tauri + Next.js + R3F)
-**Goal:** Desktop app with 3D digital twin, tactical dashboard, and license gating.
+### ✅ Phase 2: Backend Core
+- ✅ `backend/app.py` — FastAPI with CORS, lifespan management
+- ✅ `backend/grpc/client.py` — gRPC client
+- ✅ `backend/telemetry/udp_listener.py` — async UDP listener
+- ✅ `backend/telemetry/ws_bridge.py` — WebSocket relay
+- ✅ `backend/db/` — SQLite with Asset and MissionLog models
+- ✅ REST endpoints: `/scan`, `/uplink`, `/command`, `/assets`, `/fleet`, `/spawn`
+- ✅ Auto-recall monitoring for low battery conditions
 
-- [ ] Scaffold Next.js with `output: 'export'` in `next.config.mjs`
-- [ ] Initialize Tauri with Next.js as frontend source
-- [ ] Build license gate — first-launch screen requiring a valid license key before accessing the app (see License Activation below)
-- [ ] Build R3F canvas — terrain, grid, basic drone model
-- [ ] Build WebSocket client — connects to FastAPI, receives telemetry, updates drone positions
-- [ ] Build Spawner panel — "Initialize Virtual Asset" button → calls `POST /spawn`
-- [ ] Build Radar sweep — "Scan Local Frequencies" animation → calls `GET /assets`
-- [ ] Build Uplink flow — "Establish Uplink" → calls `POST /uplink/{id}` → drone materializes in 3D
-- [ ] Build Command input — text box → sends to `POST /command`
-- [ ] **Test:** App blocks access without valid license key; full flow works after activation
+### ✅ Phase 3: AI Orchestration
+- ✅ Gemini 2.5 Flash integration (`gemini-3-flash-preview`)
+- ✅ `backend/agents/commander.py` — root routing agent (temp 0.5)
+- ✅ `backend/agents/navigation.py` — movement and planning (temp 0.7)
+- ✅ `backend/agents/thermal.py` — thermal analysis
+- ✅ `backend/agents/scan_workflow.py` — multi-step scan orchestration
+- ✅ `backend/agents/supply_workflow.py` — parallel supply delivery
+- ✅ `backend/mcp/server.py` — FastMCP tool server with per-agent filtering
+- ✅ Langfuse observability (optional, via environment variables)
+- ✅ Streaming command endpoint with SSE (`/command/stream`)
+
+### ✅ Phase 4: Additional Features
+- ✅ License activation system (`backend/licensing/`)
+- ✅ World state management (`backend/world/`)
+- ✅ Survivor tracking and vision system
+- ✅ Mock Starlink network status simulation
+- ✅ Integration test (`tests/test_adk_cli.py`)
+
+### 🚧 Phase 5: Frontend (In Progress)
+- Frontend structure exists but needs integration with current backend API
+- Tauri desktop shell needs completion
+- 3D visualization with React Three Fiber needs implementation
 
 ### Phase 5: Polish & Integration
 - [ ] Mission logging — all commands and telemetry persisted to SQLite
@@ -324,20 +346,50 @@ frontend/
 
 ## Hard Constraints
 
-- **Zero cloud:** No external API calls in any production code path. Ollama runs locally.
-- **Offline-first:** Every feature must work without internet connectivity.
+- **Connectivity model:** Cloud-first with Gemini 2.5 Flash via Google AI API. Optional Starlink provides backup internet in remote locations. Local LLM fallback (Ollama) can be configured via `backend/agents/_model.py`.
 - **gRPC only** for commander ↔ drone communication. No REST/HTTP between nodes.
 - **Docker isolation:** Each drone container gets its own IP on an isolated bridge network.
 - **SQLite only:** No external databases. All data stays on the local machine.
-- **No Ursina in production:** `test.py` is a standalone visual demo. Production drone sim uses pure Python dataclasses.
 - **Protobuf is source of truth:** `proto/beacon.proto` defines the contract. Backend and drone-sim both generate from it.
-- **License required:** App must not be usable without a valid license key. No backdoors, no skip buttons.
-- **License is offline:** License validation never contacts an external server. Keys are pre-provisioned locally.
+- **Observability is optional:** Langfuse tracing only enabled when both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set.
+
+## Current API Endpoints
+
+### Core Operations
+- `GET /health` - service health check
+- `GET /scan` - discover active unpaired drones via UDP
+- `POST /uplink/{asset_id}` - establish gRPC connection to drone
+- `GET /assets` - list all registered drones
+- `GET /fleet` - active fleet view (used by MCP tools)
+- `POST /command` - execute natural language command (non-streaming)
+- `POST /command/stream` - SSE streaming with thoughts/tool calls/results
+
+### Fleet Management
+- `POST /fleet/recall` - recall all drones to base
+- `POST /fleet/speed` - set speed for all drones
+- `POST /drone/{asset_id}/speed` - set individual drone speed
+- `POST /drone/{asset_id}/reset` - return specific drone to base
+
+### World & Network
+- `POST /world/{world_id}` - switch all connected drones to new world state
+- `GET /network/mock-status` - Starlink network mock status
+- `GET /config/auto-recall` - auto-recall configuration
+
+### License Management
+- `POST /license/activate` - activate license key
+- `GET /license/status` - check current license status
+- `POST /license/provision` - provision license records (admin)
+
+### WebSocket
+- `GET /ws/telemetry` - real-time telemetry stream
 
 ## Testing
 
-- **Unit tests:** FastAPI endpoints, ADK agent logic, drone sim state machine
-- **Integration tests:** FastMCP tool → gRPC client → drone sim round-trip
-- **Telemetry tests:** UDP broadcast → WebSocket relay correctness
-- **Run:** `uv run pytest`
-- **Coverage target:** 80%+
+Current test coverage:
+- ✅ Integration test (`tests/test_adk_cli.py`) — full pipeline from prompt to drone movement
+- ✅ gRPC client/server communication
+- ✅ UDP telemetry broadcast and reception
+- 🚧 Unit tests for individual agents
+- 🚧 WebSocket relay tests
+
+Run: `uv run pytest`

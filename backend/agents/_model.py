@@ -92,7 +92,7 @@ def _configure_langfuse() -> None:
 #   from google.adk.models.lite_llm import LiteLlm
 #   MODEL = LiteLlm("ollama_chat/qwen3.5:4b-q4_K_M", api_base="http://localhost:11434")
 #
-MODEL = "gemini-2.5-flash"
+MODEL = "gemini-3-flash-preview"
 
 # Drop unsupported params silently (e.g. presence_penalty not supported by ollama_chat)
 litellm.drop_params = True
