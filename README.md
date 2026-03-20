@@ -1,263 +1,192 @@
 # Project Beacon
 
-Zero-cloud, offline-first Ground Control Station for autonomous drone swarms in comms-denied environments. Local LLM (Qwen 3.5 4B via Ollama) drives all agent decisions — no internet required.
+Project Beacon is a 3D simulated, cloud-first Ground Control Station for autonomous drone swarms for search and rescue operations. In comms-denied environment, Starlink is used as backup Internet.
 
----
+Current default runtime in this repo:
+- FastAPI + Google ADK commander
+- gRPC drone control + UDP telemetry + WebSocket bridge
+- Dockerized drone simulation (5 default drone containers)
+- SQLite persistence (assets, mission logs, licenses)
+- Model default: `gemini-3-flash-preview` (configured in `backend/agents/_model.py`)
 
 ## Quick Start
 
+### Prerequisites
+
+- Python 3.12+
+- `uv`
+- Docker + Docker Compose
+- A valid `GOOGLE_API_KEY` for the default model path
+
+### Start the stack
+
 ```bash
-# 1. Install dependencies
+# 1) Install Python dependencies
 uv sync
 
-# 2. Start the simulated swarm (3 drone containers)
-docker compose up -d
+# 2) Start simulated drone fleet (beacon-01..beacon-05)
+docker compose up -d --build
 
-# 3. Start the FastAPI sidecar
+# 3) Export model credentials (required for ADK command endpoints)
+export GOOGLE_API_KEY="your-key"
+
+# 4) Start backend API
 uv run python -m backend.app
-
-# 4. (Optional) ADK dev UI — inspect agent traces
-adk web backend/agents/commander.py
-
-# 5. Run the CLI test suite against a live drone
-uv run python tests/test_adk_cli.py
+# or
+uv run python main.py
 ```
 
-**Prerequisites:** Docker, Ollama with `qwen3.5:4b-q4_K_M` pulled, Python 3.11+, `uv`.
+### Optional frontend (Next.js)
 
----
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-## Observability (Langfuse)
+## First Control Flow (API)
 
-Langfuse tracing is integrated through LiteLLM and is **optional**.
-Project Beacon stays offline-first by default; traces are only sent when Langfuse env vars are provided.
-The backend uses `langfuse>=4,<5` and applies a startup compatibility shim for LiteLLM's
-`sdk_integration` callback argument mismatch.
+1) Verify backend health:
 
-### 1) Configure environment
+```bash
+curl http://127.0.0.1:8000/health
+```
 
-Copy `.env.example` to `.env` and set:
+2) Discover active telemetry senders:
+
+```bash
+curl http://127.0.0.1:8000/scan
+```
+
+3) Uplink a discovered drone:
+
+```bash
+curl -X POST http://127.0.0.1:8000/uplink/BEACON-01
+```
+
+4) Send a natural-language mission:
+
+```bash
+curl -X POST http://127.0.0.1:8000/command \
+	-H 'Content-Type: application/json' \
+	-d '{"prompt":"Scan the building at -15, -20 for survivors"}'
+```
+
+5) Watch live telemetry:
+
+```text
+ws://127.0.0.1:8000/ws/telemetry
+```
+
+## API Surface (Core)
+
+- `GET /health` - service health
+- `GET /scan` - discover active but not-yet-uplinked drones
+- `POST /uplink/{asset_id}` - register and connect a drone
+- `GET /assets` - list registered drone assets
+- `GET /fleet` - active fleet view used by MCP/agents
+- `POST /fleet/recall` - recall all registered drones
+- `POST /fleet/speed` - set speed for all registered drones
+- `POST /drone/{asset_id}/speed` - set speed for one drone
+- `POST /drone/{asset_id}/reset` - return one drone to base
+- `POST /spawn` - spawn a new sim container dynamically
+- `POST /command` - non-streaming NL mission execution
+- `POST /command/stream` - SSE stream of tool calls/results/text/thinking
+- `POST /world/{world_id}` - switch backend + connected drones to a world
+- `GET /network/mock-status` - Starlink network mock status
+- `GET /config/auto-recall` - effective auto-recall config
+- `GET /ws/telemetry` - telemetry websocket
+- `POST /license/activate` - offline license activation
+- `GET /license/status` - active license status
+- `POST /license/provision` - pre-provision license records
+
+## Agent Routing
+
+`commander` routes natural-language commands to specialist paths:
+
+- `navigation_agent` for movement, sweep planning, return-to-base, status
+- `scan_workflow` for area/building scan orchestration (assignment + scan loop + final report)
+- `supply_workflow` for survivor supply dispatch orchestration (assignment + parallel dispatch)
+
+MCP tools are exposed under `/mcp` and filtered per-agent via `backend/agents/_mcp.py`.
+
+## Model and Observability
+
+Default model is Gemini:
+
+- `MODEL = "gemini-3-flash-preview"`
+
+Langfuse tracing is optional and only enabled when both env vars are set:
 
 - `LANGFUSE_PUBLIC_KEY`
 - `LANGFUSE_SECRET_KEY`
-- `LANGFUSE_HOST` (optional, defaults to Langfuse cloud; set your local/self-hosted URL for offline deployments)
+- `LANGFUSE_HOST` (optional)
 
-### 2) Start backend
+When enabled, backend logs include `Langfuse observability enabled`.
 
-```bash
-uv run python -m backend.app
-```
+### Local Ollama option
 
-When both keys are present, backend logs include:
+The code includes a documented switch path in `backend/agents/_model.py` to use LiteLLM + Ollama (for fully local inference) instead of Gemini.
+
+## Runtime Environment Variables
+
+- `GOOGLE_API_KEY` - required for default Gemini execution
+- `AUTO_RECALL_ENABLED` - enable telemetry-driven low-battery auto-recall
+- `AUTO_RECALL_BATTERY_THRESHOLD` - recall threshold (default `10`)
+- `AUTO_RECALL_COOLDOWN_SECONDS` - per-drone cooldown (default `60`)
+- `STARLINK_MOCK_STATUS_FILE` - path for network mock status file
+- `BEACON_MCP_URL` - MCP endpoint URL (default `http://127.0.0.1:8000/mcp/`)
+
+## Mission Prompt Examples
+
+Status and discovery:
 
 ```text
-Langfuse observability enabled
-```
-
-All ADK agent model calls routed via LiteLLM are then traceable in Langfuse for easier debugging.
-
----
-
-## Sample Prompts
-
-Send these via `POST /command` or the ADK web UI.
-The world is a 52×52 m grid. Drones spawn at the south-east corner. Flood level = 1.4 m.
-
-> All prompts assume at least one drone is uplinked. If you don't specify a drone,
-> the commander calls `select_best_drone` automatically and picks the nearest IDLE
-> drone with battery > 20%.
-
----
-
-### Status & Discovery
-
-```
 What is the status of all drones?
-```
-```
-List every uplinked drone with its position and battery.
-```
-```
-Is BEACON-01 ready for a mission?
+List every uplinked drone with battery and position.
 ```
 
----
+Navigation:
 
-### Movement (navigation_agent)
-
-Move to an explicit coordinate:
-```
+```text
 Move BEACON-01 to coordinates 10, 15, -20.
-```
-
-Move to a named sector (Y=10 default):
-```
-Send BEACON-02 north.
-```
-```
-Fly BEACON-01 to the east sector at altitude 20.
-```
-
-High-altitude overwatch above the centre of the grid:
-```
-Ascend BEACON-01 to overwatch position at 0, 25, 0.
-```
-
-Return to home pad:
-```
 Return BEACON-01 to base.
-```
-```
-Recall all drones to home.
+Plan a sweep over the area from -10, -10 to 10, 10 at altitude 12, spacing 3.
 ```
 
----
+Scan workflows:
 
-### Scan Workflows (scan_workflow → navigation + thermal)
-
-The commander navigates the drone to the target first, then scans.
-It will automatically pick the best available drone if none is specified.
-
-**Scan the central cluster — three survivors at Y=3.8, Y=7.8, Y=11.8:**
-```
-Scan the building at 0, 0 for survivors.
-```
-```
+```text
+Scan the building at -22, 0, 2 for survivors.
 Scan coordinates -1, 5, 1 with radius 8 for heat signatures.
 ```
 
-**Scan for flood victims** (ground-level survivors at Y=0.4 are submerged — flagged CRITICAL):
-```
-Scan the flooded area at 8, 0, 5 for survivors.
-```
-```
-Check coordinates -7, 0, -6 for casualties — there may be people in the water.
-```
-```
-Scan the flood zone at 25, 0, -10 radius 5.
+Supply workflows:
+
+```text
+Dispatch supplies to all survivors in the area around -25, -25 radius 8.
+Send BEACON-02 to deliver supplies to survivor at 20, 6.5, -16.
 ```
 
-**Scan a mid-rise building:**
-```
-Scan the building at -22, 0, 2 — suspected survivor on upper floors.
-```
-```
-Scan 20, 5, 0 radius 6 for thermal signatures.
-```
+Swarm operations:
 
-**Scan a tall building (30 m) — survivor at Y=31:**
-```
-Scan the tall building at -10, 0, -8. Check upper floors.
-```
-
-**Scan the tower district (south-east, 40 m tower):**
-```
-Scan the tower at 30, 20, -38. Survivor reported near the top.
-```
-
----
-
-### Sweep Patterns (navigation_agent)
-
-Systematic lawnmower sweep over a rectangular area:
-```
-Plan a sweep over the area from -10, -10 to 10, 10 at altitude 12, spacing 3.
-```
-```
-Run a sweep pattern over the north sector from -20, -60 to 20, -30.
-```
-
----
-
-### Swarm Operations
-
-Deploy in formation (supported: `spread`, `line`, `triangle`):
-```
+```text
 Deploy BEACON-01, BEACON-02, and BEACON-03 in triangle formation.
+Recall the swarm.
 ```
-```
-Deploy all drones in a spread formation to the north.
-```
-
-Recall:
-```
-Recall the swarm — mission complete.
-```
-
----
-
-### Edge Cases & Safety Checks
-
-**Low-battery warning** (commander blocks dispatch below 20%):
-```
-Move BEACON-01 to 50, 10, 0.
-```
-*(If BEACON-01 is low, commander will offer an alternative.)*
-
-**Obstacle avoidance** — building at (-14, -12) is 20 m tall:
-```
-Move BEACON-01 to -14, 10, -12.
-```
-*(Navigation agent detects obstacle, climbs to clear it.)*
-
-**Out-of-bounds confirmation** — anything beyond ±200 m requires explicit confirm:
-```
-Send BEACON-01 to 250, 10, 0.
-```
-
-**No eligible drones:**
-```
-Deploy BEACON-01 to the south sector.
-```
-*(While BEACON-01 is already MOVING — commander will reject and explain.)*
-
----
-
-## World Reference
-
-| Feature | Coordinates | Notes |
-|---------|------------|-------|
-| Home pad / base | (0, 0, 0) | All drones spawn and return here |
-| Target building | (-15, ?, -20) h=12 m | 4-floor glass tower; 3 survivors inside |
-| Obstacle | (-7, ?, -10) h=10 m | Solid block on direct route base → target |
-| Survivor — floor 2 | (-16.5, 3.65, -19.0) | Inside target building |
-| Survivor — floor 3 | (-14.5, 6.65, -20.5) | Inside target building |
-| Survivor — floor 4 | (-13.5, 9.65, -21.0) | Inside target building |
-| Survivor detection radius | 12 m sphere | Drone must be within 12 m (3D) to detect |
-| North sector default | (0, 10, -50) | Named sector target |
-| South sector default | (0, 10, 50) | Named sector target |
-| East sector default | (50, 10, 0) | Named sector target |
-| West sector default | (-50, 10, 0) | Named sector target |
-
----
-
-## Agent Architecture
-
-```
-Commander (temp=0.5)
-├── select_best_drone()   ← picks nearest IDLE drone with battery > 20%
-├── scan_workflow         ← SequentialAgent: navigation_agent → thermal_agent
-│     navigation_agent (temp=0.7)   move + obstacle avoidance
-│     thermal_agent     (temp=0.7)  scan + structured report
-├── navigation_agent      ← movement-only commands
-├── deploy_swarm()
-└── recall_swarm()
-```
-
-All agents use `qwen3.5:4b-q4_K_M` via Ollama at `localhost:11434`. No cloud calls.
-
----
 
 ## Development Commands
 
 ```bash
-# Regenerate gRPC stubs after editing proto/beacon.proto
+# Regenerate gRPC stubs
 bash scripts/gen_proto.sh
 
-# Watch a single drone container
+# Tail a drone container
 docker compose logs -f beacon-01
 
-# Run tests
+# Run all tests
 uv run pytest
+
+# Run CLI pipeline test against live backend/drone setup
 uv run python tests/test_adk_cli.py
 ```
