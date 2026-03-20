@@ -65,6 +65,7 @@ export function World2Environment({
         position={env.canal.position}
         color={env.colors.canal}
         opacity={env.canal.opacity}
+        horizontal={env.canal.horizontal}
       />
       <Parks parks={env.parks} color={env.colors.park} />
       <Trees

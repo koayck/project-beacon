@@ -70,7 +70,8 @@ export const WORLD2_ENV = {
       -88
     ],
     "width": 6,
-    "opacity": 0.9
+    "opacity": 0.9,
+    "horizontal": true
   },
   "parks": [
     [
