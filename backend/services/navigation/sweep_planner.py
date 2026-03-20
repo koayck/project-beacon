@@ -13,7 +13,6 @@ from backend.services.navigation.internal.safety_ops import (
 from backend.world.model import (
     BUILDING_PROXIMITY_MARGIN_M,
     FLOOD_LEVEL,
-    WINDOW_SCAN_STANDOFF_M,
     WORLD,
 )
 
@@ -56,8 +55,7 @@ def plan_building_vertical_sweep(
             "flood_level": FLOOD_LEVEL,
         }
 
-    desired_standoff = max(safe_standoff, WINDOW_SCAN_STANDOFF_M)
-    face_standoffs = _safe_standoff_per_face(building, desired_standoff)
+    face_standoffs = _safe_standoff_per_face(building, safe_standoff)
 
     all_window_wps: list[dict] = []
     for window in building.windows:

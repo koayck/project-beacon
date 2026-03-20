@@ -66,8 +66,9 @@ _NORMAL_SPEED = 5.0
 _MIN_ELIGIBLE_BATTERY_PCT = 20
 # _FAST_SPEED = 20.0
 _drone_speeds: dict[str, float] = {}
-# Match world vision survivor sensor range to avoid sweep summary undercounting.
-DEFAULT_SWEEP_SCAN_RADIUS = 5.0
+# Default sweep radius should cover window-standoff waypoints (~6m to interior
+# survivors in current maps) without requiring the operator to specify radius.
+DEFAULT_SWEEP_SCAN_RADIUS = 8.0
 # Half-angle of the drone's forward-facing thermal camera cone (degrees).
 # Survivors beyond this angle off the drone's heading are not detected.
 THERMAL_HORIZ_FOV_HALF_DEG: float = 60.0

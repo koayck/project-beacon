@@ -255,7 +255,9 @@ async def sweep_scan_building(
         face_dx = building_cx - wp_x
         face_dz = building_cz - wp_z
         heading_toward_building = math.degrees(math.atan2(face_dx, -face_dz)) % 360
-        view = await get_view(asset_id, heading_toward_building, 5.0)
+        # Keep view range aligned with scan radius so sweep detections and
+        # radius-filtered reporting use the same sensing envelope.
+        view = await get_view(asset_id, heading_toward_building, float(scan_radius))
         detected_survivors: list[dict] = []
         for obj in view.get("objects", []):
             if obj.get("object_type") != "survivor":

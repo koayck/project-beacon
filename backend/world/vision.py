@@ -14,7 +14,8 @@ from backend.world.model import WORLD, Building, Survivor
 # Default sensor parameters
 DEFAULT_RANGE: float = 20.0   # metres
 DEFAULT_FOV: float   = 90.0   # degrees (downward-facing cone full angle)
-SURVIVOR_RANGE: float = 5.0  # survivors are harder to spot, shorter range
+SURVIVOR_RANGE: float = 3.0  # survivors are harder to spot, shorter range
+INDOOR_SURVIVOR_RANGE: float = 7.5  # bounded indoor thermal detection through windows
 OBSTACLE_LOOKAHEAD: float = 10.0  # metres ahead to check for obstacles
 
 TerrainType = Literal["ground", "flooded", "building_roof", "in_building", "airspace"]
@@ -277,10 +278,13 @@ def get_view(
     # ── Survivors ─────────────────────────────────────────────────────────
     visible_survivors: list[VisibleSurvivor] = []
     for s in WORLD.survivors:
+        survivor_building = WORLD.building_at(s.x, s.y, s.z)
         if not _survivor_visible(x, y, z, s):
             continue
         dist = s.distance_to(x, y, z)
-        if dist > SURVIVOR_RANGE:
+        if survivor_building is None and dist > SURVIVOR_RANGE:
+            continue
+        if survivor_building is not None and dist > INDOOR_SURVIVOR_RANGE:
             continue
         dx = s.x - x
         dz = s.z - z
