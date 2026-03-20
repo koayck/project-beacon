@@ -160,6 +160,8 @@ def _extract_supply_dispatches(tool_name: str, payload: object) -> list[dict[str
             continue
         if "error" in supply_result:
             continue
+        if bool(supply_result.get("skipped", False)):
+            continue
 
         asset_id = row.get("asset_id")
         target = row.get("target", row.get("survivor", row.get("building")))
