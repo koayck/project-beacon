@@ -15,6 +15,7 @@ async def dispatch_supply_to_building(
     return_to_base_fn: Callable[[str], Awaitable[dict]],
     plan_route_fn: Callable[..., Awaitable[dict]],
     move_drone_to_fn: Callable[..., Awaitable[dict]],
+    wait_until_waypoint_reached_fn: Callable[..., Awaitable[dict]],
     get_status_fn: Callable[[str], Awaitable[dict]],
 ) -> dict:
     target_x = building.get("x")
@@ -145,7 +146,7 @@ async def dispatch_supply_to_building(
         route = retry_route
 
     waypoints = route.get("waypoints", [])
-    for waypoint in waypoints:
+    for index, waypoint in enumerate(waypoints, start=1):
         move_result = await move_drone_to_fn(
             asset_id=asset_id,
             x=float(waypoint["x"]),
@@ -159,6 +160,24 @@ async def dispatch_supply_to_building(
                 "building": building,
                 "waypoint": waypoint,
                 "move_result": move_result,
+            }
+
+        wait_result = await wait_until_waypoint_reached_fn(
+            asset_id,
+            float(waypoint["x"]),
+            float(waypoint["y"]),
+            float(waypoint["z"]),
+            timeout_s=90.0,
+            poll_s=0.2,
+        )
+        if not wait_result.get("ok", False):
+            return {
+                "asset_id": asset_id,
+                "error": wait_result.get("error", "Supply route waypoint not reached."),
+                "building": building,
+                "waypoint": waypoint,
+                "failed_waypoint_index": index,
+                "status": wait_result.get("status"),
             }
 
     final_status = await get_status_fn(asset_id)
