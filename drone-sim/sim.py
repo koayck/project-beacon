@@ -62,12 +62,12 @@ class DroneSimulator:
 
     BASE_Y = 0.0
 
-    def __init__(self, asset_id: str) -> None:
+    def __init__(self, asset_id: str, initial_battery: float = 100.0) -> None:
         origin = Vec3(0.0, self.BASE_Y, 0.0)
         self._snapshot = DroneSnapshot(
             asset_id=asset_id,
             position=origin,
-            battery=100.0,
+            battery=float(initial_battery),
             status=DroneStatus.IDLE,
             target=origin,
             speed=self.DEFAULT_SPEED,
