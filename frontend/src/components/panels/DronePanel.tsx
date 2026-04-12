@@ -8,6 +8,7 @@ function statusTextColorClass(status: string): string {
     case 'SCANNING': return 'text-[#ffaa00]'
     case 'RETURNING': return 'text-[#00ccff]'
     case 'IDLE': return 'text-[#7799bb]'
+    case 'OFFLINE': return 'text-[#ff5555]'
     default: return 'text-[#556677]'
   }
 }
@@ -22,6 +23,8 @@ function droneCardClass(status: string): string {
       return 'border-[rgba(0,204,255,0.19)] border-l-[#00ccff]'
     case 'IDLE':
       return 'border-[rgba(119,153,187,0.19)] border-l-[#7799bb]'
+    case 'OFFLINE':
+      return 'border-[rgba(255,85,85,0.19)] border-l-[#ff5555] opacity-60'
     default:
       return 'border-[rgba(85,102,119,0.19)] border-l-[#556677]'
   }
@@ -44,6 +47,7 @@ function statusGlowClass(status: string): string {
     case 'SCANNING': return 'shadow-[0_0_6px_#ffaa0080]'
     case 'RETURNING': return 'shadow-[0_0_6px_#00ccff80]'
     case 'IDLE': return 'shadow-[0_0_6px_#7799bb80]'
+    case 'OFFLINE': return 'shadow-[0_0_6px_#ff555580]'
     default: return 'shadow-[0_0_6px_#55667780]'
   }
 }

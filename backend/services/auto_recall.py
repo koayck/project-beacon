@@ -26,6 +26,7 @@ class AutoRecallMonitor:
         recall_fn: Callable[[str], Awaitable[dict]] = return_to_base,
         registered_asset_ids_fn: Callable[[], list[str]] = grpc_client.registered_asset_ids,
         log_create_fn: Callable[[MissionLog], Awaitable[None]] = mission_log_repo.create,
+        unregister_fn: Callable[[str], None] | None = None,
     ) -> None:
         self._enabled = enabled
         self._battery_threshold = battery_threshold
@@ -33,12 +34,19 @@ class AutoRecallMonitor:
         self._recall_fn = recall_fn
         self._registered_asset_ids_fn = registered_asset_ids_fn
         self._log_create_fn = log_create_fn
+        self._unregister_fn = unregister_fn
 
         self._running = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._inflight: set[str] = set()
+        self._recalled: set[str] = set()
         self._last_triggered: dict[str, float] = {}
         self._tasks: set[asyncio.Task[None]] = set()
+
+    @property
+    def recalled_asset_ids(self) -> frozenset[str]:
+        """Asset IDs that have been auto-recalled and should stay offline."""
+        return frozenset(self._recalled)
 
     def start(self) -> None:
         self._loop = asyncio.get_running_loop()
@@ -80,6 +88,8 @@ class AutoRecallMonitor:
             return
 
         now = time.monotonic()
+        if asset_id in self._recalled:
+            return
         if asset_id in self._inflight:
             return
         last = self._last_triggered.get(asset_id)
@@ -112,6 +122,10 @@ class AutoRecallMonitor:
     async def _execute_auto_recall(self, asset_id: str, reason: dict) -> None:
         try:
             result = await self._recall_fn(asset_id)
+            self._recalled.add(asset_id)
+            if self._unregister_fn is not None:
+                self._unregister_fn(asset_id)
+            logger.info("Auto-recalled %s — drone taken offline", asset_id)
             await self._log_create_fn(
                 MissionLog(
                     asset_id=asset_id,

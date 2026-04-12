@@ -41,10 +41,15 @@ async def discover_active_fleet(
     """
     Discover drones currently active on the network.
     Returns a fleet list with battery, status, position, and uplink state.
+    Drones that have been auto-recalled are excluded from the fleet.
     """
+    from backend.app import _auto_recall_monitor
+
+    recalled = _auto_recall_monitor.recalled_asset_ids if _auto_recall_monitor else frozenset()
     return await discover_fleet(
         auto_uplink=auto_uplink,
         include_registered=include_registered,
+        recalled_asset_ids=recalled,
     )
 
 

@@ -159,6 +159,14 @@ class DroneGrpcClient:
         )
         return {"success": resp.success, "message": resp.message}
 
+    def unregister(self, asset_id: str) -> bool:
+        """Close and remove the gRPC connection for a single drone."""
+        conn = self._connections.pop(asset_id.upper(), None)
+        if conn is None:
+            return False
+        conn.channel.close()
+        return True
+
     def registered_asset_ids(self) -> list[str]:
         """Return all asset IDs that have an active gRPC connection."""
         return list(self._connections.keys())

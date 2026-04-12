@@ -55,18 +55,25 @@ async def discover_fleet(
     *,
     auto_uplink: bool = True,
     include_registered: bool = True,
+    recalled_asset_ids: frozenset[str] | None = None,
 ) -> dict:
     """
     Return the active fleet view the agent should reason over.
 
     When auto_uplink=True, active drones are registered before being returned so
     follow-up control tools can act on them immediately.
+
+    Drones in ``recalled_asset_ids`` are excluded — they have been auto-recalled
+    and taken offline.
     """
+    _recalled = recalled_asset_ids or frozenset()
     known = udp_listener.get_known_assets()
     registered_assets = {asset.asset_id: asset for asset in await asset_repo.list_all()}
     fleet: list[dict] = []
 
     for asset_id in sorted(known):
+        if asset_id.upper() in _recalled or asset_id in _recalled:
+            continue
         if auto_uplink and asset_id not in registered_assets:
             await ensure_uplink(asset_id)
             registered_assets = {asset.asset_id: asset for asset in await asset_repo.list_all()}
@@ -91,6 +98,8 @@ async def discover_fleet(
     if include_registered:
         for asset_id, registered in sorted(registered_assets.items()):
             if asset_id in known:
+                continue
+            if asset_id.upper() in _recalled or asset_id in _recalled:
                 continue
             fleet.append(
                 {

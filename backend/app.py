@@ -212,13 +212,17 @@ async def app_lifespan(app: FastAPI):
         enabled=_AUTO_RECALL_ENABLED,
         battery_threshold=_AUTO_RECALL_BATTERY_THRESHOLD,
         cooldown_seconds=_AUTO_RECALL_COOLDOWN_SECONDS,
+        unregister_fn=grpc_client.unregister,
     )
     _auto_recall_monitor.start()
 
     def _on_telemetry_update(payload: dict) -> None:
-        ws_broadcaster.broadcast(payload)
         if _auto_recall_monitor is not None:
+            asset_id = payload.get("asset_id", "")
+            if isinstance(asset_id, str) and asset_id.upper() in _auto_recall_monitor.recalled_asset_ids:
+                return  # drone is offline after auto-recall; suppress telemetry
             _auto_recall_monitor.handle_telemetry(payload)
+        ws_broadcaster.broadcast(payload)
 
     await udp_listener.start(on_update=_on_telemetry_update)
     await restore_registered_connections()
@@ -461,7 +465,8 @@ async def list_assets() -> list[dict]:
 @app.get("/fleet")
 async def list_fleet() -> dict:
     """Return the active fleet state the MCP agent reasons over."""
-    return await discover_fleet(auto_uplink=False, include_registered=True)
+    recalled = _auto_recall_monitor.recalled_asset_ids if _auto_recall_monitor else frozenset()
+    return await discover_fleet(auto_uplink=False, include_registered=True, recalled_asset_ids=recalled)
 
 
 @app.post("/fleet/recall")

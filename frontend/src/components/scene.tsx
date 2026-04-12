@@ -546,9 +546,8 @@ export default function SARScene() {
     for (const assetId of [...autoRecallDismissedRef.current]) {
       if (!lowBatteryIdleIds.has(assetId)) autoRecallDismissedRef.current.delete(assetId)
     }
-    for (const assetId of [...autoRecallTriggeredRef.current]) {
-      if (!lowBatteryIdleIds.has(assetId)) autoRecallTriggeredRef.current.delete(assetId)
-    }
+    // NOTE: do NOT clear autoRecallTriggeredRef — once a drone has been
+    // auto-recalled it must never re-trigger the popup in this session.
 
     if (autoRecallPrompt && !lowBatteryIdleIds.has(autoRecallPrompt.assetId)) {
       setAutoRecallPrompt(null)
