@@ -22,6 +22,7 @@ export interface SupplyDispatchEvent {
 export type AgentStreamEvent =
   | { type: 'tool_call'; name: string; args: Record<string, unknown>; agent: string }
   | { type: 'tool_result'; name: string; success: boolean; result: string; survivors?: DetectedSurvivor[]; supply_dispatches?: SupplyDispatchEvent[] }
+  | { type: 'thought'; text: string; agent: string }
   | { type: 'text'; text: string; agent: string; survivors?: DetectedSurvivor[] }
   | { type: 'final'; text: string; agent: string }
   | { type: 'heartbeat'; elapsed: number }

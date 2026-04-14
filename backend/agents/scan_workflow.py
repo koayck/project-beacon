@@ -145,6 +145,11 @@ def get_scan_results(tool_context: ToolContext) -> dict:
     return {"results": results, "total": len(results)}
 
 
+def get_shared_state(tool_context: ToolContext) -> dict:
+    """Expose current loop shared state for agents that need explicit state reads."""
+    return {"state": tool_context.state.to_dict()}
+
+
 def _split_scan_result_asset(result_text: str) -> tuple[str | None, str]:
     stripped = result_text.strip()
     match = _RESULT_ASSET_PREFIX_RE.match(stripped)
@@ -672,7 +677,7 @@ _thermal_for_scan = Agent(
     description="Sweep-scans the current building and silently accumulates the result. Generates the final report after the last building.",
     generate_content_config=QWEN3_GEN_CONFIG,
     instruction=_SILENT_THERMAL_INSTRUCTION,
-    tools=[make_toolset(THERMAL_TOOLS), _save_tool],
+    tools=[make_toolset(THERMAL_TOOLS), _save_tool, FunctionTool(get_shared_state)],
 )
 
 
@@ -796,7 +801,7 @@ SWEEP SCAN PROCEDURE
         description=f"Sweep-scans current building for {asset_id} and saves compact results.",
         generate_content_config=QWEN3_GEN_CONFIG,
         instruction=thermal_instruction,
-        tools=[make_toolset(THERMAL_TOOLS), save_tool],
+        tools=[make_toolset(THERMAL_TOOLS), save_tool, FunctionTool(get_shared_state)],
     )
 
     return LoopAgent(

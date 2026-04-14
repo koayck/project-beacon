@@ -1,9 +1,11 @@
 """
 Shared model and generation configs for all ADK agents.
 
-Per-agent temperature tuning for Qwen3 4B Q4_K_M:
-  commander:  temp=0.5  — routing decisions need precision, less hallucination
-  sub-agents: temp=0.7  — balanced creativity for tool selection
+Per-agent temperature tuning profiles:
+  strategic agents (commander/parser/planner/recovery):
+    temp=0.35, top_p=0.9, with thinking enabled
+  execution agents (navigation/scan/supply loops):
+    temp=0.25, top_p=0.9, no extra thinking config
 
 Qwen3 instruct (non-thinking) base params: top_p=0.95, top_k=20
 presence_penalty kept at 1.0 (1.5 caused model to avoid repeating tool names).
@@ -97,6 +99,8 @@ model = "gemini/gemini-2.5-flash"
 litellm.drop_params = True
 _configure_langfuse()
 
+_THINKING_CONFIG = genai_types.ThinkingConfig(include_thoughts=True, thinking_budget=4096)
+
 QWEN3_INSTRUCT = LiteLlm(
     # model="ollama_chat/qwen3.5:4b-q4_K_M",
     model,
@@ -104,18 +108,20 @@ QWEN3_INSTRUCT = LiteLlm(
     # think=False,  # Ollama-native: disables Qwen3 extended thinking (80s → 7s)
 )
 
-# Commander: lower temperature for precise routing decisions
+# Strategic profile: precise planning/routing with model thinking enabled.
 QWEN3_GEN_CONFIG_COMMANDER = genai_types.GenerateContentConfig(
-    temperature=0.5,
-    top_p=0.95,
+    temperature=0.35,
+    top_p=0.9,
     top_k=20,
-    # presence_penalty=1.0,
+    thinking_config=_THINKING_CONFIG,
 )
 
-# Sub-agents (navigation, thermal): slightly higher temperature for tool reasoning
-QWEN3_GEN_CONFIG = genai_types.GenerateContentConfig(
-    temperature=0.7,
-    top_p=0.95,
+# Execution profile: deterministic tool-using loops (no explicit thinking config).
+QWEN3_GEN_CONFIG_EXECUTION = genai_types.GenerateContentConfig(
+    temperature=0.25,
+    top_p=0.9,
     top_k=20,
-    # presence_penalty=1.0,
 )
+
+# Backward-compatible alias for existing execution agents.
+QWEN3_GEN_CONFIG = QWEN3_GEN_CONFIG_EXECUTION

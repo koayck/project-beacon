@@ -3,13 +3,24 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-UDP_HOST = "0.0.0.0"
-UDP_PORT = 5005
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+UDP_HOST = os.environ.get("BEACON_UDP_HOST", "0.0.0.0")
+UDP_PORT = _env_int("BEACON_UDP_PORT", 5005)
 MAX_PACKET = 4096
 
 

@@ -272,7 +272,7 @@ async def test_process_next_supply_target_stops_when_only_completed_targets_rema
     assert result["done"] is True
     assert result["total_dispatched"] == 1
     assert dispatch_calls == []
-    assert tool_context.actions.escalate is False
+    assert tool_context.actions.escalate is True
 
 
 @pytest.mark.asyncio

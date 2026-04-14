@@ -232,14 +232,14 @@ async def app_lifespan(app: FastAPI):
             asset.asset_id, asset.grpc_host, asset.grpc_port,
         )
 
-    from backend.agents.commander import commander
+    from backend.agents.enhanced_commander import enhanced_commander
 
     _adk_runner = Runner(
-        agent=commander,
+        agent=enhanced_commander,
         session_service=InMemorySessionService(),
         app_name="beacon",
     )
-    logging.getLogger(__name__).info("ADK commander agent ready")
+    logging.getLogger(__name__).info("ADK enhanced commander agent ready")
 
     try:
         yield
@@ -688,6 +688,10 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                 if not event.content or not event.content.parts:
                     continue
                 for part in event.content.parts:
+                    if part.text and part.text.strip() and getattr(part, "thought", False):
+                        payload = {"type": "thought", "text": part.text, "agent": event.author}
+                        yield f"data: {json.dumps(payload)}\n\n"
+                        continue
                     if part.function_call:
                         payload = {
                             "type": "tool_call",

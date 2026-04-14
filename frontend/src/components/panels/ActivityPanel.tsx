@@ -113,6 +113,18 @@ export function parseEventToActivity(event: AgentStreamEvent): ActivityItem | nu
     return null
   }
 
+  if (event.type === 'thought') {
+    return {
+      id: nextActivityId(),
+      icon: '⋯',
+      label: 'Reasoning',
+      detail: `[${event.agent}] ${event.text.slice(0, 180)}`,
+      ts: Date.now(),
+      status: 'active',
+      category: 'reasoning',
+    }
+  }
+
   if (event.type === 'error') {
     return { id: nextActivityId(), icon: '✗', label: 'Error', detail: event.text.slice(0, 60), ts: Date.now(), status: 'error', category: 'error' }
   }
