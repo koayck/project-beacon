@@ -174,6 +174,64 @@ async def execute_navigation_sequence(
     )
 
 
+def _navigation_result_to_dict(result: NavigationResult) -> dict[str, object]:
+    """Convert NavigationResult to a JSON-serializable dictionary.
+
+    Args:
+        result: NavigationResult produced by execute_navigation_sequence.
+
+    Returns:
+        Dictionary containing only primitive/JSON-serializable values.
+    """
+    final_position = None
+    if result.final_position is not None:
+        final_position = {
+            "x": result.final_position.x,
+            "y": result.final_position.y,
+            "z": result.final_position.z,
+        }
+
+    return {
+        "success": result.success,
+        "final_position": final_position,
+        "waypoints_completed": result.waypoints_completed,
+        "route_summary": result.route_summary,
+        "error": result.error,
+    }
+
+
+async def execute_navigation_sequence_tool(
+    asset_id: str,
+    target_x: float,
+    target_z: float,
+    target_y: Optional[float] = None,
+    max_retries: int = 3,
+) -> dict[str, object]:
+    """Tool-safe wrapper for navigation sequence orchestration.
+
+    This wrapper exists for automatic function calling compatibility.
+    It exposes a simpler return schema than the NavigationResult dataclass.
+
+    Args:
+        asset_id: Drone identifier (e.g., "BEACON-01").
+        target_x: East coordinate.
+        target_z: South coordinate.
+        target_y: Optional altitude override.
+        max_retries: Maximum altitude escalation attempts.
+
+    Returns:
+        JSON-serializable navigation result dictionary.
+    """
+    result = await execute_navigation_sequence(
+        asset_id=asset_id,
+        target_x=target_x,
+        target_z=target_z,
+        target_y=target_y,
+        max_retries=max_retries,
+    )
+    return _navigation_result_to_dict(result)
+
+
 async def execute_return_to_base(asset_id: str) -> dict:
     """
     Return drone to home base with obstacle-aware routing.

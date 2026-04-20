@@ -10,7 +10,7 @@ from google.adk.agents import Agent
 
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
 from backend.orchestrator.navigation import (
-    execute_navigation_sequence,
+    execute_navigation_sequence_tool,
     execute_return_to_base,
 )
 from backend.services.api.control import (
@@ -39,7 +39,7 @@ def make_navigation_agent(name: str = "navigation_agent") -> Agent:
         output_key="nav_result",
         instruction=NAVIGATION_INSTRUCTION,
         tools=[
-            execute_navigation_sequence,
+            execute_navigation_sequence_tool,
             execute_return_to_base,
             get_drone_status,
             plan_sweep_pattern,

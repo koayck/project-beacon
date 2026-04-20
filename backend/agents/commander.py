@@ -17,6 +17,7 @@ from backend.agents.scan_workflow import scan_workflow
 from backend.agents.supply_workflow import supply_workflow
 from backend.agents.schemas import CommandIntent
 from backend.instructions.commander_text import COMMANDER_INSTRUCTION
+from backend.agents._mcp import make_toolset
 
 
 def is_complex_mission(intent: dict) -> bool:
@@ -39,5 +40,6 @@ enhanced_commander = Agent(
         AgentTool(command_parser),
         is_complex_mission,
         # AgentTool(mission_planner),
+        make_toolset(["deploy_scout_sweep", "get_explored_sectors"]),
     ],
 )
