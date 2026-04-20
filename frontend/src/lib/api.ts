@@ -180,6 +180,10 @@ export async function switchWorld(worldId: number): Promise<void> {
   await fetch(`${BASE}/world/${worldId}`, { method: 'POST' })
 }
 
+export async function deployScout(): Promise<void> {
+  await fetch(`${BASE}/scout/sweep`, { method: 'POST' })
+}
+
 export async function healthCheck(): Promise<boolean> {
   try {
     const res = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(2000) })

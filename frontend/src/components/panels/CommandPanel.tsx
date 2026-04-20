@@ -29,7 +29,10 @@ interface Props {
   onExternalPromptConsumed?: () => void
   externalAssetId?: string | null
   onMetricsChange?: (metrics: AgentMetrics) => void
+  scoutAvailable?: boolean
 }
+
+const SCOUT_DEPLOY_PROMPT = 'Deploy the scout drone to survey the disaster zone and map every sector.'
 
 const QUICK_ACTIONS = [
   { label: 'SCAN TARGET', prompt: 'Scan the target building for survivors using all available drones', color: '#ffaa44', border: 'rgba(255,170,0,0.35)', bg: 'rgba(255,170,0,0.08)' },
@@ -59,7 +62,7 @@ function messagesToText(messages: AgentMessage[]): string {
     .join('\n\n')
 }
 
-export default function CommandPanel({ assetId, connected, uplinked, battery, onCommand, onStop, externalPrompt, onExternalPromptConsumed, externalAssetId, onMetricsChange }: Props) {
+export default function CommandPanel({ assetId, connected, uplinked, battery, onCommand, onStop, externalPrompt, onExternalPromptConsumed, externalAssetId, onMetricsChange, scoutAvailable }: Props) {
   const [input, setInput]       = useState('')
   const [busy, setBusy]         = useState(false)
   const [elapsed, setElapsed]   = useState(0)
@@ -346,6 +349,28 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
             flexWrap: 'wrap',
           }}>
             <span style={{ color: '#7a8a9a', fontSize: 12, letterSpacing: 1, marginRight: 2 }}>QUICK</span>
+            {scoutAvailable && (
+              <button
+                onClick={() => submit(SCOUT_DEPLOY_PROMPT)}
+                disabled={!connected || busy}
+                title={SCOUT_DEPLOY_PROMPT}
+                style={{
+                  background: 'rgba(255,204,0,0.10)',
+                  border: '1px solid rgba(255,204,0,0.40)',
+                  borderRadius: 4,
+                  color: (!connected || busy) ? '#334' : '#ffcc00',
+                  padding: '2px 8px',
+                  cursor: (!connected || busy) ? 'default' : 'pointer',
+                  fontFamily: 'Courier New, monospace',
+                  fontSize: 12,
+                  fontWeight: 'bold',
+                  letterSpacing: 0.5,
+                  transition: 'all 0.15s',
+                }}
+              >
+                DEPLOY SCOUT
+              </button>
+            )}
             {QUICK_ACTIONS.map(action => (
               <button
                 key={action.label}

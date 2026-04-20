@@ -31,6 +31,8 @@ export function DroneMesh({
   scanTiltDeg = 0,
   battery,
 }: DroneProps) {
+  const isScout = assetId === 'BEACON-SCOUT'
+
   void nearbyObstacles
   void nearestObstacleDist
   void survivorsInRange
@@ -91,23 +93,35 @@ export function DroneMesh({
       cargoRef.current.visible = hasCargo
     }
 
-    const bodyColor =
-      status === 'BLOCKED' ? 0xff2200 :
-      status === 'MOVING' ? 0x00ff88 :
-      status === 'SCANNING' ? 0xffaa00 :
-      0x00ffff
-    const emissiveColor =
-      status === 'BLOCKED' ? 0x880000 :
-      status === 'MOVING' ? 0x00aa44 :
-      status === 'SCANNING' ? 0xaa6600 :
-      0x00aaaa
+    let bodyColor: number
+    let emissiveColor: number
+    if (isScout) {
+      bodyColor = 0xffcc00
+      emissiveColor = 0xaa8800
+    } else if (status === 'BLOCKED') {
+      bodyColor = 0xff2200
+      emissiveColor = 0x880000
+    } else if (status === 'MOVING') {
+      bodyColor = 0x00ff88
+      emissiveColor = 0x00aa44
+    } else if (status === 'SCANNING') {
+      bodyColor = 0xffaa00
+      emissiveColor = 0xaa6600
+    } else {
+      bodyColor = 0x00ffff
+      emissiveColor = 0x00aaaa
+    }
 
     groupRef.current.traverse(child => {
-      if ((child as THREE.Mesh).isMesh) {
-        const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial
-        mat.color.setHex(bodyColor)
-        mat.emissive.setHex(emissiveColor)
-      }
+      const mesh = child as THREE.Mesh
+      if (!mesh.isMesh) return
+      const mat = mesh.material as THREE.Material
+      // Only recolour drone body meshes (MeshStandardMaterial). Helpers like
+      // the scout spotlight use MeshBasicMaterial which has no `emissive`.
+      if (!(mat as THREE.MeshStandardMaterial).isMeshStandardMaterial) return
+      const std = mat as THREE.MeshStandardMaterial
+      std.color.setHex(bodyColor)
+      std.emissive.setHex(emissiveColor)
     })
   })
 
@@ -144,7 +158,7 @@ export function DroneMesh({
         {assetId && (
           <Html position={[0, 0.9, 0]} center distanceFactor={14} zIndexRange={[0, 0]}>
             <div className="pointer-events-none whitespace-nowrap rounded-[3px] border border-[rgba(0,255,255,0.4)] bg-[rgba(0,16,24,0.82)] px-[7px] py-[2px] font-mono text-[48px] font-bold tracking-[0.05em] text-[#00ffff]">
-              {assetId}
+              {isScout ? 'SCOUT' : (assetId ?? 'BEACON-01')}
               {battery !== undefined && (
                 <span className={`ml-[8px] text-[36px] font-normal ${
                   battery > 50 ? 'text-[#44cc66]' : battery > 20 ? 'text-[#ffcc00]' : 'text-[#ff3333]'
@@ -154,6 +168,34 @@ export function DroneMesh({
               )}
             </div>
           </Html>
+        )}
+        {/* Scout spotlight — a wide downward cone reaching the ground from
+            the scout's cruise altitude (~35m). Lives inside the drone group
+            so it translates with the scout. */}
+        {isScout && (
+          <group position={[0, -17.5, 0]}>
+            <mesh>
+              <coneGeometry args={[14, 35, 32, 1, true]} />
+              <meshBasicMaterial
+                color="#ffcc00"
+                transparent
+                opacity={0.08}
+                side={THREE.DoubleSide}
+                depthWrite={false}
+              />
+            </mesh>
+            {/* Inner bright core for visual definition */}
+            <mesh>
+              <coneGeometry args={[5, 35, 24, 1, true]} />
+              <meshBasicMaterial
+                color="#fff0b0"
+                transparent
+                opacity={0.05}
+                side={THREE.DoubleSide}
+                depthWrite={false}
+              />
+            </mesh>
+          </group>
         )}
       </group>
       <mesh ref={coneRef} position={DRONE_START.toArray()} visible={false}>

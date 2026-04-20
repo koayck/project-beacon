@@ -1,5 +1,6 @@
 'use client'
 
+import { useMemo } from 'react'
 import { Canal } from './Canal'
 import { FloodWater } from './FloodWater'
 import { MidRise } from './MidRise'
@@ -9,6 +10,7 @@ import { Shophouses } from './Shophouses'
 import { Trees } from './Trees'
 import { WORLD2_ENV } from '../../generated/world2Environment.generated'
 import { loadWorldEnvironmentFromUrl, type ResolvedWorldEnvironment } from './worldEnvironment'
+import { positionToSectorId } from '@/lib/fogOfWar'
 import { useEffect, useState } from 'react'
 
 export function World2Environment({
@@ -18,6 +20,7 @@ export function World2Environment({
   floodLevel,
   transparentWalls,
   runtimeWorldUrl,
+  exploredSectors,
 }: {
   span: number
   floorHeight: number
@@ -25,6 +28,7 @@ export function World2Environment({
   floodLevel: number
   transparentWalls: boolean
   runtimeWorldUrl?: string
+  exploredSectors?: Set<string>
 }) {
   const [runtimeEnv, setRuntimeEnv] = useState<ResolvedWorldEnvironment | null>(null)
 
@@ -50,6 +54,31 @@ export function World2Environment({
 
   const env = runtimeEnv ?? WORLD2_ENV
 
+  // Filter buildings by explored sectors when fog-of-war is active.
+  const visibleShophouses = useMemo(() => {
+    if (!exploredSectors) return env.shophouseSpecs
+    return env.shophouseSpecs.filter(s => {
+      const sid = positionToSectorId(s.cx, s.cz)
+      return sid != null && exploredSectors.has(sid)
+    })
+  }, [env.shophouseSpecs, exploredSectors])
+
+  const visibleMidRise = useMemo(() => {
+    if (!exploredSectors) return env.midRiseSpecs
+    return env.midRiseSpecs.filter(s => {
+      const sid = positionToSectorId(s.cx, s.cz)
+      return sid != null && exploredSectors.has(sid)
+    })
+  }, [env.midRiseSpecs, exploredSectors])
+
+  const visibleTrees = useMemo(() => {
+    if (!exploredSectors) return env.trees.positions
+    return env.trees.positions.filter((p: readonly [number, number]) => {
+      const sid = positionToSectorId(p[0], p[1])
+      return sid != null && exploredSectors.has(sid)
+    })
+  }, [env.trees.positions, exploredSectors])
+
   return (
     <>
       <Roads
@@ -69,7 +98,7 @@ export function World2Environment({
       />
       <Parks parks={env.parks} color={env.colors.park} />
       <Trees
-        treePositions={env.trees.positions}
+        treePositions={visibleTrees}
         trunkColor={env.colors.trunk}
         leafColor={env.colors.leaf}
         trunkSize={env.trees.trunk_size}
@@ -78,13 +107,13 @@ export function World2Environment({
         leafY={env.trees.leaf_y}
       />
       <Shophouses
-        specs={env.shophouseSpecs}
+        specs={visibleShophouses}
         floorHeight={floorHeight}
         floorThickness={floorThickness}
         transparentWalls={transparentWalls}
       />
       <MidRise
-        specs={env.midRiseSpecs}
+        specs={visibleMidRise}
         floorHeight={floorHeight}
         floorThickness={floorThickness}
         transparentWalls={transparentWalls}

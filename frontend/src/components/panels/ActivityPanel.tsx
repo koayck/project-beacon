@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react"
 import type { AgentStreamEvent } from '@/lib/api'
 
-export type ActivityCategory = 'dispatch' | 'agent' | 'reasoning' | 'movement' | 'scan' | 'complete' | 'error' | 'system'
+export type ActivityCategory = 'dispatch' | 'agent' | 'reasoning' | 'movement' | 'scan' | 'complete' | 'error' | 'system' | 'scout'
 
 export interface ActivityItem {
   id: number
@@ -32,6 +32,7 @@ const CATEGORY_STYLE: Record<ActivityCategory, { colorClass: string; glowClass: 
   complete: { colorClass: 'text-[#44dd88]', glowClass: 'bg-[rgba(60,220,120,0.10)]', detailClass: 'text-[#667]' },
   error: { colorClass: 'text-[#ff5555]', glowClass: 'bg-[rgba(255,80,80,0.10)]', detailClass: 'text-[#667]' },
   system: { colorClass: 'text-[#8899aa]', glowClass: 'bg-[rgba(100,130,160,0.06)]', detailClass: 'text-[#667]' },
+  scout: { colorClass: 'text-[#ffcc44]', glowClass: 'bg-[rgba(255,204,68,0.10)]', detailClass: 'text-[#aa9944]' },
 }
 
 function missionTime(ts: number): string {
