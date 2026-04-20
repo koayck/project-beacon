@@ -3,6 +3,9 @@ interface ControlsProps {
   onToggleFollow: () => void
   transparentWalls: boolean
   onToggleWalls: () => void
+  fogEnabled: boolean
+  onToggleFog: () => void
+  showFogToggle: boolean
   followedAssetId: string | null
   activeAssetIds: string[]
   onFollowPrevious: () => void
@@ -15,6 +18,9 @@ export function Controls({
   onToggleFollow,
   transparentWalls,
   onToggleWalls,
+  fogEnabled,
+  onToggleFog,
+  showFogToggle,
   followedAssetId,
   activeAssetIds,
   onFollowPrevious,
@@ -75,6 +81,19 @@ export function Controls({
         >
           WALLS {transparentWalls ? 'X-RAY' : 'SOLID'}
         </button>
+        {showFogToggle && (
+          <button
+            onClick={onToggleFog}
+            className={buttonClass(
+              fogEnabled,
+              'border-[rgba(255,204,68,0.4)] bg-[rgba(255,180,40,0.18)] text-[#ffe39a]',
+              'border-[rgba(40,50,70,0.5)] bg-[rgba(15,20,30,0.6)] text-[#4a5a6a]',
+            )}
+            title="Toggle fog-of-war (hides unexplored sectors)"
+          >
+            FOG {fogEnabled ? 'ON' : 'OFF'}
+          </button>
+        )}
       </div>
       {followBeacon && activeAssetIds.length > 0 && (
         <div className="mt-2 flex items-center gap-1">

@@ -37,6 +37,16 @@ Failed Mission: Navigation blocked, battery 35%, backup available
 -> Recovery: recovery_agent -> RecoveryPlan(action=swap_drone, ...)
 -> Execute: Retry with BEACON-03
 
+SCOUT / RECON
+For reconnaissance requests — "scout the area", "survey", "map the disaster zone",
+"reveal the grid", "fly the scout", "deploy scout" — call deploy_scout_sweep
+directly. It launches BEACON-SCOUT on a high-altitude lawnmower sweep that
+progressively reveals grid sectors with building and thermal-anomaly intel, and
+the scout returns itself to base automatically. Do NOT route scout commands to
+navigation_agent or scan_workflow — deploy_scout_sweep handles the whole mission.
+If you need to reason about which rescue drones to dispatch next, call
+get_explored_sectors to see which cells have been mapped and what's in them.
+
 GUIDELINES:
 - Always parse command first (no guessing)
 - Plan only when is_complex_mission() returns True

@@ -22,13 +22,13 @@ export interface SupplyDispatchEvent {
 export type AgentStreamEvent =
   | { type: 'tool_call'; name: string; args: Record<string, unknown>; agent: string }
   | { type: 'tool_result'; name: string; success: boolean; result: string; survivors?: DetectedSurvivor[]; supply_dispatches?: SupplyDispatchEvent[] }
-  | { type: 'thought'; text: string; agent: string }
+  | { type: 'thinking'; text: string; agent: string }
   | { type: 'text'; text: string; agent: string; survivors?: DetectedSurvivor[] }
   | { type: 'final'; text: string; agent: string }
   | { type: 'heartbeat'; elapsed: number }
   | { type: 'error'; text: string }
   | { type: 'done'; ttft_ms: number | null; tps: number | null }
-
+  
 export interface UplinkResponse {
   asset_id: string
   grpc_host: string
@@ -178,6 +178,10 @@ export async function setFleetSpeed(speed: number): Promise<void> {
 
 export async function switchWorld(worldId: number): Promise<void> {
   await fetch(`${BASE}/world/${worldId}`, { method: 'POST' })
+}
+
+export async function deployScout(): Promise<void> {
+  await fetch(`${BASE}/scout/sweep`, { method: 'POST' })
 }
 
 export async function healthCheck(): Promise<boolean> {

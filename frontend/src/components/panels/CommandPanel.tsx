@@ -7,6 +7,7 @@ import { setFleetSpeed, recallFleet } from '@/lib/api'
 interface AgentMessage {
   role: 'user' | 'agent'
   lines: string[]
+  thinking: string[]
   ts: number
 }
 
@@ -28,7 +29,10 @@ interface Props {
   onExternalPromptConsumed?: () => void
   externalAssetId?: string | null
   onMetricsChange?: (metrics: AgentMetrics) => void
+  scoutAvailable?: boolean
 }
+
+const SCOUT_DEPLOY_PROMPT = 'Deploy the scout drone to survey the disaster zone and map every sector.'
 
 const QUICK_ACTIONS = [
   { label: 'SCAN TARGET', prompt: 'Scan the target building for survivors using all available drones', color: '#ffaa44', border: 'rgba(255,170,0,0.35)', bg: 'rgba(255,170,0,0.08)' },
@@ -44,45 +48,7 @@ function formatToolCall(name: string, args: Record<string, unknown>, agent: stri
   return `[${agent}] -> ${name}(${argStr})`
 }
 
-function tryParseJson(text: string): unknown | null {
-  try {
-    return JSON.parse(text)
-  } catch {
-    return null
-  }
-}
-
-function formatStructuredToolResult(result: string): string | null {
-  const unescaped = result.replaceAll('\\n', '\n').trim()
-  const fencedMatch = unescaped.match(/```json\s*([\s\S]*?)\s*```/i)
-
-  if (fencedMatch?.[1]) {
-    const fencedBody = fencedMatch[1].trim()
-    const parsed = tryParseJson(fencedBody)
-    if (parsed !== null) return JSON.stringify(parsed, null, 2)
-    return fencedBody
-  }
-
-  const parsed = tryParseJson(unescaped)
-  if (parsed === null) return null
-
-  if (typeof parsed === 'string') {
-    const nested = formatStructuredToolResult(parsed)
-    return nested ?? parsed
-  }
-
-  if (typeof parsed === 'object') {
-    return JSON.stringify(parsed, null, 2)
-  }
-
-  return String(parsed)
-}
-
 function formatToolResult(name: string, success: boolean, result: string): string {
-  const structured = formatStructuredToolResult(result)
-  if (structured) {
-    return `  ${success ? '✓' : '✗'} ${name}:\n${structured}`
-  }
   return `  ${success ? '✓' : '✗'} ${name}: ${result}`
 }
 
@@ -96,14 +62,7 @@ function messagesToText(messages: AgentMessage[]): string {
     .join('\n\n')
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-}
-
-export default function CommandPanel({ assetId, connected, uplinked, battery, onCommand, onStop, externalPrompt, onExternalPromptConsumed, externalAssetId, onMetricsChange }: Props) {
+export default function CommandPanel({ assetId, connected, uplinked, battery, onCommand, onStop, externalPrompt, onExternalPromptConsumed, externalAssetId, onMetricsChange, scoutAvailable }: Props) {
   const [input, setInput]       = useState('')
   const [busy, setBusy]         = useState(false)
   const [elapsed, setElapsed]   = useState(0)
@@ -115,12 +74,8 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
   const [copied, setCopied]     = useState(false)
   const [fastMode, setFastMode] = useState(false)
   const [resetting, setResetting] = useState(false)
-  const [finalReport, setFinalReport] = useState<{ text: string; ts: number } | null>(null)
   const copiedTimer             = useRef<ReturnType<typeof setTimeout> | null>(null)
   const bottomRef               = useRef<HTMLDivElement>(null)
-  const finalCandidateRef       = useRef('')
-  const lastTextRef             = useRef('')
-  const latestCommandRef        = useRef('')
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -141,12 +96,8 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
       setElapsed(0)
       setTtft(null)
       setTps(null)
-      setFinalReport(null)
-      finalCandidateRef.current = ''
-      lastTextRef.current = ''
-      setMessages(prev => [...prev, { role: 'user', lines: [externalPrompt], ts: Date.now() }])
-      setMessages(prev => [...prev, { role: 'agent', lines: [], ts: Date.now() }])
-      latestCommandRef.current = externalPrompt
+      setMessages(prev => [...prev, { role: 'user', lines: [externalPrompt], thinking: [], ts: Date.now() }])
+      setMessages(prev => [...prev, { role: 'agent', lines: [], thinking: [], ts: Date.now() }])
       setBusy(true)
       onCommand(externalPrompt, (event) => {
         if (event.type === 'heartbeat') {
@@ -155,22 +106,13 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
           appendAgentLine(formatToolCall(event.name, event.args, event.agent))
         } else if (event.type === 'tool_result') {
           appendAgentLine(formatToolResult(event.name, event.success, event.result))
-        } else if (event.type === 'thought') {
-          appendAgentLine(`[THOUGHT:${event.agent}] ${event.text}`)
         } else if (event.type === 'text' || event.type === 'final') {
-          const trimmed = event.text.trim()
-          if (trimmed) {
-            lastTextRef.current = trimmed
-            if (event.type === 'final') finalCandidateRef.current = trimmed
-          }
           appendAgentLine(event.text)
         } else if (event.type === 'error') {
           appendAgentLine(`Error: ${event.text}`)
         } else if (event.type === 'done') {
           setTtft(event.ttft_ms)
           setTps(event.tps)
-          const report = finalCandidateRef.current || lastTextRef.current
-          if (report) setFinalReport({ text: report, ts: Date.now() })
         }
       }, externalAssetId ?? undefined).catch(err => {
         appendAgentLine(`Error: ${err}`)
@@ -187,7 +129,7 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
       if (last?.role === 'agent') {
         return [...prev.slice(0, -1), { ...last, lines: [...last.lines, line] }]
       }
-      return [...prev, { role: 'agent', lines: [line], ts: Date.now() }]
+      return [...prev, { role: 'agent', lines: [line], thinking: [], ts: Date.now() }]
     })
   }
 
@@ -205,24 +147,6 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
     if (copiedTimer.current) clearTimeout(copiedTimer.current)
     copiedTimer.current = setTimeout(() => setCopied(false), 1800)
   }, [messages])
-
-  const copyReport = useCallback(() => {
-    if (!finalReport) return
-    navigator.clipboard.writeText(finalReport.text).catch(() => {})
-  }, [finalReport])
-
-  const exportReportPdf = useCallback(() => {
-    if (!finalReport) return
-    const win = window.open('', '_blank', 'noopener,noreferrer')
-    if (!win) return
-    const safeText = escapeHtml(finalReport.text)
-    win.document.write(
-      `<!doctype html><html><head><title>Mission Report</title></head><body style="font-family: monospace; margin: 24px;"><h3>Mission Report</h3><pre style="white-space: pre-wrap; line-height: 1.5;">${safeText}</pre></body></html>`,
-    )
-    win.document.close()
-    win.focus()
-    setTimeout(() => win.print(), 50)
-  }, [finalReport])
 
   const toggleSpeed = useCallback(async () => {
     if (!connected) return
@@ -253,12 +177,8 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
     setElapsed(0)
     setTtft(null)
     setTps(null)
-    setFinalReport(null)
-    finalCandidateRef.current = ''
-    lastTextRef.current = ''
-    setMessages(prev => [...prev, { role: 'user', lines: [text], ts: Date.now() }])
-    setMessages(prev => [...prev, { role: 'agent', lines: [], ts: Date.now() }])
-    latestCommandRef.current = text
+    setMessages(prev => [...prev, { role: 'user', lines: [text], thinking: [], ts: Date.now() }])
+    setMessages(prev => [...prev, { role: 'agent', lines: [], thinking: [], ts: Date.now() }])
     setBusy(true)
 
     try {
@@ -269,22 +189,13 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
           appendAgentLine(formatToolCall(event.name, event.args, event.agent))
         } else if (event.type === 'tool_result') {
           appendAgentLine(formatToolResult(event.name, event.success, event.result))
-        } else if (event.type === 'thought') {
-          appendAgentLine(`[THOUGHT:${event.agent}] ${event.text}`)
         } else if (event.type === 'text' || event.type === 'final') {
-          const trimmed = event.text.trim()
-          if (trimmed) {
-            lastTextRef.current = trimmed
-            if (event.type === 'final') finalCandidateRef.current = trimmed
-          }
           appendAgentLine(event.text)
         } else if (event.type === 'error') {
           appendAgentLine(`Error: ${event.text}`)
         } else if (event.type === 'done') {
           setTtft(event.ttft_ms)
           setTps(event.tps)
-          const report = finalCandidateRef.current || lastTextRef.current
-          if (report) setFinalReport({ text: report, ts: Date.now() })
         }
       })
     } catch (err) {
@@ -295,13 +206,6 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
   }
 
   const handleKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowUp') {
-      if (!latestCommandRef.current) return
-      e.preventDefault()
-      setInput(latestCommandRef.current)
-      return
-    }
-
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       submit()
@@ -383,48 +287,18 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
       {/* Thin divider under header */}
       <div style={{ borderBottom: '1px solid rgba(60,100,180,0.12)' }} />
 
-      {finalReport && (
-        <div style={{
-          position: 'absolute',
-          right: 12,
-          top: 44,
-          zIndex: 3,
-          width: 360,
-          maxHeight: 220,
-          overflowY: 'auto',
-          background: 'rgba(10,14,24,0.96)',
-          border: '1px solid rgba(110,160,255,0.35)',
-          borderRadius: 8,
-          padding: '10px 12px',
-          boxShadow: '0 10px 32px rgba(0,0,0,0.45)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-            <span style={{ color: '#8fc4ff', fontWeight: 'bold', letterSpacing: 1 }}>REPORT</span>
-            <span style={{ color: '#6e8198', fontSize: 11 }}>{new Date(finalReport.ts).toLocaleTimeString()}</span>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-              <button onClick={copyReport} style={{ border: '1px solid rgba(80,120,200,0.35)', background: 'rgba(25,40,70,0.35)', color: '#9ecbff', borderRadius: 4, padding: '1px 7px', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11 }}>COPY</button>
-              <button onClick={exportReportPdf} style={{ border: '1px solid rgba(80,120,200,0.35)', background: 'rgba(25,40,70,0.35)', color: '#9ecbff', borderRadius: 4, padding: '1px 7px', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11 }}>PDF</button>
-              <button onClick={() => setFinalReport(null)} style={{ border: '1px solid rgba(130,130,150,0.35)', background: 'rgba(45,45,58,0.35)', color: '#aab', borderRadius: 4, padding: '1px 7px', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11 }}>✕</button>
-            </div>
-          </div>
-          <div style={{ color: '#cde6ff', whiteSpace: 'pre-wrap', lineHeight: 1.45, fontSize: 12 }}>
-            {finalReport.text}
-          </div>
-        </div>
-      )}
-
       {!minimized && (
         <>
           <div style={{
-            height: logHeight,
-            transition: 'height 0.2s ease',
-            overflowY: 'auto',
-            overflowX: 'hidden',
-            padding: '8px 14px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 6,
-          }}>
+              height: logHeight,
+              transition: 'height 0.2s ease',
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              padding: '8px 14px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+            }}>
             {messages.length === 0 && (
               <div style={{ color: '#5a6a7a', fontStyle: 'italic', marginTop: 4 }}>
                 {connected ? 'Type a natural language command...' : 'Waiting for backend connection...'}
@@ -448,8 +322,6 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
                       <div key={i} style={{
                         color: line.startsWith('[') && line.includes('→')
                           ? '#7af'
-                          : line.startsWith('[THOUGHT:')
-                          ? '#7cc'
                           : line.startsWith('  ✓')
                           ? '#4c8'
                           : line.startsWith('  ✗')
@@ -477,6 +349,28 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
             flexWrap: 'wrap',
           }}>
             <span style={{ color: '#7a8a9a', fontSize: 12, letterSpacing: 1, marginRight: 2 }}>QUICK</span>
+            {scoutAvailable && (
+              <button
+                onClick={() => submit(SCOUT_DEPLOY_PROMPT)}
+                disabled={!connected || busy}
+                title={SCOUT_DEPLOY_PROMPT}
+                style={{
+                  background: 'rgba(255,204,0,0.10)',
+                  border: '1px solid rgba(255,204,0,0.40)',
+                  borderRadius: 4,
+                  color: (!connected || busy) ? '#334' : '#ffcc00',
+                  padding: '2px 8px',
+                  cursor: (!connected || busy) ? 'default' : 'pointer',
+                  fontFamily: 'Courier New, monospace',
+                  fontSize: 12,
+                  fontWeight: 'bold',
+                  letterSpacing: 0.5,
+                  transition: 'all 0.15s',
+                }}
+              >
+                DEPLOY SCOUT
+              </button>
+            )}
             {QUICK_ACTIONS.map(action => (
               <button
                 key={action.label}

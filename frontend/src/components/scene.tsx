@@ -79,9 +79,13 @@ import {
   survivorKey,
 } from '../../constants/missionConstants'
 import { ActivityFeed, IntelCard, nextActivityId, parseEventToActivity, type ActivityCategory, type ActivityItem } from './panels/StatPanel'
+import { MetricsPanel } from './panels/MetricsPanel'
 import { DroneMesh } from './scene-props/Drone'
 import { SupplyCrates } from './scene-props/SupplyCrate'
 import type { SurvivorPoint, WorldBuilding } from '../types/worldTypes'
+import { FogOfWar } from './three/FogOfWar'
+import { useExploration } from '@/hooks/useExploration'
+import { SCOUT_ASSET_ID } from '@/lib/fogOfWar'
 
 // ── Main scene ────────────────────────────────────────────────────────────────
 
@@ -90,12 +94,7 @@ const WS_URL   = 'ws://localhost:8000/ws/telemetry'
 const AUTO_RECALL_UI_DELAY_MS = 5000
 
 export default function SARScene() {
-  const [activeWorld, setActiveWorld] = useState<1 | 2>(2)
-
-  const handleWorldChange = useCallback((world: 1 | 2) => {
-    setActiveWorld(world)
-    switchWorld(world).catch(() => {})  // notify backend + drones
-  }, [])
+  const [activeWorld, setActiveWorld] = useState<1 | 2>(1)
 
   // ── Per-world derived data ──────────────────────────────────────────────────
   const worldBuildings = activeWorld === 1 ? W1_BUILDINGS : W2_BUILDINGS
@@ -141,6 +140,12 @@ export default function SARScene() {
   const autoRecallDismissedRef = useRef<Set<string>>(new Set())
   const autoRecallTriggeredRef = useRef<Set<string>>(new Set())
   const autoRecallInFlightRef = useRef<Set<string>>(new Set())
+  // ── Performance metrics state ──────────────────────────────────────────────
+  const [missionStartTs, setMissionStartTs] = useState<number | null>(null)
+  const [lastTtftMs, setLastTtftMs] = useState<number | null>(null)
+  const survivorDetectionTsRef = useRef<Map<string, number>>(new Map())
+  const [survivorDetectionTimestamps, setSurvivorDetectionTimestamps] = useState<Map<string, number>>(new Map())
+  const [survivorDeliveryTimestamps, setSurvivorDeliveryTimestamps] = useState<Map<string, number>>(new Map())
   // ── Area selection state ─────────────────────────────────────────────────────
   const [selectMode, setSelectMode]       = useState(false)
   const [dragStart, setDragStart]         = useState<THREE.Vector3 | null>(null)
@@ -171,7 +176,17 @@ export default function SARScene() {
     if (copiedTimer.current) clearTimeout(copiedTimer.current)
     copiedTimer.current = setTimeout(() => setCopied(false), 1500)
   }, [])
-  const drones = useTelemetry(WS_URL)
+  const { drones, exploredSectors, latestReveals } = useTelemetry(WS_URL)
+
+  // ── Fog-of-war exploration state ──────────────────────────────────────────
+  const exploration = useExploration(exploredSectors, latestReveals, worldBuildings, survivorPositions)
+
+  const handleWorldChange = useCallback((world: 1 | 2) => {
+    setActiveWorld(world)
+    switchWorld(world).catch(() => {})  // notify backend + drones
+    exploration.reset()
+  }, [exploration.reset])
+
   const activeDroneAssetIds = useMemo(
     () => Object.values(drones).map(entry => entry.asset_id).sort((a, b) => a.localeCompare(b)),
     [drones]
@@ -256,6 +271,20 @@ export default function SARScene() {
         }, null as { building: WorldBuilding; dist: number } | null)
         : null
 
+      // Exact coordinate match: allow re-matching survivors already in deliveringTo
+      // so that deliveries initiated by handleSendSupplies complete their throw animation
+      // when the backend supply dispatch arrives for the same survivor.
+      const exactDetectedTarget = detectedSurvivorsRef.current.find((survivor) => {
+        const key = survivorKey(survivor)
+        return (
+          !deliveredTo.has(key)
+          && !reservedKeys.has(key)
+          && distanceBetweenPoints(survivor, dispatchSurvivor) <= 0.8
+        )
+      })
+
+      // For building-based and fallback matching, exclude deliveringTo to prevent
+      // double dispatches to the same survivor from different triggers.
       const availableDetected = detectedSurvivorsRef.current.filter((survivor) => {
         const key = survivorKey(survivor)
         return (
@@ -273,9 +302,6 @@ export default function SARScene() {
         )
       })
 
-      const exactDetectedTarget = availableDetected.find(
-        (survivor) => distanceBetweenPoints(survivor, dispatchSurvivor) <= SUPPLY_DISPATCH_TARGET_TOLERANCE
-      )
       const exactKnownTarget = availableKnown.find(
         (survivor) => distanceBetweenPoints(survivor, dispatchSurvivor) <= SUPPLY_DISPATCH_TARGET_TOLERANCE
       )
@@ -348,6 +374,57 @@ export default function SARScene() {
     if (next) setActiveThrow(next)
   }, [activeThrow])
 
+  // ── Scout activity feed messages ──────────────────────────────────────────
+  // Track which sectors have already been logged to prevent duplicates when
+  // React re-runs the effect (strict mode, re-render on same reveal batch, etc.)
+  const loggedRevealSectorsRef = useRef<Set<string>>(new Set())
+
+  // Reset the dedup set whenever the world switches or exploration resets.
+  useEffect(() => {
+    if (exploration.exploredSectors.size === 0) {
+      loggedRevealSectorsRef.current.clear()
+    }
+  }, [exploration.exploredSectors])
+
+  useEffect(() => {
+    if (activeWorld !== 2) return
+    if (latestReveals.length === 0) return
+
+    const items: ActivityItem[] = []
+    for (const reveal of latestReveals) {
+      if (loggedRevealSectorsRef.current.has(reveal.sector_id)) continue
+      loggedRevealSectorsRef.current.add(reveal.sector_id)
+
+      items.push({
+        id: nextActivityId(),
+        icon: '◎',
+        label: `Sector ${reveal.sector_id} mapped`,
+        detail: reveal.building_count > 0
+          ? `${reveal.building_count} building${reveal.building_count > 1 ? 's' : ''} detected, max height ${reveal.max_height}m`
+          : 'Clear — no structures',
+        ts: Date.now(),
+        status: 'done',
+        category: 'scout' as ActivityCategory,
+      })
+
+      if (reveal.thermal_anomalies) {
+        items.push({
+          id: nextActivityId(),
+          icon: '⚠',
+          label: `Thermal anomalies — Sector ${reveal.sector_id}`,
+          detail: 'Heat signatures suggest survivors in area',
+          ts: Date.now(),
+          status: 'active',
+          category: 'scout' as ActivityCategory,
+        })
+      }
+    }
+
+    if (items.length > 0) {
+      setActivities(prev => [...prev, ...items])
+    }
+  }, [latestReveals, activeWorld])
+
   const executeAutoRecall = useCallback(async (assetId: string, batteryPct: number) => {
     setAutoRecallPrompt(current => (current?.assetId === assetId ? null : current))
     autoRecallDismissedRef.current.add(assetId)
@@ -385,6 +462,18 @@ export default function SARScene() {
     addLog(nextAssetId ? `👁 Following ${nextAssetId}` : '👁 Follow mode enabled (no active drones)')
   }, [addLog, defaultFollowAssetId, followBeacon])
 
+  const handleOrbitStart = useCallback(() => {
+    // Keep hook for future control-state based interactions.
+  }, [])
+
+  const handleScenePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    // Right mouse button begins pan in our control mapping.
+    if (!followBeacon) return
+    if (event.button !== 2) return
+    setFollowBeacon(false)
+    addLog('👁 Follow mode disabled by manual pan')
+  }, [addLog, followBeacon])
+
   const cycleFollowTarget = useCallback((direction: 1 | -1) => {
     if (!followBeacon || activeDroneAssetIds.length === 0) return
 
@@ -414,6 +503,15 @@ export default function SARScene() {
     setTransparentWalls(prev => {
       const next = !prev
       addLog(next ? '🧱 Target walls set to transparent' : '🧱 Target walls set to solid')
+      return next
+    })
+  }, [addLog])
+
+  const [fogEnabled, setFogEnabled] = useState(true)
+  const toggleFog = useCallback(() => {
+    setFogEnabled(prev => {
+      const next = !prev
+      addLog(next ? '🌫 Fog-of-war enabled' : '👁 Fog-of-war disabled — full vision')
       return next
     })
   }, [addLog])
@@ -516,9 +614,8 @@ export default function SARScene() {
     for (const assetId of [...autoRecallDismissedRef.current]) {
       if (!lowBatteryIdleIds.has(assetId)) autoRecallDismissedRef.current.delete(assetId)
     }
-    for (const assetId of [...autoRecallTriggeredRef.current]) {
-      if (!lowBatteryIdleIds.has(assetId)) autoRecallTriggeredRef.current.delete(assetId)
-    }
+    // NOTE: do NOT clear autoRecallTriggeredRef — once a drone has been
+    // auto-recalled it must never re-trigger the popup in this session.
 
     if (autoRecallPrompt && !lowBatteryIdleIds.has(autoRecallPrompt.assetId)) {
       setAutoRecallPrompt(null)
@@ -664,6 +761,7 @@ export default function SARScene() {
     backendSupplyDispatchSeenRef.current = false
     addLog(`⬆ ${prompt}`)
     setAgentBusy(true)
+    setMissionStartTs(prev => prev ?? Date.now())
     setActivities(prev => [...prev, { id: nextActivityId(), icon: '◆', label: prompt.length > 50 ? prompt.slice(0, 47) + '...' : prompt, ts: Date.now(), status: 'done', category: 'dispatch' as ActivityCategory }])
     const effectiveAssetId = assetIdOverride ?? ASSET_ID
     try {
@@ -688,6 +786,16 @@ export default function SARScene() {
         const activity = parseEventToActivity(event)
         if (activity) {
           setActivities(prev => {
+            // Aggregate thinking into a single entry
+            if (activity.category === 'reasoning' && activity.thinkingLines && prev.length > 0) {
+              const last = prev[prev.length - 1]
+              if (last.category === 'reasoning' && last.thinkingLines) {
+                const merged = [...last.thinkingLines, ...activity.thinkingLines]
+                const updated = [...prev]
+                updated[updated.length - 1] = { ...last, thinkingLines: merged, label: `Agent reasoning` }
+                return updated
+              }
+            }
             if (activity.label === 'Moving to waypoint' && prev.length > 0) {
               const last = prev[prev.length - 1]
               if (last.label === 'Moving to waypoint') {
@@ -731,7 +839,12 @@ export default function SARScene() {
             setRouteArrived(true)
           }
         }
-        if (event.type === 'done') addLog('✓ Agent responded')
+        if (event.type === 'done') {
+          addLog('✓ Agent responded')
+          if (event.ttft_ms !== null && event.ttft_ms !== undefined) {
+            setLastTtftMs(event.ttft_ms)
+          }
+        }
       }
     } catch (e: unknown) {
       if (e instanceof Error && e.name === 'AbortError') {
@@ -800,7 +913,7 @@ export default function SARScene() {
           return `${name} at (${b.cx.toFixed(1)}, 0, ${b.cz.toFixed(1)})`
         })
         .join('; ')
-      prompt = `scan for survivors in each of the following buildings: ${buildingList}. `
+      prompt = `scan for survivors in each of the following buildings: ${buildingList}. Do not ask for coordinates — they are provided above. Scan each building in sequence.`
     } else {
       prompt = `scan area from (${selection.minX}, ${selection.minZ}) to (${selection.maxX}, ${selection.maxZ}) for survivors`
     }
@@ -836,6 +949,7 @@ export default function SARScene() {
     if (!activeThrow) return
     const key = survivorKey(activeThrow.to)
     setDeliveredTo(prev => new Set(prev).add(key))
+    setSurvivorDeliveryTimestamps(prev => new Map(prev).set(key, Date.now()))
     setDeliveringTo(prev => {
       const next = new Set(prev)
       next.delete(key)
@@ -963,6 +1077,17 @@ export default function SARScene() {
   useEffect(() => {
     detectedSurvivorsRef.current = intelSurvivors
     detectedSurvivorKeysRef.current = detectedSurvivorKeys
+    // Record detection timestamps for new survivors
+    const now = Date.now()
+    let changed = false
+    for (const s of intelSurvivors) {
+      const key = survivorKey(s)
+      if (!survivorDetectionTsRef.current.has(key)) {
+        survivorDetectionTsRef.current.set(key, now)
+        changed = true
+      }
+    }
+    if (changed) setSurvivorDetectionTimestamps(new Map(survivorDetectionTsRef.current))
   }, [intelSurvivors, detectedSurvivorKeys])
   const survivorStatsByBuilding = useMemo(() => {
     const stats: Record<number, { detected: number; supplied: number }> = {}
@@ -989,20 +1114,40 @@ export default function SARScene() {
   }, [fleetScannedSurvivors])
 
   return (
-    <div className={`relative h-full w-full bg-[#0a0a14] ${selectMode ? 'cursor-crosshair' : 'cursor-default'}`}>
+    <div
+      className={`relative h-full w-full bg-[#0a0a14] ${selectMode ? 'cursor-crosshair' : 'cursor-default'}`}
+      onPointerDown={handleScenePointerDown}
+    >
       <Canvas shadows key={activeWorld}>
         <fog attach="fog" args={['#0d0d1f', fogRange[0], fogRange[1]]} />
         <PerspectiveCamera makeDefault position={camPos} fov={60} near={0.1} far={1000} />
         <OrbitControls
           ref={orbitRef}
-          enabled={!followBeacon && !selectMode}
+          enabled={!selectMode}
+          onStart={handleOrbitStart}
           enableDamping
           dampingFactor={0.08}
+          enablePan
+          enableRotate
+          mouseButtons={{
+            LEFT: THREE.MOUSE.ROTATE,
+            MIDDLE: THREE.MOUSE.DOLLY,
+            RIGHT: THREE.MOUSE.PAN,
+          }}
+          touches={{
+            ONE: THREE.TOUCH.ROTATE,
+            TWO: followBeacon ? THREE.TOUCH.DOLLY_ROTATE : THREE.TOUCH.DOLLY_PAN,
+          }}
           minDistance={5}
           maxDistance={400}
           target={[0, 5, 0]}
         />
-        <FollowBeaconCamera enabled={followBeacon} targetPos={followTargetPos} controlsRef={orbitRef} />
+        <FollowBeaconCamera
+          enabled={followBeacon}
+          targetPos={followTargetPos}
+          followAssetId={followedAssetId}
+          controlsRef={orbitRef}
+        />
         <CameraTracker northAngleRef={northAngleRef} />
 
         {/* Lighting */}
@@ -1014,11 +1159,25 @@ export default function SARScene() {
         <Ground span={worldSpan} />
         <GridOverlay span={worldSpan} gridCells={gridCells} />
         <BasePad />
+        {activeWorld === 2 && fogEnabled && (
+          <FogOfWar
+            sectors={exploration.sectors}
+            exploredSectors={exploration.exploredSectors}
+            lastRevealedSector={exploration.lastRevealedSector}
+          />
+        )}
         {activeWorld === 2 && (
-          <World2Environment span={worldSpan} floorHeight={FLOOR_H} floorThickness={FLOOR_T} floodLevel={FLOOD_LEVEL} transparentWalls={transparentWalls} />
+          <World2Environment
+            span={worldSpan}
+            floorHeight={FLOOR_H}
+            floorThickness={FLOOR_T}
+            floodLevel={FLOOD_LEVEL}
+            transparentWalls={transparentWalls}
+            exploredSectors={fogEnabled ? exploration.exploredSectors : undefined}
+          />
         )}
         <MissionBuildings
-          buildings={worldBuildings}
+          buildings={activeWorld === 2 && fogEnabled ? exploration.visibleBuildings : worldBuildings}
           transparentWalls={transparentWalls}
           floorHeight={FLOOR_H}
           floorThickness={FLOOR_T}
@@ -1026,7 +1185,7 @@ export default function SARScene() {
         />
         <Survivors
           floodY={FLOOD_LEVEL}
-          survivors={survivorPositions}
+          survivors={activeWorld === 2 && fogEnabled ? exploration.visibleSurvivors : survivorPositions}
           deliveredTo={deliveredTo}
           detectedSurvivors={detectedSurvivorKeys}
         />
@@ -1065,6 +1224,7 @@ export default function SARScene() {
             assetId={t.asset_id}
             headingDeg={t.heading_deg}
             scanTiltDeg={t.scan_tilt_deg}
+            battery={t.battery}
           />
         ))}
         {activeThrow && (
@@ -1087,9 +1247,20 @@ export default function SARScene() {
         networkMockStatus={networkMockStatus}
       />
 
-      {/* Left panel — Mission Log */}
-      <div className="pointer-events-auto absolute left-4 top-[60px] flex max-h-[calc(100%-180px)] flex-col">
+      {/* Left panel — Mission Log + Metrics */}
+      <div className="pointer-events-auto absolute left-4 top-[60px] flex max-h-[calc(100%-180px)] flex-col gap-2">
         <ActivityFeed items={activities} busy={agentBusy} onClear={() => setActivities([])} />
+        <MetricsPanel
+          missionStartTs={missionStartTs}
+          activities={activities}
+          detectedCount={intelSurvivors.length}
+          rescuedCount={deliveredTo.size}
+          totalSurvivors={survivorPositions.length}
+          drones={drones}
+          lastTtftMs={lastTtftMs}
+          survivorDetectionTimestamps={survivorDetectionTimestamps}
+          survivorDeliveryTimestamps={survivorDeliveryTimestamps}
+        />
       </div>
       {!selectMode && <CoordOverlay point={hoverPt} copied={copied} />}
       <CompassLabels northAngleRef={northAngleRef} />
@@ -1099,6 +1270,9 @@ export default function SARScene() {
           onToggleFollow={toggleFollowBeacon}
           transparentWalls={transparentWalls}
           onToggleWalls={toggleWallTransparency}
+          fogEnabled={fogEnabled}
+          onToggleFog={toggleFog}
+          showFogToggle={activeWorld === 2}
           followedAssetId={followedAssetId}
           activeAssetIds={activeDroneAssetIds}
           onFollowPrevious={followPreviousBeacon}
@@ -1160,6 +1334,7 @@ export default function SARScene() {
           setPendingScanPrompt(null)
           setPendingScanAssetId(null)
         }}
+        scoutAvailable={activeWorld === 2}
       />
     </div>
   )

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastmcp import FastMCP
 
 from backend.services.api import (
@@ -232,3 +234,97 @@ async def parallel_fleet_scan_tool(
     survivor counts and a formatted summary.
     """
     return await parallel_fleet_scan(assignments, unassigned_buildings)
+
+@beacon_mcp.tool(name="deploy_scout_sweep")
+async def deploy_scout_sweep_tool() -> dict:
+    """
+    Launch the scout drone (BEACON-SCOUT) on an autonomous high-altitude
+    lawnmower sweep of the disaster zone and WAIT for it to complete.
+    The scout takes off, progressively reveals fog-of-war sectors with
+    building intel and thermal anomaly hints, then returns itself to base.
+    Returns a structured report of every sector mapped so you can
+    summarise findings to the operator. Expect the call to take a couple
+    of minutes — that's the physical sweep time, not inference latency.
+    """
+    from backend.services.scout import (
+        SCOUT_ASSET_ID,
+        TOTAL_SECTORS,
+        ensure_scout_uplink,
+        exploration_tracker,
+        start_scout_sweep,
+    )
+
+    uplink_result = await ensure_scout_uplink()
+    if not uplink_result.get("success", False):
+        return {
+            "success": False,
+            "error": uplink_result.get("error", f"{SCOUT_ASSET_ID} uplink failed"),
+        }
+
+    task = start_scout_sweep()
+    try:
+        await task
+    except asyncio.CancelledError:
+        return {
+            "success": False,
+            "asset_id": SCOUT_ASSET_ID,
+            "error": "Scout sweep was cancelled before completion.",
+            "sectors_mapped_count": len(exploration_tracker.explored_sectors),
+            "sector_ids": exploration_tracker.explored_sectors,
+        }
+    except Exception as exc:
+        return {
+            "success": False,
+            "asset_id": SCOUT_ASSET_ID,
+            "error": f"Scout sweep raised: {exc}",
+            "sectors_mapped_count": len(exploration_tracker.explored_sectors),
+            "sector_ids": exploration_tracker.explored_sectors,
+        }
+
+    explored = exploration_tracker.explored_sectors
+    sector_details = [exploration_tracker._build_reveal_info(sid) for sid in explored]
+    sectors_with_buildings = [s for s in sector_details if s["building_count"] > 0]
+    sectors_with_anomalies = [s for s in sector_details if s["thermal_anomalies"]]
+
+    return {
+        "success": True,
+        "asset_id": SCOUT_ASSET_ID,
+        "total_sectors": TOTAL_SECTORS,
+        "sectors_mapped_count": len(explored),
+        "sectors_with_buildings": [s["sector_id"] for s in sectors_with_buildings],
+        "sectors_with_thermal_anomalies": [s["sector_id"] for s in sectors_with_anomalies],
+        "sectors": sector_details,
+        "message": (
+            f"Scout swept {len(explored)}/{TOTAL_SECTORS} sectors and returned to base. "
+            f"{len(sectors_with_buildings)} sector(s) contained buildings; "
+            f"{len(sectors_with_anomalies)} showed thermal anomalies."
+        ),
+    }
+
+
+@beacon_mcp.tool(name="get_explored_sectors")
+def get_explored_sectors_tool() -> dict:
+    """
+    Return sectors that the scout drone has explored so far.
+    Each sector includes building count, max height, and whether thermal
+    anomalies (potential survivors) were detected. Use this to decide
+    where to send rescue drones — only explored sectors have terrain intel.
+    """
+    from backend.services.scout import (
+        TOTAL_SECTORS,
+        exploration_tracker,
+        sector_bounds,
+    )
+
+    explored = exploration_tracker.explored_sectors
+    sectors = []
+    for sid in explored:
+        bounds = sector_bounds(sid)
+        info = exploration_tracker._build_reveal_info(sid)
+        sectors.append({**bounds, **info})
+
+    return {
+        "explored_count": len(explored),
+        "total_sectors": TOTAL_SECTORS,
+        "sectors": sectors,
+    }

@@ -270,6 +270,18 @@ class Tree:
     x: float
     z: float
 
+@dataclass(frozen=True)
+class DecorBuilding:
+    """A non-mission building (e.g. shophouse) present for scene realism.
+    Not scannable for survivors, but counts toward fog-of-war reveal info
+    so the operator sees an accurate structure count per sector.
+    """
+    cx: float
+    cz: float
+    w: float
+    d: float
+    h: float
+    kind: str = "shophouse"
 
 # ── World Model singleton ─────────────────────────────────────────────────────
 
@@ -278,21 +290,19 @@ class WorldModel:
     buildings: list[Building] = field(default_factory=list)
     survivors: list[Survivor] = field(default_factory=list)
     trees: list[Tree] = field(default_factory=list)
+    decor_buildings: list[DecorBuilding] = field(default_factory=list)
 
     def buildings_near(self, x: float, z: float, radius: float) -> list[Building]:
         """All buildings whose edge is within `radius` metres (XZ plane)."""
         return [b for b in self.buildings if b.distance_xz(x, z) <= radius]
-
     def survivors_near(
         self, x: float, y: float, z: float, radius: float
     ) -> list[Survivor]:
         """All survivors within `radius` metres (3D distance)."""
         return [s for s in self.survivors if s.distance_to(x, y, z) <= radius]
-
     def is_flooded(self, y: float) -> bool:
         """True if the given Y position is below or at flood level."""
         return y <= FLOOD_LEVEL
-
     def building_near_xz(
         self, x: float, z: float, margin: float = BUILDING_PROXIMITY_MARGIN_M,
     ) -> Building | None:
@@ -301,14 +311,12 @@ class WorldModel:
         if not candidates:
             return None
         return min(candidates, key=lambda b: b.distance_xz(x, z))
-
     def building_at(self, x: float, y: float, z: float) -> Building | None:
         """Return the building that contains this point, or None."""
         for b in self.buildings:
             if b.contains_point(x, y, z):
                 return b
         return None
-
     def obstacles_in_path(
         self,
         fx: float, fy: float, fz: float,
@@ -319,7 +327,6 @@ class WorldModel:
         """
         Return any buildings whose AABB is intersected by the line segment
         from (fx,fy,fz) → (tx,ty,tz), sampled at `samples` points.
-
         When *margin* > 0 each building's AABB is inflated by that amount
         on all sides (XZ) and top (Y) before the containment check, catching
         paths that graze within *margin* metres of a building surface.
@@ -346,8 +353,6 @@ class WorldModel:
                     blocked_set.add(b)
                     blocked.append(b)
         return blocked
-
-
 def _build_world(world_json: dict) -> WorldModel:
     buildings: list[Building] = []
     for b in world_json["buildings"]:
@@ -380,7 +385,6 @@ def _build_world(world_json: dict) -> WorldModel:
             windows=tuple(windows),
             balcony=balcony,
         ))
-
     survivors = [
         Survivor(id=i, x=float(s["x"]), y=float(s["y"]), z=float(s["z"]))
         for i, s in enumerate(world_json["survivors"])
@@ -389,9 +393,24 @@ def _build_world(world_json: dict) -> WorldModel:
         Tree(id=i, x=float(t["x"]), z=float(t["z"]))
         for i, t in enumerate(world_json.get("trees", []))
     ]
-    return WorldModel(buildings=buildings, survivors=survivors, trees=trees)
-
-
+    environment = world_json.get("environment") or {}
+    decor_buildings = [
+        DecorBuilding(
+            cx=float(b["cx"]),
+            cz=float(b["cz"]),
+            w=float(b["w"]),
+            d=float(b["d"]),
+            h=float(b["h"]),
+            kind=str(b.get("type", "shophouse")),
+        )
+        for b in environment.get("decor_buildings", [])
+    ]
+    return WorldModel(
+        buildings=buildings,
+        survivors=survivors,
+        trees=trees,
+        decor_buildings=decor_buildings,
+    )
 def load_world(world_id: int = 2) -> WorldModel:
     """Load a world model from shared JSON.
 
@@ -409,6 +428,7 @@ def load_world(world_id: int = 2) -> WorldModel:
     WORLD.buildings[:] = fresh.buildings
     WORLD.survivors[:] = fresh.survivors
     WORLD.trees[:] = fresh.trees
+    WORLD.decor_buildings[:] = fresh.decor_buildings
     CURRENT_WORLD_ID = world_id
     return WORLD
 
