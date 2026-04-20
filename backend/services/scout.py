@@ -220,7 +220,18 @@ async def ensure_scout_uplink() -> dict:
 
 
 async def _move_scout_to(x: float, y: float, z: float, label: str) -> bool:
-    """Move the scout to a point, returning True on success."""
+    """Move the scout to a point and wait until it reaches the target.
+
+    Args:
+        x: Target X coordinate in metres.
+        y: Target altitude in metres.
+        z: Target Z coordinate in metres.
+        label: Human-readable label for logging context.
+
+    Returns:
+        True when the command succeeds and the scout reaches the target within
+        tolerance and timeout, otherwise False.
+    """
     try:
         result = await move_drone_to(SCOUT_ASSET_ID, x, y, z, speed=SCOUT_SPEED)
     except asyncio.CancelledError:
@@ -231,7 +242,70 @@ async def _move_scout_to(x: float, y: float, z: float, label: str) -> bool:
     if not result.get("success"):
         logger.warning("Scout %s failed: %s", label, result.get("message"))
         return False
-    return True
+    return await _wait_for_reach_target(x, y, z, label)
+
+
+async def _wait_for_reach_target(
+    x: float,
+    y: float,
+    z: float,
+    label: str,
+    tolerance: float = 0.6,
+    timeout_s: float = 120.0,
+    poll_s: float = 0.2,
+) -> bool:
+    """Poll scout status until it reaches a target point or fails.
+
+    Args:
+        x: Target X coordinate in metres.
+        y: Target Y coordinate in metres.
+        z: Target Z coordinate in metres.
+        label: Human-readable label for logging context.
+        tolerance: Max absolute axis delta to consider the target reached.
+        timeout_s: Maximum time to wait before failing the move.
+        poll_s: Polling interval for status checks.
+
+    Returns:
+        True when the scout reaches the target, otherwise False.
+    """
+    elapsed = 0.0
+    while elapsed <= timeout_s:
+        try:
+            status = await move_drone_status()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Scout %s status check raised", label)
+            return False
+
+        state = str(status.get("status", "")).upper()
+        if state in {"BLOCKED", "ERROR"}:
+            logger.warning("Scout %s failed with state=%s", label, state)
+            return False
+
+        sx = status.get("x")
+        sy = status.get("y")
+        sz = status.get("z")
+        if isinstance(sx, (int, float)) and isinstance(sy, (int, float)) and isinstance(sz, (int, float)):
+            if abs(float(sx) - x) <= tolerance and abs(float(sy) - y) <= tolerance and abs(float(sz) - z) <= tolerance:
+                return True
+
+        await asyncio.sleep(poll_s)
+        elapsed += poll_s
+
+    logger.warning("Scout %s timed out waiting to reach (%.1f, %.1f, %.1f)", label, x, y, z)
+    return False
+
+
+async def move_drone_status() -> dict:
+    """Fetch the current scout status snapshot.
+
+    Returns:
+        A status dictionary containing position, battery, and state fields.
+    """
+    from backend.services.api.control import get_drone_status
+
+    return await get_drone_status(SCOUT_ASSET_ID)
 
 
 async def run_scout_sweep() -> None:
@@ -245,7 +319,9 @@ async def run_scout_sweep() -> None:
     try:
         # 1. Takeoff before tracking — climb straight up to cruise altitude.
         logger.info("Scout takeoff → (0, %.1f, 0)", SCOUT_ALTITUDE)
-        await _move_scout_to(0.0, SCOUT_ALTITUDE, 0.0, "takeoff")
+        takeoff_ok = await _move_scout_to(0.0, SCOUT_ALTITUDE, 0.0, "takeoff")
+        if not takeoff_ok:
+            raise RuntimeError("Scout takeoff failed")
 
         # 2. Tracking ON once airborne at cruise altitude.
         exploration_tracker.enable_tracking()
@@ -255,7 +331,9 @@ async def run_scout_sweep() -> None:
         logger.info("Scout sweep started — %d waypoints", len(waypoints))
         for i, (x, y, z) in enumerate(waypoints):
             logger.info("Scout waypoint %d/%d → (%.1f, %.1f, %.1f)", i + 1, len(waypoints), x, y, z)
-            await _move_scout_to(x, y, z, f"waypoint {i + 1}")
+            reached = await _move_scout_to(x, y, z, f"waypoint {i + 1}")
+            if not reached:
+                raise RuntimeError(f"Scout failed to reach waypoint {i + 1}")
         logger.info("Scout sweep complete — initiating return-to-base")
 
         # 4. Tracking OFF before RTB so descent doesn't re-reveal cells.
