@@ -15,8 +15,8 @@ from typing import Literal, NamedTuple
 # ── Shared directory ──────────────────────────────────────────────────────────
 _SHARED_DIR = _pathlib.Path(__file__).parents[2] / "shared"
 
-# ── Load default world at import time ─────────────────────────────────────────
-_WORLD_JSON = _json.loads((_SHARED_DIR / "world.json").read_text())
+# ── Load default world at import time (Hatyai = world2) ─────────────────────
+_WORLD_JSON = _json.loads((_SHARED_DIR / "world2.json").read_text())
 _S = _WORLD_JSON["scene"]
 
 FLOOD_LEVEL: float                 = _S["flood_level_m"]
@@ -24,7 +24,7 @@ BUILDING_PROXIMITY_MARGIN_M: float = _S["building_proximity_margin_m"]
 FLOOR_HEIGHT_M: float              = _S["floor_height_m"]
 FLOOR_SLAB_THICKNESS_M: float      = _S["floor_slab_thickness_m"]
 WINDOW_SCAN_STANDOFF_M: float      = _S["window_scan_standoff_m"]
-CURRENT_WORLD_ID: int              = 1
+CURRENT_WORLD_ID: int              = 2
 
 
 # ── Dataclasses ───────────────────────────────────────────────────────────────
@@ -392,7 +392,7 @@ def _build_world(world_json: dict) -> WorldModel:
     return WorldModel(buildings=buildings, survivors=survivors, trees=trees)
 
 
-def load_world(world_id: int = 1) -> WorldModel:
+def load_world(world_id: int = 2) -> WorldModel:
     """Load a world model from shared JSON.
 
     Mutates the existing WORLD singleton in-place so that all modules

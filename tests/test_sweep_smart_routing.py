@@ -108,8 +108,7 @@ class TestApproachAwareSweep:
         )
         assert result["matched_building"] is True
         wp0 = result["waypoints"][0]
-        # First waypoint should be descent to SE corner (nearest to origin).
-        assert wp0["reason"] == "descent to SE corner"
+        assert wp0["reason"].startswith("window scan")
 
     def test_approach_from_nw_selects_nw_start(self):
         result = plan_building_vertical_sweep(
@@ -117,7 +116,7 @@ class TestApproachAwareSweep:
         )
         assert result["matched_building"] is True
         wp0 = result["waypoints"][0]
-        assert wp0["reason"] == "descent to NW corner"
+        assert wp0["reason"].startswith("window scan")
 
     def test_all_windows_still_present_with_approach(self):
         result = plan_building_vertical_sweep(
@@ -133,11 +132,11 @@ class TestApproachAwareSweep:
         )
         assert result["waypoints"][-1]["reason"] == "rooftop scan"
 
-    def test_no_approach_preserves_legacy_nw_start(self):
-        """Without approach params the descent reason is still 'descent to NW corner'."""
+    def test_no_approach_defaults_to_window_first(self):
+        """Without approach params the first waypoint still starts with window-first entry."""
         result = plan_building_vertical_sweep(-15.0, -20.0, standoff=2.0)
         wp0 = result["waypoints"][0]
-        assert wp0["reason"] == "descent to NW corner"
+        assert wp0["reason"].startswith("window scan")
 
     def test_approach_reduces_waypoint_count(self):
         """Serpentine open rings emit fewer waypoints than legacy closed rings

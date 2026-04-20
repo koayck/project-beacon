@@ -1,4 +1,4 @@
-"""Tests that sweep plan uses rooftop-first approach with perimeter rings + windows."""
+"""Tests that sweep plan starts window-first with perimeter rings + windows."""
 from __future__ import annotations
 
 from backend.services.api.control import plan_building_vertical_sweep
@@ -6,13 +6,13 @@ from backend.world.vision import get_view as backend_get_view
 
 
 class TestSweepPlanWindowAndRooftop:
-    def test_descent_waypoint_is_first(self):
+    def test_window_first_waypoint_is_first(self):
         result = plan_building_vertical_sweep(-15.0, -20.0, level_step=3.0, standoff=2.0)
         assert result["matched_building"] is True
         wp0 = result["waypoints"][0]
-        assert wp0["reason"] == "descent to NW corner"
+        assert wp0["reason"].startswith("window scan")
         rooftop = result["rooftop_position"]
-        assert wp0["y"] == rooftop["y"]
+        assert wp0["y"] < rooftop["y"]
 
     def test_rooftop_scan_is_last_waypoint(self):
         result = plan_building_vertical_sweep(-15.0, -20.0, level_step=3.0, standoff=2.0)
@@ -59,12 +59,21 @@ class TestSweepPlanWindowAndRooftop:
         result = plan_building_vertical_sweep(-15.0, -20.0, level_step=3.0, standoff=2.0)
         wps = result["waypoints"]
         reasons = [wp["reason"] for wp in wps]
-        # Find the first NW → NE span (on any floor)
-        nw_idx = next(i for i, r in enumerate(reasons) if r == "perimeter NW")
-        ne_idx = next(i for i, r in enumerate(reasons[nw_idx:], start=nw_idx) if r == "perimeter NE")
-        between = reasons[nw_idx + 1:ne_idx]
-        # The north window should be between NW and NE on the floor that has it
-        assert any("window scan north" in r for r in between)
+        nw_indices = [i for i, r in enumerate(reasons) if r == "perimeter NW"]
+        ne_indices = [i for i, r in enumerate(reasons) if r == "perimeter NE"]
+
+        found_north_between = False
+        for nw_idx in nw_indices:
+            ne_after = [idx for idx in ne_indices if idx > nw_idx]
+            if not ne_after:
+                continue
+            ne_idx = ne_after[0]
+            between = reasons[nw_idx + 1:ne_idx]
+            if any("window scan north" in r for r in between):
+                found_north_between = True
+                break
+
+        assert found_north_between
 
     def test_rooftop_position_returned(self):
         result = plan_building_vertical_sweep(-15.0, -20.0, level_step=3.0, standoff=2.0)

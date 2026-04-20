@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from backend.services.navigation.internal.corner_ops import (
     _build_ring,
     _nearest_corner,
@@ -116,22 +118,45 @@ def plan_building_vertical_sweep(
     waypoints: list[dict] = []
     levels: list[float] = []
 
+    entry_window: dict | None = None
     if floor_levels:
-        sc_x, sc_z = corners[_start_corner]
-        waypoints.append(
-            {
-                "x": sc_x,
-                "y": rooftop_y,
-                "z": sc_z,
-                "level_y": rooftop_y,
-                "reason": f"descent to {_start_corner} corner",
-            }
-        )
+        first_level_y = floor_levels[0]
+        first_level_windows = [w for w in above_flood if round(w["y"], 2) == first_level_y]
+        if approach_x is not None and approach_z is not None:
+            ref_x, ref_z = approach_x, approach_z
+        else:
+            ref_x, ref_z = corners[_start_corner]
+
+        if first_level_windows:
+            entry_window = min(
+                first_level_windows,
+                key=lambda w: math.sqrt((float(w["x"]) - ref_x) ** 2 + (float(w["z"]) - ref_z) ** 2),
+            )
+            waypoints.append(
+                {
+                    "x": float(entry_window["x"]),
+                    "y": float(entry_window["y"]),
+                    "z": float(entry_window["z"]),
+                    "level_y": float(entry_window["y"]),
+                    "reason": f"window scan {entry_window['face']} floor {entry_window['floor']}",
+                }
+            )
+        else:
+            sc_x, sc_z = corners[_start_corner]
+            waypoints.append(
+                {
+                    "x": sc_x,
+                    "y": first_level_y,
+                    "z": sc_z,
+                    "level_y": first_level_y,
+                    "reason": f"approach to {_start_corner} corner",
+                }
+            )
 
     _current_corner = _start_corner
     _cw = True
-    _last_rx: float = corners[_start_corner][0]
-    _last_rz: float = corners[_start_corner][1]
+    _last_rx: float = waypoints[-1]["x"] if waypoints else corners[_start_corner][0]
+    _last_rz: float = waypoints[-1]["z"] if waypoints else corners[_start_corner][1]
 
     for level_y in floor_levels:
         levels.append(level_y)
@@ -150,7 +175,20 @@ def plan_building_vertical_sweep(
                 west_stop_z=west_stop_z if _nw_pushed_east else None,
                 p_min_x=p_min_x,
             )
-            prev_rx, prev_rz = corners[_current_corner]
+            if entry_window is not None and abs(level_y - float(entry_window["y"])) < 1e-3:
+                ring_items = [
+                    item
+                    for item in ring_items
+                    if not (
+                        item[2] == f"window scan {entry_window['face']} floor {entry_window['floor']}"
+                        and abs(item[0] - float(entry_window["x"])) < 1e-3
+                        and abs(item[1] - float(entry_window["z"])) < 1e-3
+                    )
+                ]
+            if level_y == floor_levels[0] and waypoints:
+                prev_rx, prev_rz = _last_rx, _last_rz
+            else:
+                prev_rx, prev_rz = corners[_current_corner]
 
             if ring_items:
                 first_rx, first_rz, _ = ring_items[0]
@@ -222,7 +260,21 @@ def plan_building_vertical_sweep(
                 ring.append((p_min_x, west_stop_z, "west face stop (adjacent building)"))
             ring.append((nw_x, nw_z, "close perimeter"))
 
-            prev_rx, prev_rz = nw_x, nw_z
+            if entry_window is not None and abs(level_y - float(entry_window["y"])) < 1e-3:
+                ring = [
+                    item
+                    for item in ring
+                    if not (
+                        item[2] == f"window scan {entry_window['face']} floor {entry_window['floor']}"
+                        and abs(item[0] - float(entry_window["x"])) < 1e-3
+                        and abs(item[1] - float(entry_window["z"])) < 1e-3
+                    )
+                ]
+
+            if level_y == floor_levels[0] and waypoints:
+                prev_rx, prev_rz = _last_rx, _last_rz
+            else:
+                prev_rx, prev_rz = nw_x, nw_z
             for rx, rz, reason in ring:
                 for extra in _route_sweep_segment(prev_rx, level_y, prev_rz, rx, level_y, rz, building.id, rooftop_y):
                     waypoints.append({**extra, "level_y": rooftop_y})

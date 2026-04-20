@@ -212,7 +212,7 @@ def _parse_windows(b: dict) -> tuple[SimWindowAperture, ...]:
     return tuple(windows)
 
 
-def load_world(world_id: int = 1) -> None:
+def load_world(world_id: int = 2) -> None:
     """Load (or reload) the world data from shared JSON.
     Updates the module-level BUILDINGS and SURVIVORS lists in-place."""
     global BUILDINGS, SURVIVORS, FLOOD_LEVEL
@@ -253,8 +253,8 @@ def load_world(world_id: int = 1) -> None:
 BUILDINGS: list[SimBuilding] = []
 SURVIVORS: list[SimSurvivor] = []
 
-# Load default world at import time
-_initial_world = int(os.environ.get("WORLD_ID", "1"))
+# Load default world at import time (Hatyai = world 2)
+_initial_world = int(os.environ.get("WORLD_ID", "2"))
 load_world(_initial_world)
 
 

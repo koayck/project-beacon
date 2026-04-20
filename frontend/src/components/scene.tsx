@@ -90,7 +90,7 @@ const WS_URL   = 'ws://localhost:8000/ws/telemetry'
 const AUTO_RECALL_UI_DELAY_MS = 5000
 
 export default function SARScene() {
-  const [activeWorld, setActiveWorld] = useState<1 | 2>(1)
+  const [activeWorld, setActiveWorld] = useState<1 | 2>(2)
 
   const handleWorldChange = useCallback((world: 1 | 2) => {
     setActiveWorld(world)
@@ -800,7 +800,7 @@ export default function SARScene() {
           return `${name} at (${b.cx.toFixed(1)}, 0, ${b.cz.toFixed(1)})`
         })
         .join('; ')
-      prompt = `scan for survivors in each of the following buildings: ${buildingList}. Do not ask for coordinates — they are provided above. Scan each building in sequence.`
+      prompt = `scan for survivors in each of the following buildings: ${buildingList}. `
     } else {
       prompt = `scan area from (${selection.minX}, ${selection.minZ}) to (${selection.maxX}, ${selection.maxZ}) for survivors`
     }

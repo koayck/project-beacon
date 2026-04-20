@@ -115,30 +115,36 @@ class TestGoOverStrategy:
     @pytest.mark.asyncio
     async def test_over_strategy_waypoints(self):
         result = await plan_route("BEACON-01", -15.0, -20.0)
-        assert result["strategy"] == "over"
+        assert result["strategy"] in {"a_star_3d", "over"}
         assert result["obstacle_count"] >= 1
-        assert len(result["waypoints"]) == 3
+        assert len(result["waypoints"]) >= 1
 
-        wps = result["waypoints"]
-        # First waypoint: climb at current XZ
-        assert wps[0]["x"] == 0.0
-        assert wps[0]["z"] == 0.0
-        assert wps[0]["y"] >= 15.0  # obstacle h=10 + 5
+        if result["strategy"] == "over":
+            wps = result["waypoints"]
+            # First waypoint: climb at current XZ
+            assert wps[0]["x"] == 0.0
+            assert wps[0]["z"] == 0.0
+            assert wps[0]["y"] >= 15.0  # obstacle h=10 + 5
 
-        # Second waypoint: cruise to target XZ
-        assert wps[1]["x"] == -15.0
-        assert wps[1]["z"] == -20.0
-        assert wps[1]["y"] == wps[0]["y"]
+            # Second waypoint: cruise to target XZ
+            assert wps[1]["x"] == -15.0
+            assert wps[1]["z"] == -20.0
+            assert wps[1]["y"] == wps[0]["y"]
 
-        # Third waypoint: descend to scan alt
-        assert wps[2]["x"] == -15.0
-        assert wps[2]["z"] == -20.0
-        assert wps[2]["y"] == 17.0  # building h=12 + 5
+            # Third waypoint: descend to scan alt
+            assert wps[2]["x"] == -15.0
+            assert wps[2]["z"] == -20.0
+            assert wps[2]["y"] == 17.0  # building h=12 + 5
+        else:
+            last = result["waypoints"][-1]
+            assert last["x"] == -15.0
+            assert last["z"] == -20.0
+            assert last["y"] == 17.0
 
     @pytest.mark.asyncio
     async def test_summary_contains_strategy(self):
         result = await plan_route("BEACON-01", -15.0, -20.0)
-        assert "over" in result["summary"]
+        assert ("over" in result["summary"]) or ("3D A*" in result["summary"])
         assert "17" in result["summary"]
 
 
@@ -155,9 +161,11 @@ class TestGoAroundStrategy:
         }
         result = await plan_route("BEACON-01", -15.0, -20.0)
         # Should either find an around route or report error
-        assert result.get("strategy") in ("around", None)
+        assert result.get("strategy") in ("a_star_3d", "around", None)
         if result.get("strategy") == "around":
             assert len(result["waypoints"]) == 2
+        if result.get("strategy") == "a_star_3d":
+            assert len(result["waypoints"]) >= 1
 
 
 class TestErrorCase:
@@ -174,6 +182,86 @@ class TestErrorCase:
         result = await plan_route("BEACON-01", -7.0, -10.0)
         # Either finds a route (direct up is clear) or errors
         assert "waypoints" in result or "error" in result
+
+
+class TestAStarFallback:
+    """When direct/over/around fail, plan_route should use 3D A* fallback."""
+
+    @pytest.mark.asyncio
+    async def test_uses_a_star_3d_when_heuristics_blocked(self, _mock_client, monkeypatch):
+        """Force legacy checks to fail and verify A* fallback strategy is returned."""
+        from backend.services.navigation import route_planner as planner
+
+        building = WORLD.buildings[0]
+
+        def always_blocked(*_args, **_kwargs):
+            return [building]
+
+        monkeypatch.setattr(WORLD, "obstacles_in_path", always_blocked)
+        monkeypatch.setattr(
+            planner,
+            "find_3d_path",
+            lambda *_args, **_kwargs: [
+                (0.0, 10.0, 0.0),
+                (2.0, 12.0, -2.0),
+                (4.0, 12.0, -4.0),
+            ],
+        )
+
+        result = await plan_route("BEACON-01", 4.0, -4.0, 12.0)
+        assert result["strategy"] == "a_star_3d"
+        assert len(result["waypoints"]) == 2
+
+
+class TestExcludedBuildingGeometrySafety:
+    """Excluded building id should not allow physically crossing that building."""
+
+    @pytest.mark.asyncio
+    async def test_exclude_building_keeps_hard_geometry_collision_blocking(self, _mock_client):
+        # Start near the corner shophouse facade and target a corner waypoint.
+        # The direct diagonal crosses building geometry and must not be accepted
+        # as a "direct path clear" route even when the building is excluded for
+        # proximity-margin checks.
+        _mock_client.get_status.return_value = {
+            "asset_id": "BEACON-01",
+            "x": 11.0,
+            "y": 7.2,
+            "z": -16.0,
+            "battery": 82,
+            "status": "IDLE",
+        }
+
+        result = await plan_route(
+            "BEACON-01",
+            5.0,
+            -5.0,
+            7.2,
+            exclude_building_id=5,
+        )
+
+        assert result.get("strategy") != "direct"
+
+    @pytest.mark.asyncio
+    async def test_exclude_building_rejects_near_wall_grazing_target(self, _mock_client):
+        """Excluded building still enforces a small facade clearance buffer."""
+        _mock_client.get_status.return_value = {
+            "asset_id": "BEACON-01",
+            "x": 3.0,
+            "y": 8.1,
+            "z": -2.0,
+            "battery": 79,
+            "status": "IDLE",
+        }
+
+        result = await plan_route(
+            "BEACON-01",
+            5.8,
+            -5.8,
+            8.1,
+            exclude_building_id=5,
+        )
+
+        assert result.get("strategy") != "direct"
 
 
 class TestObstaclesInPathMargin:

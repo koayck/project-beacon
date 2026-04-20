@@ -44,7 +44,45 @@ function formatToolCall(name: string, args: Record<string, unknown>, agent: stri
   return `[${agent}] -> ${name}(${argStr})`
 }
 
+function tryParseJson(text: string): unknown | null {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+function formatStructuredToolResult(result: string): string | null {
+  const unescaped = result.replaceAll('\\n', '\n').trim()
+  const fencedMatch = unescaped.match(/```json\s*([\s\S]*?)\s*```/i)
+
+  if (fencedMatch?.[1]) {
+    const fencedBody = fencedMatch[1].trim()
+    const parsed = tryParseJson(fencedBody)
+    if (parsed !== null) return JSON.stringify(parsed, null, 2)
+    return fencedBody
+  }
+
+  const parsed = tryParseJson(unescaped)
+  if (parsed === null) return null
+
+  if (typeof parsed === 'string') {
+    const nested = formatStructuredToolResult(parsed)
+    return nested ?? parsed
+  }
+
+  if (typeof parsed === 'object') {
+    return JSON.stringify(parsed, null, 2)
+  }
+
+  return String(parsed)
+}
+
 function formatToolResult(name: string, success: boolean, result: string): string {
+  const structured = formatStructuredToolResult(result)
+  if (structured) {
+    return `  ${success ? '✓' : '✗'} ${name}:\n${structured}`
+  }
   return `  ${success ? '✓' : '✗'} ${name}: ${result}`
 }
 
@@ -82,6 +120,7 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
   const bottomRef               = useRef<HTMLDivElement>(null)
   const finalCandidateRef       = useRef('')
   const lastTextRef             = useRef('')
+  const latestCommandRef        = useRef('')
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -107,6 +146,7 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
       lastTextRef.current = ''
       setMessages(prev => [...prev, { role: 'user', lines: [externalPrompt], ts: Date.now() }])
       setMessages(prev => [...prev, { role: 'agent', lines: [], ts: Date.now() }])
+      latestCommandRef.current = externalPrompt
       setBusy(true)
       onCommand(externalPrompt, (event) => {
         if (event.type === 'heartbeat') {
@@ -218,6 +258,7 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
     lastTextRef.current = ''
     setMessages(prev => [...prev, { role: 'user', lines: [text], ts: Date.now() }])
     setMessages(prev => [...prev, { role: 'agent', lines: [], ts: Date.now() }])
+    latestCommandRef.current = text
     setBusy(true)
 
     try {
@@ -254,6 +295,13 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
   }
 
   const handleKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowUp') {
+      if (!latestCommandRef.current) return
+      e.preventDefault()
+      setInput(latestCommandRef.current)
+      return
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       submit()

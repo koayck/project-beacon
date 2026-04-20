@@ -1,67 +1,46 @@
 from __future__ import annotations
 
-import asyncio
 import math
+from typing import Any
 
 from backend.services.core import context
 from backend.services.core.survivor_registry import get_detected_survivor_ids
+from backend.services.navigation.a_star_3d import find_3d_path
 from backend.services.navigation.internal.window_ops import select_window_waypoint
 from backend.world.model import WINDOW_SCAN_STANDOFF_M
 
-_MIN_ELIGIBLE_BATTERY_PCT = 20
+_EXCLUDED_BUILDING_CLEARANCE_M = 0.6
 
 
-def _distance_xz(x1: float, z1: float, x2: float, z2: float) -> float:
-    return math.sqrt((x1 - x2) ** 2 + (z1 - z2) ** 2)
+def _segment_sample_count(
+    from_x: float,
+    from_y: float,
+    from_z: float,
+    to_x: float,
+    to_y: float,
+    to_z: float,
+    base_samples: int,
+) -> int:
+    """Choose a segment sample count that scales with 3D segment length.
 
+    Args:
+        from_x: Segment start X coordinate.
+        from_y: Segment start Y coordinate.
+        from_z: Segment start Z coordinate.
+        to_x: Segment end X coordinate.
+        to_y: Segment end Y coordinate.
+        to_z: Segment end Z coordinate.
+        base_samples: Minimum sampling resolution requested by caller.
 
-def _is_eligible_idle_drone(status: dict) -> bool:
-    return (
-        status.get("battery", 0) > _MIN_ELIGIBLE_BATTERY_PCT
-        and status.get("status", "") == "IDLE"
+    Returns:
+        Sampling count large enough to avoid missing thin corner intersections.
+    """
+    distance = math.sqrt(
+        (to_x - from_x) ** 2
+        + (to_y - from_y) ** 2
+        + (to_z - from_z) ** 2
     )
-
-
-def _no_eligible_drones_result(statuses: list[dict | Exception]) -> dict:
-    ready_count = len([status for status in statuses if not isinstance(status, Exception)])
-    return {
-        "error": "No eligible drones available (all busy or low battery).",
-        "suggestion": (
-            f"{ready_count} drone(s) registered but none are IDLE "
-            f"with battery > {_MIN_ELIGIBLE_BATTERY_PCT}%."
-        ),
-    }
-
-
-async def select_best_drone(target_x: float, target_z: float) -> dict:
-    """Select the best available drone for a mission near (target_x, target_z)."""
-    client = context.get_grpc_client()
-    asset_ids = client.registered_asset_ids()
-    if not asset_ids:
-        return {
-            "error": "No drones uplinked.",
-            "suggestion": "Use /uplink to connect a drone first.",
-        }
-
-    statuses = await asyncio.gather(
-        *[client.get_status(aid) for aid in asset_ids],
-        return_exceptions=True,
-    )
-
-    eligible = []
-    for status in statuses:
-        if isinstance(status, Exception):
-            continue
-        if not _is_eligible_idle_drone(status):
-            continue
-        dist = _distance_xz(status["x"], status["z"], target_x, target_z)
-        eligible.append({**status, "distance_m": round(dist, 1)})
-
-    if not eligible:
-        return _no_eligible_drones_result(statuses)
-
-    return min(eligible, key=lambda drone: drone["distance_m"])
-
+    return max(base_samples, int(math.ceil(distance * 6.0)))
 
 async def plan_route(
     asset_id: str,
@@ -76,6 +55,16 @@ async def plan_route(
 
     ``exclude_building_id`` removes a specific building from obstacle checks -
     used when the destination IS the target building (e.g. rooftop approach).
+
+    Args:
+        asset_id: Drone identifier.
+        target_x: Target X coordinate.
+        target_z: Target Z coordinate.
+        target_y: Optional target altitude.
+        snap_to_building_center: Whether to snap target onto building center/window waypoint.
+        exclude_building_id: Optional building id to ignore as obstacle.
+    Returns:
+        Structured route payload with strategy, waypoints, and optional error.
     """
     world = context.get_world()
     client = context.get_grpc_client()
@@ -139,11 +128,172 @@ async def plan_route(
         )
 
     def _filter(buildings: list) -> list:
+        """Drop the optional excluded building from obstacle collections.
+
+        Args:
+            buildings: Candidate obstacle list from world collision checks.
+
+        Returns:
+            Filtered obstacle list with excluded building removed when configured.
+        """
         if exclude_building_id is None:
             return buildings
         return [building for building in buildings if building.id != exclude_building_id]
 
-    obstacles = _filter(world.obstacles_in_path(cx, cy, cz, target_x, target_y, target_z, samples=40, margin=1.0))
+    def _segment_hits_excluded_geometry(
+        from_x: float,
+        from_y: float,
+        from_z: float,
+        to_x: float,
+        to_y: float,
+        to_z: float,
+        *,
+        samples: int,
+    ) -> bool:
+        """Check whether a segment intersects hard geometry of excluded building.
+
+        Args:
+            from_x: Segment start X coordinate.
+            from_y: Segment start Y coordinate.
+            from_z: Segment start Z coordinate.
+            to_x: Segment end X coordinate.
+            to_y: Segment end Y coordinate.
+            to_z: Segment end Z coordinate.
+            samples: Sampling resolution for obstacle checks.
+
+        Returns:
+            True when the excluded building is intersected with margin=0.0,
+            otherwise False.
+        """
+        if exclude_building_id is None:
+            return False
+        segment_samples = _segment_sample_count(
+            from_x,
+            from_y,
+            from_z,
+            to_x,
+            to_y,
+            to_z,
+            base_samples=samples,
+        )
+        return any(
+            building.id == exclude_building_id
+            for building in world.obstacles_in_path(
+                from_x,
+                from_y,
+                from_z,
+                to_x,
+                to_y,
+                to_z,
+                samples=segment_samples,
+                margin=0.0,
+            )
+        )
+
+    def _segment_blockers(
+        from_x: float,
+        from_y: float,
+        from_z: float,
+        to_x: float,
+        to_y: float,
+        to_z: float,
+        *,
+        samples: int,
+        margin: float,
+    ) -> list:
+        """Return blockers for a segment including hard excluded-building intersections.
+
+        Args:
+            from_x: Segment start X coordinate.
+            from_y: Segment start Y coordinate.
+            from_z: Segment start Z coordinate.
+            to_x: Segment end X coordinate.
+            to_y: Segment end Y coordinate.
+            to_z: Segment end Z coordinate.
+            samples: Sampling resolution for obstacle checks.
+            margin: Inflated-margin obstacle distance used for regular planning.
+
+        Returns:
+            List of blocking buildings. Includes filtered margin blockers and,
+            when applicable, the excluded building if segment intersects its
+            hard geometry.
+        """
+        segment_samples = _segment_sample_count(
+            from_x,
+            from_y,
+            from_z,
+            to_x,
+            to_y,
+            to_z,
+            base_samples=samples,
+        )
+
+        margin_hits = _filter(
+            world.obstacles_in_path(
+                from_x,
+                from_y,
+                from_z,
+                to_x,
+                to_y,
+                to_z,
+                samples=segment_samples,
+                margin=margin,
+            )
+        )
+        if exclude_building_id is None:
+            return margin_hits
+
+        excluded_hard_hits = [
+            building
+            for building in world.obstacles_in_path(
+                from_x,
+                from_y,
+                from_z,
+                to_x,
+                to_y,
+                to_z,
+                samples=segment_samples,
+                margin=0.0,
+            )
+            if building.id == exclude_building_id
+        ]
+
+        excluded_clearance_hits = [
+            building
+            for building in world.obstacles_in_path(
+                from_x,
+                from_y,
+                from_z,
+                to_x,
+                to_y,
+                to_z,
+                samples=segment_samples,
+                margin=_EXCLUDED_BUILDING_CLEARANCE_M,
+            )
+            if building.id == exclude_building_id
+        ]
+
+        excluded_hits = excluded_hard_hits + [
+            building
+            for building in excluded_clearance_hits
+            if all(building.id != existing.id for existing in excluded_hard_hits)
+        ]
+        if not excluded_hits:
+            return margin_hits
+        if any(building.id == exclude_building_id for building in margin_hits):
+            return margin_hits
+        return [*margin_hits, *excluded_hits]
+
+    obstacles = _segment_blockers(
+        cx,
+        cy,
+        cz,
+        target_x,
+        target_y,
+        target_z,
+        samples=40,
+        margin=1.0,
+    )
     if not obstacles:
         return {
             "asset_id": asset_id,
@@ -158,33 +308,113 @@ async def plan_route(
             **({"target_resolution": target_resolution} if target_resolution else {}),
         }
 
+    dx = target_x - cx
+    dz = target_z - cz
+    length = math.sqrt(dx * dx + dz * dz)
+    if length < 1e-6:
+        return {
+            "asset_id": asset_id,
+            "from": {"x": cx, "y": cy, "z": cz},
+            "to": {"x": target_x, "y": target_y, "z": target_z},
+            "waypoints": [],
+            "obstacle_count": 0,
+            "strategy": "already_at_destination",
+            "summary": f"Already at destination (x={target_x}, z={target_z}). No navigation needed.",
+            **({"target_resolution": target_resolution} if target_resolution else {}),
+        }
+
     max_obstacle_h = max(building.max_y for building in obstacles)
     clearance_y = max_obstacle_h + 5.0
 
-    seg_climb = _filter(world.obstacles_in_path(cx, cy, cz, cx, clearance_y, cz, samples=20, margin=1.0))
-    seg_cruise = _filter(
-        world.obstacles_in_path(
-            cx,
-            clearance_y,
-            cz,
-            target_x,
-            clearance_y,
-            target_z,
-            samples=40,
-            margin=1.0,
-        )
+    a_star_path = find_3d_path(
+        world,
+        (float(cx), float(cy), float(cz)),
+        (float(target_x), float(target_y), float(target_z)),
+        margin=1.0,
+        exclude_building_id=exclude_building_id,
+        cell_size=1.0,
+        max_altitude=max(clearance_y + 10.0, target_y + 15.0),
+        max_iterations=120_000,
     )
-    seg_descend = _filter(
-        world.obstacles_in_path(
-            target_x,
-            clearance_y,
-            target_z,
-            target_x,
-            target_y,
-            target_z,
-            samples=20,
-            margin=1.0,
-        )
+    if a_star_path is not None and len(a_star_path) >= 2:
+        # Keep excluded building traversable for close-to-facade goals, but never
+        # allow routes that physically cross through its hard geometry.
+        invalid_excluded_crossing = False
+        if exclude_building_id is not None:
+            for (fx, fy, fz), (tx, ty, tz) in zip(a_star_path[:-1], a_star_path[1:]):
+                if _segment_hits_excluded_geometry(
+                    float(fx),
+                    float(fy),
+                    float(fz),
+                    float(tx),
+                    float(ty),
+                    float(tz),
+                    samples=10,
+                ):
+                    invalid_excluded_crossing = True
+                    break
+
+        if invalid_excluded_crossing:
+            a_star_path = None
+
+    if a_star_path is not None and len(a_star_path) >= 2:
+        a_star_waypoints = []
+        for idx, (wx, wy, wz) in enumerate(a_star_path[1:]):
+            reason = "3d a* transit waypoint"
+            if idx == len(a_star_path[1:]) - 1:
+                reason = "arrive at target"
+            a_star_waypoints.append(
+                {
+                    "x": round(float(wx), 2),
+                    "y": round(float(wy), 2),
+                    "z": round(float(wz), 2),
+                    "reason": reason,
+                }
+            )
+
+        return {
+            "asset_id": asset_id,
+            "from": {"x": cx, "y": cy, "z": cz},
+            "to": {"x": target_x, "y": target_y, "z": target_z},
+            "waypoints": a_star_waypoints,
+            "obstacle_count": len(obstacles),
+            "strategy": "a_star_3d",
+            "summary": (
+                f"{len(a_star_waypoints)} waypoint(s), clearing {len(obstacles)} obstacle(s) via 3D A*. "
+                f"Scan alt={target_y}m.{window_summary_suffix}"
+            ),
+            **({"target_resolution": target_resolution} if target_resolution else {}),
+        }
+
+    seg_climb = _segment_blockers(
+        cx,
+        cy,
+        cz,
+        cx,
+        clearance_y,
+        cz,
+        samples=20,
+        margin=1.0,
+    )
+    seg_cruise = _segment_blockers(
+        cx,
+        clearance_y,
+        cz,
+        target_x,
+        clearance_y,
+        target_z,
+        samples=40,
+        margin=1.0,
+    )
+    seg_descend = _segment_blockers(
+        target_x,
+        clearance_y,
+        target_z,
+        target_x,
+        target_y,
+        target_z,
+        samples=20,
+        margin=1.0,
     )
 
     if not seg_climb and not seg_cruise and not seg_descend:
@@ -212,21 +442,6 @@ async def plan_route(
             **({"target_resolution": target_resolution} if target_resolution else {}),
         }
 
-    dx = target_x - cx
-    dz = target_z - cz
-    length = math.sqrt(dx * dx + dz * dz)
-    if length < 1e-6:
-        return {
-            "asset_id": asset_id,
-            "from": {"x": cx, "y": cy, "z": cz},
-            "to": {"x": target_x, "y": target_y, "z": target_z},
-            "waypoints": [],
-            "obstacle_count": 0,
-            "strategy": "already_at_destination",
-            "summary": f"Already at destination (x={target_x}, z={target_z}). No navigation needed.",
-            **({"target_resolution": target_resolution} if target_resolution else {}),
-        }
-
     perp_x = -dz / length
     perp_z = dx / length
     mid_x = (cx + target_x) / 2
@@ -238,18 +453,25 @@ async def plan_route(
     for sign in (1.0, -1.0):
         wp_x = mid_x + sign * perp_x * offset_dist
         wp_z = mid_z + sign * perp_z * offset_dist
-        seg1 = _filter(world.obstacles_in_path(cx, cy, cz, wp_x, fly_y, wp_z, samples=40, margin=1.0))
-        seg2 = _filter(
-            world.obstacles_in_path(
-                wp_x,
-                fly_y,
-                wp_z,
-                target_x,
-                target_y,
-                target_z,
-                samples=40,
-                margin=1.0,
-            )
+        seg1 = _segment_blockers(
+            cx,
+            cy,
+            cz,
+            wp_x,
+            fly_y,
+            wp_z,
+            samples=40,
+            margin=1.0,
+        )
+        seg2 = _segment_blockers(
+            wp_x,
+            fly_y,
+            wp_z,
+            target_x,
+            target_y,
+            target_z,
+            samples=40,
+            margin=1.0,
         )
         if not seg1 and not seg2:
             waypoints = [
@@ -330,9 +552,11 @@ def find_survivors_in_area(
     world = context.get_world()
     detected_ids = get_detected_survivor_ids()
 
-    rows: list[tuple[float, object]] = []
+    rows: list[tuple[float, Any]] = []
     for survivor in world.survivors:
-        dist = math.sqrt((survivor.x - center_x) ** 2 + (survivor.z - center_z) ** 2)
+        sx = float(getattr(survivor, "x", 0.0))
+        sz = float(getattr(survivor, "z", 0.0))
+        dist = math.sqrt((sx - center_x) ** 2 + (sz - center_z) ** 2)
         if dist <= radius:
             rows.append((dist, survivor))
     rows.sort(key=lambda row: row[0])
@@ -340,7 +564,7 @@ def find_survivors_in_area(
     detected_rows = [
         (distance, survivor)
         for distance, survivor in rows
-        if survivor.id in detected_ids
+        if int(getattr(survivor, "id", -1)) in detected_ids
     ]
     all_detected = len(detected_rows) == len(rows)
     blocked_by_detection_gate = bool(
@@ -356,11 +580,11 @@ def find_survivors_in_area(
     return {
         "survivors": [
             {
-                "id": survivor.id,
-                "x": survivor.x,
-                "y": survivor.y,
-                "z": survivor.z,
-                "submerged": survivor.submerged,
+                "id": int(getattr(survivor, "id", -1)),
+                "x": float(getattr(survivor, "x", 0.0)),
+                "y": float(getattr(survivor, "y", 0.0)),
+                "z": float(getattr(survivor, "z", 0.0)),
+                "submerged": bool(getattr(survivor, "submerged", False)),
                 "distance_m": round(distance, 2),
             }
             for distance, survivor in selected_rows
