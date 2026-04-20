@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -105,3 +106,107 @@ def test_prepare_parallel_fleet_scan_dedupes_duplicate_buildings() -> None:
     assert initial["BEACON-01"]["id"] == 4
     assert len(pending) == 1
     assert pending[0]["id"] == 9
+
+
+def test_prepare_parallel_fleet_scan_skips_queue_when_drone_count_matches_buildings() -> None:
+    tool_context = SimpleNamespace(
+        state={
+            "fleet_assignments": json.dumps(
+                {
+                    "assignments": [
+                        {
+                            "asset_id": "BEACON-01",
+                            "building": {"id": 4, "x": -23.0, "z": -28.0, "height": 21.0},
+                            "distance_m": 0.0,
+                        },
+                        {
+                            "asset_id": "BEACON-02",
+                            "building": {"id": 9, "x": -10.0, "z": -12.0, "height": 18.0},
+                            "distance_m": 0.0,
+                        },
+                    ],
+                    "unassigned_buildings": [],
+                }
+            )
+        },
+        actions=SimpleNamespace(escalate=False),
+    )
+
+    result = prepare_parallel_fleet_scan(tool_context)
+
+    assert result["success"] is True
+    assert result["queued_buildings"] == 2
+    assert result["drone_count"] == 2
+    assert result["mode"] == "initial_assignment_only_no_queue"
+    assert tool_context.state["scan_queue_enabled"] is False
+    assert json.loads(tool_context.state["scan_pending_buildings"]) == []
+
+
+@pytest.mark.asyncio
+async def test_pick_next_building_for_asset_skips_queue_pull_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _status_should_not_run(_asset_id: str) -> dict:
+        raise AssertionError("get_status should not be called when queue is disabled and initial is claimed")
+
+    monkeypatch.setattr(grpc_client, "get_status", _status_should_not_run)
+
+    tool_context = SimpleNamespace(
+        state={
+            "active_fleet_assets": '["BEACON-01"]',
+            "scan_initial_building_by_asset": '{"BEACON-01":{"id":4,"x":-23.0,"z":-28.0,"height":21.0}}',
+            "scan_pending_buildings": "[]",
+            "scan_queue_enabled": False,
+            "scan_claimed_initial_by_asset": '{"BEACON-01":true}',
+            "scan_done_count_by_asset": '{"BEACON-01":1}',
+            "scan_results_list": '[["invalid"]]',
+            "scan_total_buildings": 1,
+            "scan_summary_emitted": False,
+        },
+        actions=SimpleNamespace(escalate=False),
+    )
+
+    result = await pick_next_building_for_asset("BEACON-01", tool_context)
+
+    assert result["done"] is True
+    assert result["asset_id"] == "BEACON-01"
+    assert result["total_scanned"] == 1
+    assert tool_context.actions.escalate is True
+
+
+@pytest.mark.asyncio
+async def test_pick_next_building_for_asset_avoids_duplicate_initial_claim_under_concurrency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _status(_asset_id: str) -> dict:
+        return {"x": 0.0, "z": 0.0}
+
+    monkeypatch.setattr(grpc_client, "get_status", _status)
+
+    tool_context = SimpleNamespace(
+        state={
+            "active_fleet_assets": '["BEACON-02"]',
+            "scan_initial_building_by_asset": '{"BEACON-02":{"id":9,"x":-10.0,"z":-12.0,"height":18.0}}',
+            "scan_pending_buildings": "[]",
+            "scan_queue_enabled": False,
+            "scan_claimed_initial_by_asset": '{"BEACON-02":false}',
+            "scan_done_count_by_asset": '{"BEACON-02":0}',
+            "scan_results_list": "[]",
+            "scan_total_buildings": 1,
+            "scan_summary_emitted": False,
+        },
+        actions=SimpleNamespace(escalate=False),
+    )
+
+    first, second = await asyncio.gather(
+        pick_next_building_for_asset("BEACON-02", tool_context),
+        pick_next_building_for_asset("BEACON-02", tool_context),
+    )
+
+    claimed_results = [result for result in (first, second) if result.get("done") is False]
+    completed_results = [result for result in (first, second) if result.get("done") is True]
+
+    assert len(claimed_results) == 1
+    assert claimed_results[0]["building"]["id"] == 9
+    assert len(completed_results) == 1
+    assert completed_results[0]["total_scanned"] == 1

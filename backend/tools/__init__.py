@@ -1,1 +1,1 @@
-"""Compatibility tool exports for legacy tests and callers."""
+"""Compatibility exports for legacy backend.tools imports."""

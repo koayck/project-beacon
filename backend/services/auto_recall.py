@@ -59,12 +59,20 @@ class AutoRecallMonitor:
             return
 
         asset_id = payload.get("asset_id")
-        if not isinstance(asset_id, str) or not asset_id.strip():
+        try:
+            asset_id = asset_id.strip()
+        except AttributeError:
+            return
+        if not asset_id:
             return
         asset_id = asset_id.upper()
 
         status = payload.get("status")
-        if not isinstance(status, str) or status != "IDLE":
+        try:
+            is_idle = status == "IDLE"
+        except Exception:
+            return
+        if not is_idle:
             return
 
         battery_raw = payload.get("battery")

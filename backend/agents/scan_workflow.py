@@ -17,7 +17,7 @@ Structure:
 Session state keys:
     scan_buildings        JSON — {"asset_id": str | "auto", "buildings": [{...}], ...}
     fleet_assignments     JSON — {"assignments": [{asset_id, building, ...}], ...}
-    buildings_scan_index  int  — next index in queue (managed by pick_next_building)
+    buildings_scan_index  int  — legacy queue index key (retained for compatibility)
     scan_results_list     JSON — compact per-building report lines
 """
 from __future__ import annotations
@@ -26,13 +26,23 @@ import asyncio
 import json
 import math
 import re
+from typing import Any
 
 from google.adk.agents import Agent, LoopAgent, ParallelAgent, SequentialAgent
 from google.adk.tools import FunctionTool
 from google.adk.tools.tool_context import ToolContext
 
-from backend.agents._mcp import FLEET_TOOLS, NAV_TOOLS, THERMAL_TOOLS, make_toolset
+from backend.agents._mcp import NAV_TOOLS, THERMAL_TOOLS, make_toolset
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
+from backend.instructions.scan_workflow_text import (
+    ASSET_SCAN_NAV_INSTRUCTION_TEMPLATE,
+    ASSET_SCAN_PICKER_INSTRUCTION_TEMPLATE,
+    ASSET_SCAN_THERMAL_INSTRUCTION_TEMPLATE,
+    SCAN_FLEET_ASSIGNER_INSTRUCTION,
+    SCAN_FLEET_EXECUTOR_INSTRUCTION,
+    SCAN_REPORT_INSTRUCTION,
+    SCAN_RESOLVER_INSTRUCTION,
+)
 
 _SCAN_QUEUE_LOCK = asyncio.Lock()
 _RESULT_ASSET_PREFIX_RE = re.compile(r"^\[(?P<asset>[A-Za-z0-9_-]+)\]\s*(?P<body>.*)$", re.DOTALL)
@@ -47,24 +57,108 @@ _RESULT_SURVIVOR_LINE_RE = re.compile(
 _CROSS_BUILDING_SURVIVOR_DISTANCE_M = 6.0
 
 
-def _building_dedupe_key(building: dict) -> tuple[str, str] | None:
-    if not isinstance(building, dict):
+def _as_dict(value: object) -> dict | None:
+    """Return a mapping-like value when possible.
+
+    Args:
+        value: Candidate object to validate as mapping-like.
+
+    Returns:
+        The original object when it exposes mapping access, otherwise None.
+    """
+    try:
+        value.get  # type: ignore[attr-defined]
+    except AttributeError:
+        return None
+    return value  # type: ignore[return-value]
+
+
+def _as_list(value: object) -> list | None:
+    """Return a list-like value when possible.
+
+    Args:
+        value: Candidate object to validate as mutable list-like.
+
+    Returns:
+        The original object when it behaves like a mutable list, otherwise None.
+    """
+    try:
+        value.append  # type: ignore[attr-defined]
+        value.__iter__  # type: ignore[attr-defined]
+    except AttributeError:
+        return None
+    return value  # type: ignore[return-value]
+
+
+def _to_float(value: Any) -> float | None:
+    """Convert an arbitrary value to float.
+
+    Args:
+        value: Value to convert.
+
+    Returns:
+        The converted float value, or None when conversion fails.
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
         return None
 
-    building_id = building.get("id")
-    if isinstance(building_id, int) and building_id >= 0:
+
+def _to_non_negative_int(value: Any) -> int | None:
+    """Convert an arbitrary value to a non-negative integer.
+
+    Args:
+        value: Value to convert.
+
+    Returns:
+        A non-negative integer, or None when conversion fails or value is negative.
+    """
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    if number < 0:
+        return None
+    return number
+
+
+def _building_dedupe_key(building: dict) -> tuple[str, str] | None:
+    """Build a stable deduplication key for a building target.
+
+    Args:
+        building: Building payload containing id and/or coordinate fields.
+
+    Returns:
+        A tagged key tuple using building id when available, coordinate fallback
+        when id is missing, or None when no valid key can be derived.
+    """
+    building_dict = _as_dict(building)
+    if building_dict is None:
+        return None
+
+    building_id = _to_non_negative_int(building_dict.get("id"))
+    if building_id is not None:
         return ("id", str(building_id))
 
-    x = building.get("x")
-    z = building.get("z")
-    if isinstance(x, (int, float)) and isinstance(z, (int, float)):
+    x = _to_float(building_dict.get("x"))
+    z = _to_float(building_dict.get("z"))
+    if x is not None and z is not None:
         # Coordinate fallback for ad-hoc targets where id may be -1 or absent.
-        return ("coord", f"{float(x):.3f},{float(z):.3f}")
+        return ("coord", f"{x:.3f},{z:.3f}")
 
     return None
 
 
 def _dedupe_buildings(buildings: list[dict]) -> list[dict]:
+    """Remove duplicate building targets while preserving first-seen order.
+
+    Args:
+        buildings: Raw building target list.
+
+    Returns:
+        A deduplicated list preserving the original order of first occurrence.
+    """
     seen: set[tuple[str, str]] = set()
     unique: list[dict] = []
     for building in buildings:
@@ -80,77 +174,28 @@ def _dedupe_buildings(buildings: list[dict]) -> list[dict]:
 
 # ── Queue FunctionTools ────────────────────────────────────────────────────────
 
-def pick_next_building(tool_context: ToolContext) -> dict:
-    """
-    Pop the next unscanned building from the session-state queue.
-
-    Increments ``buildings_scan_index`` each call.  When the queue is exhausted
-    it sets ``actions.escalate = True`` to exit the LoopAgent.
-    """
-    raw = tool_context.state.get("scan_buildings", "{}")
-    if isinstance(raw, str):
-        # Strip markdown code fences the LLM occasionally emits
-        stripped = raw.strip()
-        if stripped.startswith("```"):
-            stripped = stripped.split("\n", 1)[-1]
-            stripped = stripped.rsplit("```", 1)[0]
-            raw = stripped.strip()
-    try:
-        scan_data = json.loads(raw) if isinstance(raw, str) else raw
-    except (json.JSONDecodeError, TypeError):
-        scan_data = {}
-
-    default_asset_id = scan_data.get("asset_id", "UNKNOWN")
-    buildings: list[dict] = scan_data.get("buildings", [])
-    index: int = tool_context.state.get("buildings_scan_index", 0)
-
-    if index >= len(buildings):
-        tool_context.actions.escalate = True
-        return {"done": True, "total_scanned": index, "asset_id": default_asset_id}
-
-    building = buildings[index]
-    asset_id = building.get("asset_id", default_asset_id)
-    tool_context.state["buildings_scan_index"] = index + 1
-    return {
-        "done": False,
-        "asset_id": asset_id,
-        "building": building,
-        "index": index,
-        "remaining": len(buildings) - index - 1,
-    }
-
-
-def save_scan_result(result: str, tool_context: ToolContext) -> dict:
-    """
-    Append this building's compact scan result to the accumulated results list.
-    Call this after every sweep_scan_building — do NOT print a report to the operator.
-    """
-    raw = tool_context.state.get("scan_results_list", "[]")
-    try:
-        results: list[str] = json.loads(raw) if isinstance(raw, str) else raw
-    except (json.JSONDecodeError, TypeError):
-        results = []
-    results.append(result)
-    tool_context.state["scan_results_list"] = json.dumps(results)
-    return {"saved": True, "total_saved": len(results)}
-
-
-def get_scan_results(tool_context: ToolContext) -> dict:
-    """Return all accumulated per-building scan result strings."""
-    raw = tool_context.state.get("scan_results_list", "[]")
-    try:
-        results: list[str] = json.loads(raw) if isinstance(raw, str) else raw
-    except (json.JSONDecodeError, TypeError):
-        results = []
-    return {"results": results, "total": len(results)}
-
 
 def get_shared_state(tool_context: ToolContext) -> dict:
-    """Expose current loop shared state for agents that need explicit state reads."""
+    """Expose current shared loop state.
+
+    Args:
+        tool_context: ADK tool context containing current workflow state.
+
+    Returns:
+        A payload containing a dictionary snapshot of tool context state.
+    """
     return {"state": tool_context.state.to_dict()}
 
 
 def _split_scan_result_asset(result_text: str) -> tuple[str | None, str]:
+    """Split optional asset prefix from a saved scan line.
+
+    Args:
+        result_text: Raw saved scan result line.
+
+    Returns:
+        A tuple of asset id (or None) and normalized message body.
+    """
     stripped = result_text.strip()
     match = _RESULT_ASSET_PREFIX_RE.match(stripped)
     if not match:
@@ -159,6 +204,15 @@ def _split_scan_result_asset(result_text: str) -> tuple[str | None, str]:
 
 
 def _format_split_survivor_sections(result_body: str) -> str:
+    """Reformat survivor lines into building-grouped sections.
+
+    Args:
+        result_body: Building-level scan report body.
+
+    Returns:
+        Reformatted report text where cross-building survivors are split into
+        separate synthetic building sections.
+    """
     lines = [line.rstrip() for line in result_body.splitlines() if line.strip()]
     if not lines:
         return result_body.strip()
@@ -208,7 +262,14 @@ def _format_split_survivor_sections(result_body: str) -> str:
 
 
 def build_aggregated_scan_report(tool_context: ToolContext) -> dict:
-    """Build a deterministic final report from all saved scan results."""
+    """Build a deterministic final scan report from accumulated results.
+
+    Args:
+        tool_context: ADK tool context containing scan result state.
+
+    Returns:
+        A payload containing summary text, aggregate totals, and raw result rows.
+    """
     raw = tool_context.state.get("scan_results_list", "[]")
     try:
         results: list[str] = json.loads(raw) if isinstance(raw, str) else raw
@@ -272,28 +333,7 @@ def build_aggregated_scan_report(tool_context: ToolContext) -> dict:
     }
 
 
-def finalize_scan(tool_context: ToolContext) -> dict:
-    """
-    Signal that the scan workflow is complete. Used by the final agent to
-    cleanly terminate the LoopAgent after all buildings have been scanned.
-    Generates the aggregated report before escalating so it's always emitted
-    even if the report agent is skipped by escalation propagation.
-    """
-    summary_emitted = bool(tool_context.state.get("scan_summary_emitted", False))
-    if not summary_emitted:
-        report = build_aggregated_scan_report(tool_context)
-        tool_context.state["scan_summary_emitted"] = True
-        tool_context.actions.escalate = True
-        return {"done": True, "report": report.get("summary", "")}
-    tool_context.actions.escalate = True
-    return {"done": True}
-
-
-_pick_tool = FunctionTool(func=pick_next_building)
-_save_tool = FunctionTool(func=save_scan_result)
-_get_tool = FunctionTool(func=get_scan_results)
 _build_report_tool = FunctionTool(func=build_aggregated_scan_report)
-_finalize_tool = FunctionTool(func=finalize_scan)
 
 
 # ── Fleet orchestration FunctionTools ─────────────────────────────────────────
@@ -307,6 +347,13 @@ async def assign_drones_to_buildings(tool_context: ToolContext) -> dict:
     When asset_id is an explicit drone ID only the first building is assigned
     initially; remaining buildings stay queued for dynamic pickup.
     When asset_id is "auto" or absent the full fleet is queried for assignments.
+
+    Args:
+        tool_context: ADK tool context containing resolved scan targets.
+
+    Returns:
+        Fleet assignment payload persisted to state, including assignments,
+        unassigned buildings, and optional notes/errors.
     """
     from backend.services.api import assign_fleet_to_buildings
 
@@ -356,6 +403,13 @@ async def assign_drones_to_buildings(tool_context: ToolContext) -> dict:
 def prepare_parallel_fleet_scan(tool_context: ToolContext) -> dict:
     """
     Build per-beacon initial assignments plus shared pending queue.
+
+    Args:
+        tool_context: ADK tool context containing fleet assignment output.
+
+    Returns:
+        Preparation status payload with active assets and queue sizes, or an
+        error payload when preparation cannot proceed.
     """
     raw = tool_context.state.get("fleet_assignments", "{}")
     try:
@@ -375,8 +429,8 @@ def prepare_parallel_fleet_scan(tool_context: ToolContext) -> dict:
     pending_raw: list[dict] = list(data.get("unassigned_buildings", []))
     for row in assignments:
         aid = row.get("asset_id")
-        building = row.get("building")
-        if not aid or not isinstance(building, dict):
+        building = _as_dict(row.get("building"))
+        if not aid or building is None:
             continue
         key = _building_dedupe_key(building)
         if aid not in initial_by_drone and key is not None and key not in assigned_keys:
@@ -402,6 +456,7 @@ def prepare_parallel_fleet_scan(tool_context: ToolContext) -> dict:
         return {"error": "No valid assignments available. Cannot proceed with scan."}
 
     ordered_aids = sorted(initial_by_drone)
+    queue_enabled = len(pending) > 0
     done_count_by_asset = {aid: 0 for aid in ordered_aids}
     claimed_initial_by_asset = {aid: False for aid in ordered_aids}
     tool_context.state["buildings_scan_index"] = 0
@@ -413,6 +468,7 @@ def prepare_parallel_fleet_scan(tool_context: ToolContext) -> dict:
     tool_context.state["scan_results_by_asset"] = json.dumps({aid: [] for aid in ordered_aids})
     tool_context.state["active_fleet_assets"] = json.dumps(ordered_aids)
     tool_context.state["scan_total_buildings"] = len(initial_by_drone) + len(pending)
+    tool_context.state["scan_queue_enabled"] = queue_enabled
     tool_context.state["scan_summary_emitted"] = False
     _set_active_parallel_loops(ordered_aids)
     return {
@@ -420,7 +476,11 @@ def prepare_parallel_fleet_scan(tool_context: ToolContext) -> dict:
         "queued_buildings": len(initial_by_drone) + len(pending),
         "drone_count": len(initial_by_drone),
         "active_assets": ordered_aids,
-        "mode": "dynamic_queue_after_initial_assignment",
+        "mode": (
+            "dynamic_queue_after_initial_assignment"
+            if queue_enabled
+            else "initial_assignment_only_no_queue"
+        ),
     }
 
 
@@ -429,10 +489,20 @@ _prepare_fleet_scan_tool = FunctionTool(func=prepare_parallel_fleet_scan)
 
 
 async def pick_next_building_for_asset(asset_id: str, tool_context: ToolContext) -> dict:
-    """Claim next building for this beacon: initial slot first, then closest pending building."""
+    """Claim the next building for a specific asset.
+
+    Args:
+        asset_id: Drone asset identifier for this loop instance.
+        tool_context: ADK tool context containing shared queue state.
+
+    Returns:
+        A payload with done status and either the claimed building or completion
+        metadata when no work remains.
+    """
     raw_assets = tool_context.state.get("active_fleet_assets", "[]")
     raw_initial = tool_context.state.get("scan_initial_building_by_asset", "{}")
     raw_pending = tool_context.state.get("scan_pending_buildings", "[]")
+    queue_enabled_raw = tool_context.state.get("scan_queue_enabled", True)
     raw_claimed = tool_context.state.get("scan_claimed_initial_by_asset", "{}")
     raw_done_count = tool_context.state.get("scan_done_count_by_asset", "{}")
     try:
@@ -456,9 +526,43 @@ async def pick_next_building_for_asset(asset_id: str, tool_context: ToolContext)
     except (json.JSONDecodeError, TypeError):
         done_count = {}
 
+    if isinstance(queue_enabled_raw, str):
+        queue_enabled = queue_enabled_raw.strip().lower() not in {"false", "0", "no", "off"}
+    else:
+        queue_enabled = bool(queue_enabled_raw)
+
+    # Fast-path: when queueing is disabled, each asset has at most one initial
+    # assignment and should not attempt any further queue claims.
+    if not queue_enabled and bool(claimed_initial.get(asset_id, False)):
+        scanned = int(done_count.get(asset_id, 0))
+        tool_context.actions.escalate = True
+        raw_results = tool_context.state.get("scan_results_list", "[]")
+        try:
+            all_results = json.loads(raw_results) if isinstance(raw_results, str) else raw_results
+        except (json.JSONDecodeError, TypeError):
+            all_results = []
+        total_buildings = int(tool_context.state.get("scan_total_buildings", 0) or 0)
+        summary_emitted = bool(tool_context.state.get("scan_summary_emitted", False))
+        if (
+            not summary_emitted
+            and total_buildings > 0
+        ):
+            all_results_list = _as_list(all_results)
+            if all_results_list is None or len(all_results_list) < total_buildings:
+                return {"done": True, "asset_id": asset_id, "total_scanned": scanned}
+            report = build_aggregated_scan_report(tool_context)
+            tool_context.state["scan_summary_emitted"] = True
+            return {
+                "done": True,
+                "asset_id": asset_id,
+                "total_scanned": scanned,
+                "message": report.get("summary", "Scan complete."),
+            }
+        return {"done": True, "asset_id": asset_id, "total_scanned": scanned}
+
     # Gracefully handle state not yet propagated from prep agent.
     # If active_assets is empty but we have an initial building, proceed anyway.
-    has_initial = isinstance(initial_by_asset.get(asset_id), dict)
+    has_initial = _as_dict(initial_by_asset.get(asset_id)) is not None
     if asset_id not in active_assets and not has_initial and not pending:
         tool_context.actions.escalate = True
         return {"done": True, "asset_id": asset_id, "total_scanned": 0}
@@ -468,21 +572,68 @@ async def pick_next_building_for_asset(asset_id: str, tool_context: ToolContext)
     from backend.runtime import grpc_client as runtime_grpc_client
 
     status = await runtime_grpc_client.get_status(asset_id)
-    sx = status.get("x")
-    sz = status.get("z")
-    if isinstance(sx, (int, float)) and isinstance(sz, (int, float)):
-        drone_x = float(sx)
-        drone_z = float(sz)
+    sx = _to_float(status.get("x"))
+    sz = _to_float(status.get("z"))
+    if sx is not None and sz is not None:
+        drone_x = sx
+        drone_z = sz
 
     async with _SCAN_QUEUE_LOCK:
+        # Re-read mutable shared queue state under lock to avoid stale reads
+        # when the picker tool is invoked multiple times concurrently.
+        fresh_pending_raw = tool_context.state.get("scan_pending_buildings", "[]")
+        fresh_claimed_raw = tool_context.state.get("scan_claimed_initial_by_asset", "{}")
+        fresh_done_count_raw = tool_context.state.get("scan_done_count_by_asset", "{}")
+        try:
+            pending = json.loads(fresh_pending_raw) if isinstance(fresh_pending_raw, str) else fresh_pending_raw
+        except (json.JSONDecodeError, TypeError):
+            pending = []
+        try:
+            claimed_initial = json.loads(fresh_claimed_raw) if isinstance(fresh_claimed_raw, str) else fresh_claimed_raw
+        except (json.JSONDecodeError, TypeError):
+            claimed_initial = {}
+        try:
+            done_count = json.loads(fresh_done_count_raw) if isinstance(fresh_done_count_raw, str) else fresh_done_count_raw
+        except (json.JSONDecodeError, TypeError):
+            done_count = {}
+
         scanned = int(done_count.get(asset_id, 0))
         claimed = bool(claimed_initial.get(asset_id, False))
+
+        # Re-check no-queue completion after refresh so stale pre-lock reads cannot
+        # re-claim the initial building.
+        if not queue_enabled and claimed:
+            tool_context.actions.escalate = True
+            raw_results = tool_context.state.get("scan_results_list", "[]")
+            try:
+                all_results = json.loads(raw_results) if isinstance(raw_results, str) else raw_results
+            except (json.JSONDecodeError, TypeError):
+                all_results = []
+            total_buildings = int(tool_context.state.get("scan_total_buildings", 0) or 0)
+            summary_emitted = bool(tool_context.state.get("scan_summary_emitted", False))
+            if (
+                not summary_emitted
+                and total_buildings > 0
+            ):
+                all_results_list = _as_list(all_results)
+                if all_results_list is None or len(all_results_list) < total_buildings:
+                    return {"done": True, "asset_id": asset_id, "total_scanned": scanned}
+                report = build_aggregated_scan_report(tool_context)
+                tool_context.state["scan_summary_emitted"] = True
+                return {
+                    "done": True,
+                    "asset_id": asset_id,
+                    "total_scanned": scanned,
+                    "message": report.get("summary", "Scan complete."),
+                }
+            return {"done": True, "asset_id": asset_id, "total_scanned": scanned}
+
         building: dict | None = None
         remaining = 0
         if not claimed:
-            candidate = initial_by_asset.get(asset_id)
+            candidate = _as_dict(initial_by_asset.get(asset_id))
             claimed_initial[asset_id] = True
-            if isinstance(candidate, dict):
+            if candidate is not None:
                 building = candidate
                 remaining = len(pending)
         if building is None and pending:
@@ -490,17 +641,21 @@ async def pick_next_building_for_asset(asset_id: str, tool_context: ToolContext)
             if drone_x is not None and drone_z is not None:
                 closest_dist = float("inf")
                 for idx, candidate in enumerate(pending):
-                    bx = candidate.get("x")
-                    bz = candidate.get("z")
-                    if not isinstance(bx, (int, float)) or not isinstance(bz, (int, float)):
+                    candidate_dict = _as_dict(candidate)
+                    if candidate_dict is None:
                         continue
-                    dist = math.sqrt((float(bx) - drone_x) ** 2 + (float(bz) - drone_z) ** 2)
+                    bx = _to_float(candidate_dict.get("x"))
+                    bz = _to_float(candidate_dict.get("z"))
+                    if bx is None or bz is None:
+                        continue
+                    dist = math.sqrt((bx - drone_x) ** 2 + (bz - drone_z) ** 2)
                     if dist < closest_dist:
                         closest_dist = dist
                         pick_index = idx
             candidate = pending.pop(pick_index)
-            if isinstance(candidate, dict):
-                building = candidate
+            candidate_dict = _as_dict(candidate)
+            if candidate_dict is not None:
+                building = candidate_dict
                 remaining = len(pending)
 
         if building is None:
@@ -513,8 +668,8 @@ async def pick_next_building_for_asset(asset_id: str, tool_context: ToolContext)
                     fresh_initial = json.loads(fresh_initial_raw) if isinstance(fresh_initial_raw, str) else fresh_initial_raw
                 except (json.JSONDecodeError, TypeError):
                     fresh_initial = {}
-                retry_candidate = fresh_initial.get(asset_id)
-                if isinstance(retry_candidate, dict):
+                retry_candidate = _as_dict(fresh_initial.get(asset_id))
+                if retry_candidate is not None:
                     claimed_initial[asset_id] = True
                     building = retry_candidate
                     remaining = len(pending)
@@ -533,9 +688,10 @@ async def pick_next_building_for_asset(asset_id: str, tool_context: ToolContext)
                 if (
                     not summary_emitted
                     and total_buildings > 0
-                    and isinstance(all_results, list)
-                    and len(all_results) >= total_buildings
                 ):
+                    all_results_list = _as_list(all_results)
+                    if all_results_list is None or len(all_results_list) < total_buildings:
+                        return {"done": True, "asset_id": asset_id, "total_scanned": scanned}
                     report = build_aggregated_scan_report(tool_context)
                     tool_context.state["scan_summary_emitted"] = True
                     return {
@@ -561,7 +717,16 @@ async def pick_next_building_for_asset(asset_id: str, tool_context: ToolContext)
 
 
 def save_scan_result_for_asset(asset_id: str, result: str, tool_context: ToolContext) -> dict:
-    """Append one compact scan result for this beacon and to global report list."""
+    """Save a per-asset scan result and append it to the global list.
+
+    Args:
+        asset_id: Drone asset identifier that produced the result.
+        result: Compact building scan result text.
+        tool_context: ADK tool context containing mutable workflow state.
+
+    Returns:
+        A status payload with per-asset saved result count.
+    """
     raw_map = tool_context.state.get("scan_results_by_asset", "{}")
     raw_all = tool_context.state.get("scan_results_list", "[]")
     try:
@@ -584,196 +749,79 @@ def save_scan_result_for_asset(asset_id: str, result: str, tool_context: ToolCon
     return {"saved": True, "asset_id": asset_id, "total_saved_for_asset": len(bucket)}
 
 
-# ── Building picker agent ──────────────────────────────────────────────────────
-
-_PICKER_INSTRUCTION = """You manage the building scan queue.
-
-1. Call pick_next_building().
-2. If done=True: output "QUEUE_EMPTY" and stop.
-3. If done=False: output EXACTLY this line (fill in values, no extra text):
-   SCAN TARGET: Navigate <asset_id> to building at (x=<x>, z=<z>). Height: <height>m. Remaining: <remaining>.
-"""
-
-_building_picker_agent = Agent(
-    name="building_picker_agent",
-    model=QWEN3_INSTRUCT,
-    description=(
-        "Pops the next building from the scan queue and emits a navigation target, "
-        "or exits the loop when all buildings have been scanned."
-    ),
-    generate_content_config=QWEN3_GEN_CONFIG,
-    output_key="current_building",
-    instruction=_PICKER_INSTRUCTION,
-    tools=[_pick_tool],
-)
-
-
-# ── Navigation agent (scan loop) ───────────────────────────────────────────────
-
-_NAV_INSTRUCTION = """You are a navigation specialist for autonomous drones.
-
-COORDINATES: X=East, Y=Up, Z=South. Home pad at (0, 2, 0).
-
-Your target for this iteration is in state["current_building"]. Parse the asset_id,
-x, and z from it (e.g. "Navigate BEACON-01 to building at (x=-15.0, z=-20.0). Height: 12m.").
-
-MOVE PROCEDURE
-1. Call resolve_scan_target(target_x, target_z) to snap to the building centre.
-2. Set target_y = building.height + 5 (rooftop hover altitude, NOT recommended_scan_y).
-3. Call plan_route(asset_id, resolved_x, resolved_z, target_y).
-4. If plan_route returns {"error": "No clear route found"}:
-   - Call get_drone_status(asset_id) and retry with target_y = max(current_y + 5, 10).
-   - Retry once more with target_y = max(current_y + 10, 15) if still failing.
-   - Report failure and stop if all retries fail. Do NOT call move_drone_to.
-5. If waypoints list is empty, the drone is already at destination — skip move step.
-6. For each waypoint in "waypoints", call move_drone_to(asset_id, wp.x, wp.y, wp.z).
-7. After the final move: "BEACON-XX arrived at (x, y, z)."
-"""
-
-_nav_for_scan = Agent(
-    name="navigation_agent_scan",
-    model=QWEN3_INSTRUCT,
-    description="Navigates the drone to the current scan target building.",
-    generate_content_config=QWEN3_GEN_CONFIG,
-    output_key="nav_result",
-    instruction=_NAV_INSTRUCTION,
-    tools=[make_toolset(NAV_TOOLS)],
-)
-
-
-# ── Thermal agent (scan loop — silent accumulation) ────────────────────────────
-
-_SILENT_THERMAL_INSTRUCTION = """You are a thermal imaging specialist for search and rescue drones.
-
-COORDINATES: X=East, Y=Up, Z=South.
-
-SCAN GATE
-0. If shared state has nav_result and nav_result contains "error":
-   - Call save_scan_result("NAV FAILED for building in current_building: <nav error>").
-   - Output "Navigation failed; scan skipped." and stop.
-   - Do NOT call scan_area or sweep_scan_building.
-
-SWEEP SCAN PROCEDURE
-1. Parse asset_id, x, z from state["current_building"].
-   Also note whether state["current_building"] contains "Remaining: 0" — this means it is the LAST building.
-2. Call sweep_scan_building(asset_id, target_x=x, target_z=z) — always pass the building coordinates explicitly.
-3. Build a compact result string from the tool response:
-   - Success: "Building at (x=<x>, z=<z>): <reported_survivor_count> survivor(s) across <level_count> level(s). Waypoints: <waypoint_count>."
-     If unique_survivor_count > 0, append a newline and one line per survivor from unique_survivors_detected:
-       "  - Survivor <id>: (<x>, <y>, <z>)[SUBMERGED — CRITICAL]" (include SUBMERGED tag only if submerged=true)
-     If any submerged survivors: also append " [CRITICAL: <N> submerged]" to the header line.
-   - Error:   "Building at (x=<x>, z=<z>): SCAN ERROR — <error>"
-4. Call save_scan_result(result=<compact_string>).
-5. Check if this is the LAST building ("Remaining: 0" in current_building):
-   - YES: Call finalize_scan() to terminate the LoopAgent cleanly.
-     If finalize_scan returns a "report" field, output that report verbatim.
-     Otherwise output "SCAN_BATCH_COMPLETE".
-   - NO: Output only "Result saved for building at (x=<x>, z=<z>)."
-"""
-
-_thermal_for_scan = Agent(
-    name="thermal_agent_scan",
-    model=QWEN3_INSTRUCT,
-    description="Sweep-scans the current building and silently accumulates the result. Generates the final report after the last building.",
-    generate_content_config=QWEN3_GEN_CONFIG,
-    instruction=_SILENT_THERMAL_INSTRUCTION,
-    tools=[make_toolset(THERMAL_TOOLS), _save_tool, FunctionTool(get_shared_state)],
-)
-
-
-# ── LoopAgent ──────────────────────────────────────────────────────────────────
-
-_building_scan_loop = LoopAgent(
-    name="building_scan_loop",
-    description=(
-        "Iterates over every building in the scan queue: "
-        "pick → navigate → sweep-scan → repeat until queue is empty."
-    ),
-    max_iterations=100,
-    sub_agents=[
-        _building_picker_agent,
-        _nav_for_scan,
-        _thermal_for_scan,
-    ],
-)
-
-
 # ── Parallel fleet LoopAgents (one per beacon) ────────────────────────────────
 
 _PARALLEL_BEACON_IDS = ["BEACON-01"]
+_SCAN_LOOP_NAV_TOOLS = [tool for tool in NAV_TOOLS if tool != "resolve_scan_target"]
 
 
 def _asset_suffix(asset_id: str) -> str:
+    """Normalize an asset id into a safe generated-name suffix.
+
+    Args:
+        asset_id: Drone asset identifier.
+
+    Returns:
+        Lowercased, hyphen-normalized suffix string safe for agent/tool names.
+    """
     return asset_id.lower().replace("-", "_")
 
 
 def _make_asset_scan_loop(asset_id: str) -> LoopAgent:
+    """Create a per-asset scan LoopAgent pipeline.
+
+    Args:
+        asset_id: Drone asset identifier used to bind generated tools/agents.
+
+    Returns:
+        Configured LoopAgent that repeatedly picks, navigates, and scans for
+        the provided asset.
+    """
     suffix = _asset_suffix(asset_id)
     current_key = f"current_building_{suffix}"
     nav_key = f"nav_result_{suffix}"
 
     async def _pick_asset_building(tool_context: ToolContext) -> dict:
+        """Select the next building assigned to this asset.
+
+        Args:
+            tool_context: ADK tool context containing shared queue state.
+
+        Returns:
+            A per-asset building selection payload from shared queue state.
+        """
         return await pick_next_building_for_asset(asset_id, tool_context)
 
     _pick_asset_building.__name__ = f"pick_next_building_{suffix}"
     pick_tool = FunctionTool(func=_pick_asset_building)
 
     def _save_asset_result(result: str, tool_context: ToolContext) -> dict:
+        """Persist one per-building scan result for this asset.
+
+        Args:
+            result: Compact building scan result text.
+            tool_context: ADK tool context containing mutable state.
+
+        Returns:
+            Save status payload for this asset.
+        """
         return save_scan_result_for_asset(asset_id, result, tool_context)
 
     _save_asset_result.__name__ = f"save_scan_result_{suffix}"
     save_tool = FunctionTool(func=_save_asset_result)
 
-    picker_instruction = f"""You manage the building scan queue for {asset_id}.
+    picker_instruction = ASSET_SCAN_PICKER_INSTRUCTION_TEMPLATE.format(
+        asset_id=asset_id,
+        pick_function_name=_pick_asset_building.__name__,
+    )
 
-1. Call {_pick_asset_building.__name__}().
-2. If done=True: output "QUEUE_EMPTY" and stop.
-3. If done=False: output EXACTLY this line (fill values, no extra text):
-   SCAN TARGET: Navigate <asset_id> to building at (x=<x>, z=<z>). Height: <height>m. Remaining: <remaining>.
-"""
+    nav_instruction = ASSET_SCAN_NAV_INSTRUCTION_TEMPLATE.format(current_key=current_key)
 
-    nav_instruction = f"""You are a navigation specialist for autonomous drones.
-
-COORDINATES: X=East, Y=Up, Z=South. Home pad at (0, 2, 0).
-
-Your target for this iteration is in state["{current_key}"]. Parse the asset_id,
-x, and z from it (e.g. "Navigate BEACON-01 to building at (x=-15.0, z=-20.0). Height: 12m.").
-
-MOVE PROCEDURE
-1. Call resolve_scan_target(target_x, target_z) to snap to the building centre.
-2. Set target_y = building.height + 5 (rooftop hover altitude, NOT recommended_scan_y).
-3. Call plan_route(asset_id, resolved_x, resolved_z, target_y).
-4. If plan_route returns {{\"error\": \"No clear route found\"}}:
-   - Call get_drone_status(asset_id) and retry with target_y = max(current_y + 5, 10).
-   - Retry once more with target_y = max(current_y + 10, 15) if still failing.
-   - Report failure and stop if all retries fail. Do NOT call move_drone_to.
-5. If waypoints list is empty, the drone is already at destination — skip move step.
-6. For each waypoint in "waypoints", call move_drone_to(asset_id, wp.x, wp.y, wp.z).
-7. After the final move: "BEACON-XX arrived at (x, y, z)."
-"""
-
-    thermal_instruction = f"""You are a thermal imaging specialist for search and rescue drones.
-
-COORDINATES: X=East, Y=Up, Z=South.
-
-SCAN GATE
-0. If shared state has {nav_key} and {nav_key} contains "error":
-   - Call {_save_asset_result.__name__}("NAV FAILED for building in {current_key}: <nav error>").
-   - Output "Navigation failed; scan skipped." and stop.
-   - Do NOT call scan_area or sweep_scan_building.
-
-SWEEP SCAN PROCEDURE
-1. Parse asset_id, x, z from state["{current_key}"].
-   Also note whether state["{current_key}"] contains "Remaining: 0" — this means no queued building remains after this one.
-2. Call sweep_scan_building(asset_id, target_x=x, target_z=z) — always pass building coordinates explicitly.
-3. Build a compact result string from the tool response:
-   - Success: "Building at (x=<x>, z=<z>): <reported_survivor_count> survivor(s) across <level_count> level(s). Waypoints: <waypoint_count>."
-     If unique_survivor_count > 0, append survivor lines:
-       "  - Survivor <id>: (<x>, <y>, <z>)[SUBMERGED — CRITICAL]".
-   - Error:   "Building at (x=<x>, z=<z>): SCAN ERROR — <error>"
-4. Call {_save_asset_result.__name__}(result=<compact_string>).
-5. Output only: "Result saved for building at (x=<x>, z=<z>)."
-"""
+    thermal_instruction = ASSET_SCAN_THERMAL_INSTRUCTION_TEMPLATE.format(
+        nav_key=nav_key,
+        current_key=current_key,
+        save_function_name=_save_asset_result.__name__,
+    )
 
     picker_agent = Agent(
         name=f"building_picker_agent_{suffix}",
@@ -792,7 +840,7 @@ SWEEP SCAN PROCEDURE
         generate_content_config=QWEN3_GEN_CONFIG,
         output_key=nav_key,
         instruction=nav_instruction,
-        tools=[make_toolset(NAV_TOOLS)],
+        tools=[make_toolset(_SCAN_LOOP_NAV_TOOLS)],
     )
 
     thermal_agent = Agent(
@@ -801,7 +849,7 @@ SWEEP SCAN PROCEDURE
         description=f"Sweep-scans current building for {asset_id} and saves compact results.",
         generate_content_config=QWEN3_GEN_CONFIG,
         instruction=thermal_instruction,
-        tools=[make_toolset(THERMAL_TOOLS), save_tool, FunctionTool(get_shared_state)],
+        tools=[make_toolset(THERMAL_TOOLS), save_tool, get_shared_state],
     )
 
     return LoopAgent(
@@ -816,6 +864,14 @@ _asset_scan_loop_cache: dict[str, LoopAgent] = {}
 
 
 def _get_or_create_asset_scan_loop(asset_id: str) -> LoopAgent:
+    """Fetch a cached per-asset scan loop or create one.
+
+    Args:
+        asset_id: Drone asset identifier.
+
+    Returns:
+        Cached or newly created LoopAgent instance for the asset.
+    """
     loop = _asset_scan_loop_cache.get(asset_id)
     if loop is None:
         loop = _make_asset_scan_loop(asset_id)
@@ -831,9 +887,16 @@ _fleet_parallel_scan_loops = ParallelAgent(
 
 
 def _set_active_parallel_loops(asset_ids: list[str]) -> None:
-    """Configure parallel loop count from current fleet assignment result."""
+    """Configure active parallel scan loops from assigned assets.
+
+    Args:
+        asset_ids: Asset identifiers that should run parallel scan loops.
+
+    Returns:
+        None. Updates parallel agent sub-agent configuration in place.
+    """
     if not asset_ids:
-        asset_ids = ["BEACON-01"]
+        return
     _fleet_parallel_scan_loops.sub_agents = [
         _get_or_create_asset_scan_loop(asset_id)
         for asset_id in asset_ids
@@ -842,12 +905,7 @@ def _set_active_parallel_loops(asset_ids: list[str]) -> None:
 
 # ── Final report agent ─────────────────────────────────────────────────────────
 
-_REPORT_INSTRUCTION = """You produce the final consolidated scan report — but ONLY if it hasn't been emitted yet.
-
-1. Check: if the previous agent output already contains "AREA SCAN COMPLETE", output exactly "Report emitted." and stop. Do NOT call any tool.
-2. Otherwise: call build_aggregated_scan_report() and output result["summary"] verbatim.
-3. Do NOT add extra text, markdown, or explanation.
-"""
+_REPORT_INSTRUCTION = SCAN_REPORT_INSTRUCTION
 
 _scan_report_agent = Agent(
     name="scan_report_agent",
@@ -861,36 +919,22 @@ _scan_report_agent = Agent(
 
 # ── Fleet agents ──────────────────────────────────────────────────────────────
 
-_FLEET_TOOL_NAMES = tuple(FLEET_TOOLS)
-
-_FLEET_ASSIGNER_INSTRUCTION = """You assign available drones to buildings for a fleet scan.
-
-1. Call assign_drones_to_buildings().
-   The tool reads the scan queue and assigns only ONE initial building per drone.
-2. If the result contains "error": output the error message clearly and stop.
-3. Otherwise output a brief assignment summary — one line per assignment:
-   Fleet assigned: <total_assigned> drone(s) dispatched.
-   <asset_id> → Building at (x=<x>, z=<z>) [<distance_m>m]
-   (repeat for each assignment)
-   If unassigned_buildings is non-empty: "<N> building(s) queued for dynamic pickup."
-"""
+_FLEET_ASSIGNER_INSTRUCTION = SCAN_FLEET_ASSIGNER_INSTRUCTION
 
 _fleet_assigner_agent = Agent(
     name="fleet_assigner_agent",
     model=QWEN3_INSTRUCT,
-    description="Assigns the closest available IDLE drones to buildings using proximity-based greedy matching.",
+    description=(
+        "Assigns drones to buildings with optimization: highest battery first when all are at base, "
+        "otherwise proximity-based greedy matching."
+    ),
     generate_content_config=QWEN3_GEN_CONFIG,
     instruction=_FLEET_ASSIGNER_INSTRUCTION,
     tools=[_assign_drones_tool],
 )
 
 
-_FLEET_EXECUTOR_INSTRUCTION = """You execute the fleet scan missions for all assigned drone-building pairs.
-
-1. Call prepare_parallel_fleet_scan().
-2. If the result contains "error": output the error message to the operator and stop.
-3. If success, confirm that one LoopAgent per BEACON will run in parallel, then continue.
-"""
+_FLEET_EXECUTOR_INSTRUCTION = SCAN_FLEET_EXECUTOR_INSTRUCTION
 
 _fleet_scan_prep_agent = Agent(
     name="fleet_scan_prep_agent",
@@ -904,36 +948,7 @@ _fleet_scan_prep_agent = Agent(
 
 # ── Resolver agent ─────────────────────────────────────────────────────────────
 
-_RESOLVER_INSTRUCTION = """You build the list of buildings to scan.
-
-COORDINATES: X=East, Y=Up, Z=South.
-
-MULTI-BUILDING EXPLICIT — command lists two or more buildings with coordinates:
-  (e.g. "scan building A at (20, -20) and building B at (12, -27)")
-  1. For EACH building coordinate, call resolve_scan_target(target_x, target_z).
-  2. Collect every matched_building result into the buildings list.
-  3. asset_id = the asset_id from the command; if none is mentioned use "auto".
-
-SINGLE BUILDING — command targets one specific building or coordinate:
-  1. Call resolve_scan_target(target_x, target_z).
-  2. If matched_building=true, wrap the resolved building in a 1-item list.
-  3. If matched_building=false, use the provided coordinates as a 1-item list
-      with id=-1, height=0, bounds={min_x:x, max_x:x, min_z:z, max_z:z}.
-  4. asset_id = the asset_id from the command; if none is mentioned use "auto".
-
-AREA SCAN — command mentions area / zone / radius / "all buildings" with no explicit list:
-  1. Call find_buildings_in_area(center_x, center_z, radius).
-     Default radius = 30.0 m unless the operator specifies one.
-  2. asset_id = "auto" (fleet assignment will pick the best drones).
-
-ASSET ID RULE: Use "auto" whenever no specific drone is named in the command.
-Only use a real asset_id (e.g. "BEACON-01") when the operator explicitly names it.
-
-In all cases, output ONLY valid JSON — no markdown, no extra text:
-  {"asset_id": "<asset_id or auto>", "buildings": [<building objects>]}
-
-Each building object must have: id, x, z, height, bounds{min_x,max_x,min_z,max_z}.
-"""
+_RESOLVER_INSTRUCTION = SCAN_RESOLVER_INSTRUCTION
 
 _scan_resolver_agent = Agent(
     name="scan_resolver_agent",

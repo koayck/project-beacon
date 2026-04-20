@@ -9,7 +9,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from fastmcp.utilities.lifespan import combine_lifespans
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
-from google.genai import types as genai_types
+from google.genai import types
 from pydantic import BaseModel
 
 from backend.db.repository import init_db, asset_repo, mission_log_repo
@@ -78,15 +78,42 @@ _STARLINK_STATUS_FILE = Path(
 _mcp_http_app = beacon_mcp.http_app(path="/", transport="streamable-http")
 
 
+def _as_dict(value: object) -> dict | None:
+    try:
+        value.get  # type: ignore[attr-defined]
+    except AttributeError:
+        return None
+    return value  # type: ignore[return-value]
+
+
+def _as_list(value: object) -> list | None:
+    try:
+        value.append  # type: ignore[attr-defined]
+        value.__iter__  # type: ignore[attr-defined]
+    except AttributeError:
+        return None
+    return value  # type: ignore[return-value]
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _first_exception_message(exc: BaseException) -> str:
     """Return the first concrete nested exception message for ExceptionGroup errors."""
     current: BaseException = exc
-    while isinstance(current, BaseExceptionGroup) and current.exceptions:
-        next_exc = current.exceptions[0]
-        if isinstance(next_exc, BaseException):
-            current = next_exc
-        else:
+    while True:
+        try:
+            next_exc = current.exceptions[0]  # type: ignore[attr-defined]
+        except (AttributeError, IndexError, TypeError):
             break
+        try:
+            raise next_exc
+        except BaseException as nested:
+            current = nested
     return f"{type(current).__name__}: {current}"
 
 
@@ -103,36 +130,40 @@ def _extract_survivor_coords(payload: object) -> list[dict[str, float]]:
     }
 
     def _add_point(candidate: object) -> None:
-        if not isinstance(candidate, dict):
+        candidate_dict = _as_dict(candidate)
+        if candidate_dict is None:
             return
-        x = candidate.get("x")
-        y = candidate.get("y")
-        z = candidate.get("z")
-        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)) or not isinstance(z, (int, float)):
+        x = _to_float(candidate_dict.get("x"))
+        y = _to_float(candidate_dict.get("y"))
+        z = _to_float(candidate_dict.get("z"))
+        if x is None or y is None or z is None:
             return
-        key = (round(float(x), 3), round(float(y), 3), round(float(z), 3))
+        key = (round(x, 3), round(y, 3), round(z, 3))
         if key in seen:
             return
         seen.add(key)
         survivors.append({"x": key[0], "y": key[1], "z": key[2]})
 
     def _walk(node: object, from_survivor_collection: bool = False) -> None:
-        if isinstance(node, dict):
+        node_dict = _as_dict(node)
+        if node_dict is not None:
             if from_survivor_collection or (
-                node.get("object_type") == "survivor"
-                or "submerged" in node
-                or "distance" in node
+                node_dict.get("object_type") == "survivor"
+                or "submerged" in node_dict
+                or "distance" in node_dict
             ):
-                _add_point(node)
-            for key, value in node.items():
-                if key == "objects" and isinstance(value, list):
+                _add_point(node_dict)
+            for key, value in node_dict.items():
+                if key == "objects" and _as_list(value) is not None:
                     for obj in value:
-                        if isinstance(obj, dict) and obj.get("object_type") == "survivor":
-                            _add_point(obj)
+                        obj_dict = _as_dict(obj)
+                        if obj_dict is not None and obj_dict.get("object_type") == "survivor":
+                            _add_point(obj_dict)
                 _walk(value, key in survivor_collection_keys)
             return
-        if isinstance(node, list):
-            for item in node:
+        node_list = _as_list(node)
+        if node_list is not None:
+            for item in node_list:
                 _walk(item, from_survivor_collection)
 
     _walk(payload)
@@ -144,61 +175,64 @@ def _extract_supply_dispatches(tool_name: str, payload: object) -> list[dict[str
     if tool_name == "build_aggregated_supply_report":
         # Final report returns historical rows; don't re-emit old dispatches.
         return []
-    if not isinstance(payload, dict):
+    payload_dict = _as_dict(payload)
+    if payload_dict is None:
         return []
 
-    rows = payload.get("results")
-    if not isinstance(rows, list):
+    rows = _as_list(payload_dict.get("results"))
+    if rows is None:
         return []
 
     dispatches: list[dict[str, object]] = []
     for row in rows:
-        if not isinstance(row, dict):
+        row_dict = _as_dict(row)
+        if row_dict is None:
             continue
-        supply_result = row.get("supply_result")
-        if not isinstance(supply_result, dict):
+        supply_result = _as_dict(row_dict.get("supply_result"))
+        if supply_result is None:
             continue
         if "error" in supply_result:
             continue
         if bool(supply_result.get("skipped", False)):
             continue
 
-        asset_id = row.get("asset_id")
-        target = row.get("target", row.get("survivor", row.get("building")))
-        drop_point = supply_result.get("drop_point")
-        if not isinstance(asset_id, str):
+        asset_id = row_dict.get("asset_id")
+        asset_id_str = str(asset_id).strip() if asset_id is not None else ""
+        if not asset_id_str:
             continue
-        if not isinstance(target, dict):
+        target = _as_dict(row_dict.get("target", row_dict.get("survivor", row_dict.get("building"))))
+        if target is None:
             continue
-        if not isinstance(drop_point, dict):
+        drop_point = _as_dict(supply_result.get("drop_point"))
+        if drop_point is None:
             continue
 
-        sx = target.get("x")
-        sy = target.get("y")
-        sz = target.get("z")
-        dx = drop_point.get("x")
-        dy = drop_point.get("y")
-        dz = drop_point.get("z")
-        if not isinstance(sx, (int, float)) or not isinstance(sz, (int, float)):
+        sx = _to_float(target.get("x"))
+        sy = _to_float(target.get("y"))
+        sz = _to_float(target.get("z"))
+        dx = _to_float(drop_point.get("x"))
+        dy = _to_float(drop_point.get("y"))
+        dz = _to_float(drop_point.get("z"))
+        if sx is None or sz is None:
             continue
-        if not isinstance(dx, (int, float)) or not isinstance(dy, (int, float)) or not isinstance(dz, (int, float)):
+        if dx is None or dy is None or dz is None:
             continue
 
         item: dict[str, object] = {
-            "asset_id": asset_id,
+            "asset_id": asset_id_str,
             "survivor": {
-                "x": float(sx),
-                "y": float(sy) if isinstance(sy, (int, float)) else 0.0,
-                "z": float(sz),
+                "x": sx,
+                "y": sy if sy is not None else 0.0,
+                "z": sz,
             },
-            "drop_point": {"x": float(dx), "y": float(dy), "z": float(dz)},
+            "drop_point": {"x": dx, "y": dy, "z": dz},
         }
-        matched_building = supply_result.get("matched_building")
-        if isinstance(matched_building, dict):
-            bx = matched_building.get("center_x")
-            bz = matched_building.get("center_z")
-            if isinstance(bx, (int, float)) and isinstance(bz, (int, float)):
-                item["building"] = {"x": float(bx), "z": float(bz)}
+        matched_building = _as_dict(supply_result.get("matched_building"))
+        if matched_building is not None:
+            bx = _to_float(matched_building.get("center_x"))
+            bz = _to_float(matched_building.get("center_z"))
+            if bx is not None and bz is not None:
+                item["building"] = {"x": bx, "z": bz}
         dispatches.append(item)
     return dispatches
 
@@ -232,7 +266,7 @@ async def app_lifespan(app: FastAPI):
             asset.asset_id, asset.grpc_host, asset.grpc_port,
         )
 
-    from backend.agents.enhanced_commander import enhanced_commander
+    from backend.agents.commander import enhanced_commander
 
     _adk_runner = Runner(
         agent=enhanced_commander,
@@ -556,8 +590,8 @@ async def send_command(req: CommandRequest) -> dict:
         raise HTTPException(status_code=503, detail="ADK runner not initialised")
 
     prompt = _build_agent_prompt(req)
-    content = genai_types.Content(
-        role="user", parts=[genai_types.Part(text=prompt)]
+    content = types.Content(
+        role="user", parts=[types.Part(text=prompt)]
     )
 
     session_id = str(uuid.uuid4())
@@ -570,7 +604,11 @@ async def send_command(req: CommandRequest) -> dict:
     response_text = ""
     text_candidates: list[str] = []
     sweep_prompt = is_sweep_scan_prompt(req.prompt)
-    async for event in _adk_runner.run_async(
+    runner = _adk_runner
+    if runner is None:
+        raise HTTPException(status_code=503, detail="ADK runner not initialised")
+
+    async for event in runner.run_async(
         user_id="gcs",
         session_id=session_id,
         new_message=content,
@@ -584,14 +622,18 @@ async def send_command(req: CommandRequest) -> dict:
             elif part.function_response:
                 resp = dict(part.function_response.response or {})
                 message = resp.get("message")
-                if isinstance(message, str) and message.strip():
-                    text_candidates.append(message)
+                message_text = str(message).strip() if message is not None else ""
+                if message_text:
+                    text_candidates.append(message_text)
 
         if event.is_final_response():
             for part in event.content.parts:
                 if part.text and part.text.strip():
                     response_text = part.text
                     break
+
+    print(f"ADK final response: {response_text}")
+    print(f"ADK text_candidates: {text_candidates}")
 
     if sweep_prompt:
         response_text = prefer_structured_sweep_report(
@@ -624,8 +666,8 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
         raise HTTPException(status_code=503, detail="ADK runner not initialised")
 
     prompt = _build_agent_prompt(req)
-    content = genai_types.Content(
-        role="user", parts=[genai_types.Part(text=prompt)]
+    content = types.Content(
+        role="user", parts=[types.Part(text=prompt)]
     )
 
     session_id = str(uuid.uuid4())
@@ -634,6 +676,10 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
         user_id="gcs",
         session_id=session_id,
     )
+
+    runner = _adk_runner
+    if runner is None:
+        raise HTTPException(status_code=503, detail="ADK runner not initialised")
 
     async def generate() -> AsyncGenerator[str, None]:
         final_text = ""
@@ -646,7 +692,7 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
 
         async def adk_loop() -> None:
             try:
-                async for event in _adk_runner.run_async(
+                async for event in runner.run_async(
                     user_id="gcs",
                     session_id=session_id,
                     new_message=content,
@@ -707,15 +753,15 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                         supply_dispatches = _extract_supply_dispatches(part.function_response.name, resp)
                         if (
                             sweep_prompt
-                            and isinstance(message, str)
-                            and is_structured_sweep_report(message)
+                            and is_structured_sweep_report(str(message))
                         ):
-                            preferred_sweep_report = message
-                            final_text = message
+                            message_text = str(message)
+                            preferred_sweep_report = message_text
+                            final_text = message_text
                             if first_token_time is None:
                                 first_token_time = time.perf_counter()
-                            total_chars += len(message)
-                            payload: dict = {"type": "text", "text": message, "agent": event.author}
+                            total_chars += len(message_text)
+                            payload: dict = {"type": "text", "text": message_text, "agent": event.author}
                             if survivors_payload:
                                 payload["survivors"] = survivors_payload
                             if supply_dispatches:

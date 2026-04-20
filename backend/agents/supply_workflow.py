@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+from typing import Any
 
 from google.adk.agents import Agent, LoopAgent, ParallelAgent, SequentialAgent
 from google.adk.tools import FunctionTool
@@ -11,13 +12,75 @@ from google.adk.tools.tool_context import ToolContext
 
 from backend.agents._mcp import make_toolset
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
+from backend.instructions.supply_workflow_text import (
+    ASSET_SUPPLY_WORKER_INSTRUCTION_TEMPLATE,
+    SUPPLY_ASSIGNER_INSTRUCTION,
+    SUPPLY_EXECUTOR_INSTRUCTION,
+    SUPPLY_REPORT_INSTRUCTION,
+    SUPPLY_RESOLVER_INSTRUCTION,
+)
 from backend.services.core import context as service_context
 
 _SUPPLY_QUEUE_LOCK = asyncio.Lock()
 _PARALLEL_BEACON_IDS = ["BEACON-01"]
 
 
-def _load_json_state(value: object, fallback):
+def _as_dict(value: object) -> dict | None:
+    """Return a mapping-like value when possible.
+
+    Args:
+        value: Candidate object to validate as mapping-like.
+
+    Returns:
+        The original object when it exposes mapping access, otherwise None.
+    """
+    try:
+        value.get  # type: ignore[attr-defined]
+    except AttributeError:
+        return None
+    return value  # type: ignore[return-value]
+
+
+def _to_float(value: Any) -> float | None:
+    """Convert an arbitrary value to float.
+
+    Args:
+        value: Value to convert.
+
+    Returns:
+        The converted float value, or None when conversion fails.
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int_id(value: Any) -> int | None:
+    """Convert an arbitrary value to integer.
+
+    Args:
+        value: Value to convert.
+
+    Returns:
+        The converted integer value, or None when conversion fails.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _load_json_state(value: object, fallback: Any) -> Any:
+    """Decode state value that may be JSON text.
+
+    Args:
+        value: Raw state value, possibly JSON-encoded text.
+        fallback: Value returned when decoding fails or value is missing.
+
+    Returns:
+        Parsed JSON object, passthrough value, or fallback on decode errors.
+    """
     try:
         if isinstance(value, str):
             return json.loads(value)
@@ -27,17 +90,31 @@ def _load_json_state(value: object, fallback):
 
 
 def _target_key(target: dict) -> str:
+    """Build a stable key for survivor target deduplication.
+
+    Args:
+        target: Survivor target payload containing id and/or coordinates.
+
+    Returns:
+        Stable target key using normalized id when possible, otherwise
+        coordinate-derived fallback key.
+    """
     sid = target.get("id")
-    if isinstance(sid, int):
-        return f"id:{sid}"
-    if isinstance(sid, float) and sid.is_integer():
-        return f"id:{int(sid)}"
-    if isinstance(sid, str):
-        normalized = sid.strip()
-        if normalized:
-            if normalized.isdigit():
-                return f"id:{int(normalized)}"
-            return f"id:{normalized.lower()}"
+    sid_int = _to_int_id(sid)
+    sid_float = _to_float(sid)
+    if sid_int is not None and sid_float is not None and sid_float.is_integer():
+        return f"id:{sid_int}"
+    if sid is None:
+        normalized = ""
+    else:
+        try:
+            normalized = sid.strip()
+        except AttributeError:
+            normalized = ""
+    if normalized:
+        if normalized.isdigit():
+            return f"id:{int(normalized)}"
+        return f"id:{normalized.lower()}"
     x = float(target.get("x", 0.0))
     y = float(target.get("y", 0.0))
     z = float(target.get("z", 0.0))
@@ -45,25 +122,43 @@ def _target_key(target: dict) -> str:
 
 
 def _dedupe_targets(targets: list[dict]) -> list[dict]:
+    """Remove duplicate survivor targets while preserving first-seen order.
+
+    Args:
+        targets: Raw survivor target list.
+
+    Returns:
+        Deduplicated survivor target list.
+    """
     seen: set[str] = set()
     deduped: list[dict] = []
     for target in targets:
-        if not isinstance(target, dict):
+        target_dict = _as_dict(target)
+        if target_dict is None:
             continue
-        key = _target_key(target)
+        key = _target_key(target_dict)
         if key in seen:
             continue
         seen.add(key)
-        deduped.append(target)
+        deduped.append(target_dict)
     return deduped
 
 
 def _filter_unsupplied_targets(targets: list[dict]) -> list[dict]:
+    """Filter out targets already marked as supplied.
+
+    Args:
+        targets: Survivor target candidates.
+
+    Returns:
+        Targets that have not been registered as supplied.
+    """
     supplied_keys = service_context.get_supplied_target_keys()
     return [
-        target
+        target_dict
         for target in targets
-        if isinstance(target, dict) and _target_key(target) not in supplied_keys
+        for target_dict in [_as_dict(target)]
+        if target_dict is not None and _target_key(target_dict) not in supplied_keys
     ]
 
 
@@ -71,6 +166,13 @@ async def assign_drones_to_supply_targets(tool_context: ToolContext) -> dict:
     """
     Read state["supply_targets"], assign closest available drones, and persist
     assignment payload into state["supply_assignments"].
+
+    Args:
+        tool_context: ADK tool context containing survivor target state.
+
+    Returns:
+        Assignment payload persisted to state, including assignments,
+        unassigned targets, optional notes, or error details.
     """
     from backend.services.api import assign_fleet_to_buildings
 
@@ -131,6 +233,13 @@ async def assign_drones_to_supply_targets(tool_context: ToolContext) -> dict:
 def prepare_parallel_supply_dispatch(tool_context: ToolContext) -> dict:
     """
     Build per-beacon initial survivor assignments plus a shared pending queue.
+
+    Args:
+        tool_context: ADK tool context containing supply assignment output.
+
+    Returns:
+        Preparation status payload with active assets and queue sizes, or an
+        error payload when dispatch setup cannot proceed.
     """
     data = _load_json_state(tool_context.state.get("supply_assignments", "{}"), {})
     if "error" in data:
@@ -170,8 +279,8 @@ def prepare_parallel_supply_dispatch(tool_context: ToolContext) -> dict:
     pending: list[dict] = list(data.get("unassigned_targets", []))
     for row in assignments:
         aid = row.get("asset_id")
-        target = row.get("target", row.get("survivor", row.get("building")))
-        if not aid or not isinstance(target, dict):
+        target = _as_dict(row.get("target", row.get("survivor", row.get("building"))))
+        if not aid or target is None:
             continue
         key = _target_key(target)
         if key in seen_initial_keys:
@@ -218,6 +327,14 @@ async def process_next_supply_target_for_asset(asset_id: str, tool_context: Tool
     """
     Claim one survivor target for this beacon, dispatch supply, and persist result.
     Loop terminates when no targets remain.
+
+    Args:
+        asset_id: Drone asset identifier for this loop instance.
+        tool_context: ADK tool context containing shared dispatch state.
+
+    Returns:
+        A payload describing completion status, selected target (when any),
+        dispatch outcome, and remaining queued work metadata.
     """
     from backend.runtime import grpc_client as runtime_grpc_client
     from backend.services.api.control import dispatch_supply_to_building
@@ -249,8 +366,8 @@ async def process_next_supply_target_for_asset(asset_id: str, tool_context: Tool
         dispatched = int(done_count.get(asset_id, 0))
         if not bool(claimed_initial.get(asset_id, False)):
             claimed_initial[asset_id] = True
-            candidate = initial_by_asset.get(asset_id)
-            if isinstance(candidate, dict):
+            candidate = _as_dict(initial_by_asset.get(asset_id))
+            if candidate is not None:
                 candidate_key = _target_key(candidate)
                 if candidate_key not in completed_keys and candidate_key not in inflight_keys:
                     target = candidate
@@ -260,31 +377,33 @@ async def process_next_supply_target_for_asset(asset_id: str, tool_context: Tool
         if target is None and pending:
             filtered_pending: list[dict] = []
             for candidate in pending:
-                if not isinstance(candidate, dict):
+                candidate_dict = _as_dict(candidate)
+                if candidate_dict is None:
                     continue
-                if _target_key(candidate) in completed_keys:
+                if _target_key(candidate_dict) in completed_keys:
                     continue
-                filtered_pending.append(candidate)
+                filtered_pending.append(candidate_dict)
             pending = filtered_pending
             pick_index: int | None = None
             closest_dist = float("inf")
             for idx, candidate in enumerate(pending):
-                tx = candidate.get("x")
-                tz = candidate.get("z")
-                if not isinstance(tx, (int, float)) or not isinstance(tz, (int, float)):
+                tx = _to_float(candidate.get("x"))
+                tz = _to_float(candidate.get("z"))
+                if tx is None or tz is None:
                     continue
                 candidate_key = _target_key(candidate)
                 if candidate_key in completed_keys or candidate_key in inflight_keys:
                     continue
-                dist = math.sqrt((float(tx) - drone_x) ** 2 + (float(tz) - drone_z) ** 2)
+                dist = math.sqrt((tx - drone_x) ** 2 + (tz - drone_z) ** 2)
                 if dist < closest_dist:
                     closest_dist = dist
                     pick_index = idx
             if pick_index is not None:
                 candidate = pending.pop(pick_index)
-                if isinstance(candidate, dict):
-                    target = candidate
-                    target_key = _target_key(candidate)
+                candidate_dict = _as_dict(candidate)
+                if candidate_dict is not None:
+                    target = candidate_dict
+                    target_key = _target_key(candidate_dict)
                     inflight_keys.add(target_key)
                     remaining = len(pending)
         if target is None:
@@ -363,7 +482,14 @@ async def process_next_supply_target_for_asset(asset_id: str, tool_context: Tool
 
 
 def build_aggregated_supply_report(tool_context: ToolContext) -> dict:
-    """Build one deterministic final report from all saved supply results."""
+    """Build one deterministic final report from saved supply results.
+
+    Args:
+        tool_context: ADK tool context containing accumulated supply results.
+
+    Returns:
+        Final summary payload with totals, failures/skips, and raw result rows.
+    """
     if bool(tool_context.state.get("supply_no_targets", False)):
         summary = "No survivors detected in the selected area. Supply dispatch skipped."
         return {
@@ -385,13 +511,14 @@ def build_aggregated_supply_report(tool_context: ToolContext) -> dict:
     skipped_targets = 0
     grouped_lines: dict[str, list[str]] = {}
     for row in rows:
-        if not isinstance(row, dict):
+        row_dict = _as_dict(row)
+        if row_dict is None:
             continue
-        asset_id = str(row.get("asset_id", "UNKNOWN"))
-        message = str(row.get("message", "")).strip()
-        if bool(row.get("success")):
+        asset_id = str(row_dict.get("asset_id", "UNKNOWN"))
+        message = str(row_dict.get("message", "")).strip()
+        if bool(row_dict.get("success")):
             total_supplied += 1
-        elif bool(row.get("skipped")):
+        elif bool(row_dict.get("skipped")):
             skipped_targets += 1
         else:
             failed += 1
@@ -441,26 +568,47 @@ _build_supply_report_tool = FunctionTool(func=build_aggregated_supply_report)
 
 
 def _asset_suffix(asset_id: str) -> str:
+    """Normalize an asset id into a safe generated-name suffix.
+
+    Args:
+        asset_id: Drone asset identifier.
+
+    Returns:
+        Lowercased, hyphen-normalized suffix string safe for agent/tool names.
+    """
     return asset_id.lower().replace("-", "_")
 
 
 def _make_asset_supply_loop(asset_id: str) -> LoopAgent:
+    """Create a per-asset supply LoopAgent pipeline.
+
+    Args:
+        asset_id: Drone asset identifier used to bind generated tools/agents.
+
+    Returns:
+        Configured LoopAgent that repeatedly dispatches queued targets for the
+        provided asset.
+    """
     suffix = _asset_suffix(asset_id)
 
     async def _process_asset_supply(tool_context: ToolContext) -> dict:
+        """Dispatch the next queued supply target for this asset.
+
+        Args:
+            tool_context: ADK tool context containing mutable dispatch state.
+
+        Returns:
+            Per-iteration dispatch result payload for this asset.
+        """
         return await process_next_supply_target_for_asset(asset_id, tool_context)
 
     _process_asset_supply.__name__ = f"process_next_supply_target_{suffix}"
     process_tool = FunctionTool(func=_process_asset_supply)
 
-    worker_instruction = f"""You execute the per-drone supply dispatch loop for {asset_id}.
-
-1. Call {_process_asset_supply.__name__}().
-2. If done=true: output "QUEUE_EMPTY" and stop.
-3. If done=false:
-   - If success=true: output message exactly from result["message"].
-   - If success=false: output message exactly from result["message"] and continue.
-"""
+    worker_instruction = ASSET_SUPPLY_WORKER_INSTRUCTION_TEMPLATE.format(
+        asset_id=asset_id,
+        process_function_name=_process_asset_supply.__name__,
+    )
 
     worker_agent = Agent(
         name=f"supply_worker_agent_{suffix}",
@@ -483,6 +631,14 @@ _asset_supply_loop_cache: dict[str, LoopAgent] = {}
 
 
 def _get_or_create_asset_supply_loop(asset_id: str) -> LoopAgent:
+    """Fetch a cached per-asset supply loop or create one.
+
+    Args:
+        asset_id: Drone asset identifier.
+
+    Returns:
+        Cached or newly created LoopAgent instance for the asset.
+    """
     loop = _asset_supply_loop_cache.get(asset_id)
     if loop is None:
         loop = _make_asset_supply_loop(asset_id)
@@ -498,47 +654,21 @@ _fleet_parallel_supply_loops = ParallelAgent(
 
 
 def _set_active_parallel_supply_loops(asset_ids: list[str]) -> None:
+    """Configure active parallel supply loops from assigned assets.
+
+    Args:
+        asset_ids: Asset identifiers that should run parallel supply loops.
+
+    Returns:
+        None. Updates parallel agent sub-agent configuration in place.
+    """
     _fleet_parallel_supply_loops.sub_agents = [
         _get_or_create_asset_supply_loop(asset_id)
         for asset_id in asset_ids
     ]
 
 
-_SUPPLY_RESOLVER_INSTRUCTION = """You build the list of survivors to receive supplies.
-
-COORDINATES: X=East, Y=Up, Z=South.
-
-MULTI-POINT EXPLICIT — command lists two or more coordinates:
-  1. For EACH coordinate, call
-     find_survivors_in_area(center_x, center_z, radius=4.0, detected_only=true, require_all_detected=true).
-  2. Add returned survivors to one combined list (deduplicate by survivor id).
-  3. asset_id = the asset_id from the command; if none is mentioned use "auto".
-
-SINGLE TARGET — command targets one specific coordinate/building:
-  1. Call find_survivors_in_area(center_x, center_z, radius=8.0, detected_only=true, require_all_detected=true).
-  2. Use returned survivors as the list (nearest-first).
-  3. asset_id = the asset_id from the command; if none is mentioned use "auto".
-
-AREA TARGET — command mentions area / zone / radius / "all buildings":
-  1. If bounds are provided (from x1,z1 to x2,z2), derive center and radius:
-     center_x = (x1+x2)/2, center_z = (z1+z2)/2, radius = max(|x2-x1|, |z2-z1|)/2.
-  2. Call find_survivors_in_area(
-       center_x, center_z, radius, detected_only=true, require_all_detected=true
-     ).
-      Default radius = 30.0 m unless specified.
-  3. asset_id = "auto" unless a specific drone is explicitly requested.
-
-If the tool response indicates survivors=[] (or detection_gate_blocked=true),
-output survivors as [] so supply dispatch is skipped.
-
-ASSET ID RULE: Use "auto" whenever no specific drone is named in the command.
-Only use a real asset_id (e.g. "BEACON-01") when explicitly named.
-
-Output ONLY valid JSON — no markdown, no extra text:
-  {"asset_id": "<asset_id or auto>", "survivors": [<survivor objects>]}
-
-Each survivor object must have: id, x, y, z.
-"""
+_SUPPLY_RESOLVER_INSTRUCTION = SUPPLY_RESOLVER_INSTRUCTION
 
 _supply_resolver_agent = Agent(
     name="supply_resolver_agent",
@@ -551,17 +681,7 @@ _supply_resolver_agent = Agent(
 )
 
 
-_SUPPLY_ASSIGNER_INSTRUCTION = """You assign available drones to survivor targets.
-
-1. Call assign_drones_to_supply_targets().
-2. If result contains "error": output the error and stop.
-3. If total_assigned is 0 and unassigned_targets is empty: output exactly
-   "No survivors detected in the selected area. Supply dispatch skipped." and stop.
-4. Otherwise output a concise assignment summary:
-   Fleet assigned: <total_assigned> drone(s) dispatched.
-   <asset_id> → Survivor target at (x=<x>, z=<z>) [<distance_m>m]
-   If unassigned_targets exists: "<N> target(s) queued for dynamic pickup."
-"""
+_SUPPLY_ASSIGNER_INSTRUCTION = SUPPLY_ASSIGNER_INSTRUCTION
 
 _supply_assigner_agent = Agent(
     name="supply_assigner_agent",
@@ -573,13 +693,7 @@ _supply_assigner_agent = Agent(
 )
 
 
-_SUPPLY_EXECUTOR_INSTRUCTION = """You execute supply dispatch for all assigned drones.
-
-1. Call prepare_parallel_supply_dispatch().
-2. If result contains "error": output the error and stop.
-3. If result["mode"] == "no_targets", output result["message"] and stop.
-4. If success=true, confirm one LoopAgent per BEACON will run in parallel, then continue.
-"""
+_SUPPLY_EXECUTOR_INSTRUCTION = SUPPLY_EXECUTOR_INSTRUCTION
 
 _supply_prep_agent = Agent(
     name="supply_prep_agent",
@@ -591,12 +705,7 @@ _supply_prep_agent = Agent(
 )
 
 
-_SUPPLY_REPORT_INSTRUCTION = """You produce the final consolidated supply report.
-
-1. Call build_aggregated_supply_report().
-2. If success=true, output result["summary"] verbatim.
-3. Do NOT add markdown or extra explanation.
-"""
+_SUPPLY_REPORT_INSTRUCTION = SUPPLY_REPORT_INSTRUCTION
 
 _supply_report_agent = Agent(
     name="supply_report_agent",
@@ -625,6 +734,14 @@ _supply_execution_stage = SequentialAgent(
 
 
 def _set_supply_execution_enabled(enabled: bool) -> None:
+    """Enable or disable supply execution stage sub-agents.
+
+    Args:
+        enabled: True to enable execution stage pipeline; False to disable it.
+
+    Returns:
+        None. Mutates execution stage sub-agent list in place.
+    """
     if enabled:
         _supply_execution_stage.sub_agents = [
             _supply_prep_agent,

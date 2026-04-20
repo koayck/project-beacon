@@ -4,11 +4,19 @@ import asyncio
 import json
 import math
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 
 def _normalize_scan_route_error(message: object, fallback: str) -> str:
     text = str(message) if message is not None else fallback
     return text.replace("return route", "scan route")
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 async def sweep_scan_building(
     asset_id: str,
@@ -52,96 +60,13 @@ async def sweep_scan_building(
     if target_z is None:
         target_z = status["z"]
 
-    preplan = plan_building_vertical_sweep(
-        target_x=target_x,
-        target_z=target_z,
-        level_step=level_step,
-        standoff=standoff,
-    )
-    if not preplan.get("matched_building", False):
-        return {
-            "asset_id": asset_id,
-            "error": preplan.get("error", "No building found for sweep scan"),
-            "input": preplan.get("input", {"x": target_x, "z": target_z}),
-        }
-    if "error" in preplan:
-        return {
-            "asset_id": asset_id,
-            "error": preplan["error"],
-            "building": preplan.get("building"),
-            "flood_level": preplan.get("flood_level"),
-        }
-
-    waypoint_reports: list[dict] = []
-    rooftop = preplan["rooftop_position"]
-    building_cx: float = preplan["building"]["center_x"]
-    building_cz: float = preplan["building"]["center_z"]
-    building_min_x: float = preplan["building"]["min_x"]
-    building_max_x: float = preplan["building"]["max_x"]
-    building_min_z: float = preplan["building"]["min_z"]
-    building_max_z: float = preplan["building"]["max_z"]
-    building_height: float = preplan["building"]["height"]
-    _SURVIVOR_BUILDING_MARGIN = 2.1
-
-    def _belongs_to_target_building(sx: object, sy: object, sz: object) -> bool:
-        if not isinstance(sx, (int, float)) or not isinstance(sy, (int, float)) or not isinstance(sz, (int, float)):
-            return False
-        return (
-            building_min_x - _SURVIVOR_BUILDING_MARGIN <= float(sx) <= building_max_x + _SURVIVOR_BUILDING_MARGIN
-            and building_min_z - _SURVIVOR_BUILDING_MARGIN <= float(sz) <= building_max_z + _SURVIVOR_BUILDING_MARGIN
-            and -0.5 <= float(sy) <= building_height + floor_height_m
-        )
-
-    building_id = preplan["building"]["id"]
-    route = await plan_route_fn(
-        asset_id=asset_id,
-        target_x=rooftop["x"],
-        target_z=rooftop["z"],
-        target_y=rooftop["y"],
-        exclude_building_id=building_id,
-    )
-    if "error" in route:
-        return {
-            "asset_id": asset_id,
-            "error": "Sweep route blocked — cannot reach building rooftop",
-            "route_error": route["error"],
-            "route_obstacles": route.get("obstacles", []),
-            "completed_waypoints": 0,
-        }
-    for move_wp in route.get("waypoints", []):
-        move_result = await move_to(
-            asset_id, move_wp["x"], move_wp["y"], move_wp["z"],
-            get_speed(asset_id),
-        )
-        if not move_result.get("success", True):
-            return {
-                "asset_id": asset_id,
-                "error": "Failed while navigating to building rooftop",
-                "move_result": move_result,
-                "completed_waypoints": 0,
-            }
-        wait_result = await wait_until_waypoint_reached(
-            asset_id, move_wp["x"], move_wp["y"], move_wp["z"],
-            exclude_building_id=building_id,
-        )
-        if not wait_result.get("ok", False):
-            return {
-                "asset_id": asset_id,
-                "error": _normalize_scan_route_error(
-                    wait_result.get("error"),
-                    "Could not reach building rooftop",
-                ),
-                "status": wait_result.get("status"),
-                "completed_waypoints": 0,
-            }
-
     plan = plan_building_vertical_sweep(
         target_x=target_x,
         target_z=target_z,
         level_step=level_step,
         standoff=standoff,
-        approach_x=rooftop["x"],
-        approach_z=rooftop["z"],
+        approach_x=status.get("x"),
+        approach_z=status.get("z"),
     )
     if not plan.get("matched_building", False):
         return {
@@ -156,10 +81,39 @@ async def sweep_scan_building(
             "building": plan.get("building"),
             "flood_level": plan.get("flood_level"),
         }
-    rooftop = plan["rooftop_position"]
-    building_cx = plan["building"]["center_x"]
-    building_cz = plan["building"]["center_z"]
-    building_id = plan["building"]["id"]
+
+    building = plan.get("building", {})
+    fallback_rooftop = {
+        "x": float(building.get("center_x", target_x)),
+        "y": float(building.get("height", 0.0)) + float(standoff),
+        "z": float(building.get("center_z", target_z)),
+    }
+
+    waypoint_reports: list[dict] = []
+    rooftop = plan.get("rooftop_position", fallback_rooftop)
+    building_cx: float = float(building.get("center_x", target_x))
+    building_cz: float = float(building.get("center_z", target_z))
+    building_min_x: float = float(building.get("min_x", building_cx))
+    building_max_x: float = float(building.get("max_x", building_cx))
+    building_min_z: float = float(building.get("min_z", building_cz))
+    building_max_z: float = float(building.get("max_z", building_cz))
+    building_height: float = float(building.get("height", rooftop["y"]))
+    _SURVIVOR_BUILDING_MARGIN = 2.1
+
+    def _belongs_to_target_building(sx: object, sy: object, sz: object) -> bool:
+        sx_f = _to_float(sx)
+        sy_f = _to_float(sy)
+        sz_f = _to_float(sz)
+        if sx_f is None or sy_f is None or sz_f is None:
+            return False
+        return (
+            building_min_x - _SURVIVOR_BUILDING_MARGIN <= sx_f <= building_max_x + _SURVIVOR_BUILDING_MARGIN
+            and building_min_z - _SURVIVOR_BUILDING_MARGIN <= sz_f <= building_max_z + _SURVIVOR_BUILDING_MARGIN
+            and -0.5 <= sy_f <= building_height + floor_height_m
+        )
+
+    building_id_raw = building.get("id")
+    building_id = int(building_id_raw) if isinstance(building_id_raw, (int, float)) else None
 
     if plan["waypoints"]:
         first_wp = plan["waypoints"][0]
@@ -173,7 +127,7 @@ async def sweep_scan_building(
         if "error" in transition_route:
             return {
                 "asset_id": asset_id,
-                "error": "Sweep start blocked — cannot reach first scan waypoint",
+                "error": "Sweep route blocked",
                 "route_error": transition_route["error"],
                 "route_obstacles": transition_route.get("obstacles", []),
                 "completed_waypoints": 0,
@@ -315,14 +269,15 @@ async def sweep_scan_building(
         survivors_in_scan_radius = [
             det
             for det in detected_survivors
-            if isinstance(det.get("distance"), (int, float))
+            if (_to_float(det.get("distance")) is not None)
             and math.isfinite(float(det["distance"]))
             and float(det["distance"]) <= scan_radius
         ]
         view_survivor_count = view.get("survivors_in_range")
         survivors_visible_count = len(detected_survivors)
-        if isinstance(view_survivor_count, int):
-            survivors_visible_count = max(survivors_visible_count, view_survivor_count)
+        view_survivor_count_int = _to_float(view_survivor_count)
+        if view_survivor_count_int is not None and view_survivor_count_int.is_integer():
+            survivors_visible_count = max(survivors_visible_count, int(view_survivor_count_int))
         survivors_within_radius_count = len(survivors_in_scan_radius)
         waypoint_reports.append(
             {
@@ -354,8 +309,10 @@ async def sweep_scan_building(
     for report in waypoint_reports:
         for det in report.get("detected_survivors", []):
             sid = det.get("id")
-            if not isinstance(sid, int):
+            sid_value = _to_float(sid)
+            if sid_value is None or not sid_value.is_integer():
                 continue
+            sid = int(sid_value)
             entry = survivor_detection_index.get(sid)
             if entry is None:
                 survivor_detection_index[sid] = {
@@ -375,10 +332,12 @@ async def sweep_scan_building(
             entry["submerged"] = bool(entry["submerged"]) or bool(det.get("submerged", False))
             distance = det.get("distance")
             current_min = entry.get("closest_distance")
-            if isinstance(distance, (int, float)) and (
-                not isinstance(current_min, (int, float)) or distance < current_min
+            distance_value = _to_float(distance)
+            current_min_value = _to_float(current_min)
+            if distance_value is not None and (
+                current_min_value is None or distance_value < current_min_value
             ):
-                entry["closest_distance"] = distance
+                entry["closest_distance"] = distance_value
                 entry["direction"] = det.get("direction")
 
     unique_survivors_detected = sorted(

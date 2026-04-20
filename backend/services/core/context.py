@@ -20,10 +20,6 @@ def set_grpc_client(client: DroneGrpcClient | None) -> None:
     _grpc_client = client if client is not None else _runtime_grpc_client
 
 
-def get_world_model_module():
-    return world_model
-
-
 def get_world():
     return world_model.WORLD
 

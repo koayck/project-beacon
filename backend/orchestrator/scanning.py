@@ -215,17 +215,28 @@ async def execute_area_scan_mission(
     buildings_scanned = 0
     
     for result in results:
-        if isinstance(result, Exception):
+        try:
+            raise result
+        except Exception as exc:
             # Handle exception as failed scan
             scan_results.append(BuildingScanResult.failure(
                 building=Building(id=None, center_x=0, center_z=0, height=0),
-                error=str(result)
+                error=str(exc)
             ))
-        elif isinstance(result, BuildingScanResult):
-            scan_results.append(result)
-            if result.success:
-                buildings_scanned += 1
-                total_survivors += result.survivors_detected
+            continue
+        except TypeError:
+            pass
+
+        try:
+            result_success = bool(result.success)
+            result_survivors = int(result.survivors_detected)
+        except (AttributeError, TypeError, ValueError):
+            continue
+
+        scan_results.append(result)
+        if result_success:
+            buildings_scanned += 1
+            total_survivors += result_survivors
     
     # Generate summary
     summary = (

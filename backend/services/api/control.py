@@ -30,7 +30,6 @@ from backend.services.navigation.route_planner import (
     find_survivors_in_area,
     plan_route,
     plan_sweep_pattern,
-    select_best_drone,
 )
 from backend.services.navigation.sweep_planner import (
     plan_building_vertical_sweep as _plan_building_vertical_sweep,
@@ -40,9 +39,6 @@ from backend.services.navigation.target_resolution import (
 )
 from backend.grpc.client import DroneGrpcClient
 from backend.services.core import context as service_context
-from backend.services.core.survivor_registry import (
-    normalize_survivor_id as _registry_normalize_survivor_id,
-)
 from backend.services.scan_reporting import build_sweep_scan_report as _build_sweep_scan_report
 from backend.services.swarm_control import deploy_swarm as _deploy_swarm_service
 from backend.services.swarm_control import recall_swarm as _recall_swarm_service
@@ -77,30 +73,46 @@ BUILDING_PROXIMITY_MARGIN_M = service_context.get_building_proximity_margin_m()
 FLOOD_LEVEL = service_context.get_flood_level()
 FLOOR_HEIGHT_M = service_context.get_floor_height_m()
 
-def _distance_xz(x1: float, z1: float, x2: float, z2: float) -> float:
-    return math.sqrt((x1 - x2) ** 2 + (z1 - z2) ** 2)
-
-
 def _is_eligible_idle_drone(status: dict) -> bool:
+    battery_raw = status.get("battery", 0)
+    try:
+        battery = float(battery_raw)
+    except (TypeError, ValueError):
+        battery = 0.0
+    state = str(status.get("status", "")).upper()
     return (
-        status.get("battery", 0) > _MIN_ELIGIBLE_BATTERY_PCT
-        and status.get("status", "") == "IDLE"
+        battery > _MIN_ELIGIBLE_BATTERY_PCT
+        and state == "IDLE"
     )
 
 
 def _no_eligible_drones_result(statuses: list[dict | Exception]) -> dict:
-    ready_count = len([status for status in statuses if not isinstance(status, Exception)])
+    responded_count = 0
+    status_summaries: list[str] = []
+    for status in statuses:
+        if isinstance(status, Exception):
+            continue
+
+        responded_count += 1
+        state = str(status.get("status", "UNKNOWN")).upper()
+        battery_raw = status.get("battery", "?")
+        try:
+            battery = f"{float(battery_raw):.1f}%"
+        except (TypeError, ValueError):
+            battery = "?%"
+        asset_id = str(status.get("asset_id", "UNKNOWN"))
+        status_summaries.append(f"{asset_id}:{state}@{battery}")
+
+    total_registered = len(statuses)
+    status_summary_text = ", ".join(status_summaries) if status_summaries else "none"
     return {
         "error": "No eligible drones available (all busy or low battery).",
         "suggestion": (
-            f"{ready_count} drone(s) registered but none are IDLE "
-            f"with battery > {_MIN_ELIGIBLE_BATTERY_PCT}%."
+            f"{total_registered} drone(s) registered; {responded_count} responded to status checks. "
+            f"Eligibility requires status=IDLE and battery > {_MIN_ELIGIBLE_BATTERY_PCT}%. "
+            f"Current statuses: {status_summary_text}."
         ),
     }
-
-
-def _normalize_survivor_id(value: object) -> int | None:
-    return _registry_normalize_survivor_id(value)
 
 
 def register_detected_survivors(rows: Iterable[dict]) -> int:
@@ -199,8 +211,8 @@ async def list_all_drones() -> dict:
     for aid, status in zip(asset_ids, statuses):
         if isinstance(status, Exception):
             drones.append({"asset_id": aid, "error": str(status)})
-        else:
-            drones.append(status)
+            continue
+        drones.append(status)
     return {"drones": drones}
 
 

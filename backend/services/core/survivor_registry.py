@@ -7,23 +7,29 @@ _supplied_target_keys: set[str] = set()
 
 
 def normalize_survivor_id(value: object) -> int | None:
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    if isinstance(value, str):
+    try:
+        value_float = float(value)
+    except (TypeError, ValueError):
+        value_float = None
+    if value_float is not None and value_float.is_integer():
+        return int(value_float)
+    try:
         raw = value.strip()
-        if raw.isdigit():
-            return int(raw)
+    except AttributeError:
+        return None
+    if raw.isdigit():
+        return int(raw)
     return None
 
 
 def register_detected_survivors(rows: Iterable[dict]) -> int:
     before = len(_detected_survivor_ids)
     for row in rows:
-        if not isinstance(row, dict):
+        try:
+            row_get = row.get
+        except AttributeError:
             continue
-        survivor_id = normalize_survivor_id(row.get("id"))
+        survivor_id = normalize_survivor_id(row_get("id"))
         if survivor_id is None:
             continue
         _detected_survivor_ids.add(survivor_id)
@@ -40,19 +46,24 @@ def get_detected_survivor_ids() -> set[int]:
 
 
 def _target_key(target: dict) -> str | None:
-    if not isinstance(target, dict):
+    try:
+        target_get = target.get
+    except AttributeError:
         return None
-    survivor_id = normalize_survivor_id(target.get("id"))
+    survivor_id = normalize_survivor_id(target_get("id"))
     if survivor_id is not None:
         return f"id:{survivor_id}"
 
-    x = target.get("x")
-    y = target.get("y")
-    z = target.get("z")
-    if not isinstance(x, (int, float)) or not isinstance(z, (int, float)):
+    try:
+        x = float(target_get("x"))
+        z = float(target_get("z"))
+    except (TypeError, ValueError):
         return None
-    y_value = float(y) if isinstance(y, (int, float)) else 0.0
-    return f"xyz:{float(x):.2f},{y_value:.2f},{float(z):.2f}"
+    try:
+        y_value = float(target_get("y"))
+    except (TypeError, ValueError):
+        y_value = 0.0
+    return f"xyz:{x:.2f},{y_value:.2f},{z:.2f}"
 
 
 def register_supplied_target(target: dict) -> bool:
@@ -67,8 +78,11 @@ def register_supplied_target(target: dict) -> bool:
 def register_supplied_targets(rows: Iterable[dict]) -> int:
     before = len(_supplied_target_keys)
     for row in rows:
-        if isinstance(row, dict):
-            register_supplied_target(row)
+        try:
+            row.get
+        except AttributeError:
+            continue
+        register_supplied_target(row)
     return len(_supplied_target_keys) - before
 
 

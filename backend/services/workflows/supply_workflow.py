@@ -10,23 +10,50 @@ _SUPPLY_DISPATCH_GUARD_LOCK = asyncio.Lock()
 _SUPPLY_DISPATCH_INFLIGHT_KEYS: set[str] = set()
 
 
-def _supply_target_key(target: dict) -> str:
-    sid = target.get("id") if isinstance(target, dict) else None
-    if isinstance(sid, int):
-        return f"id:{sid}"
-    if isinstance(sid, float) and sid.is_integer():
-        return f"id:{int(sid)}"
-    if isinstance(sid, str):
-        normalized = sid.strip()
-        if normalized:
-            if normalized.isdigit():
-                return f"id:{int(normalized)}"
-            return f"id:{normalized.lower()}"
+def _as_dict(value: object) -> dict | None:
+    try:
+        value.get  # type: ignore[attr-defined]
+    except AttributeError:
+        return None
+    return value  # type: ignore[return-value]
 
-    x = float(target.get("x", 0.0))
-    y = float(target.get("y", 0.0)) if isinstance(target.get("y"), (int, float)) else 0.0
-    z = float(target.get("z", 0.0))
-    return f"xyz:{x:.2f},{y:.2f},{z:.2f}"
+
+def _to_float(value: object) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int(value: object) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _supply_target_key(target: dict) -> str:
+    target_dict = _as_dict(target)
+    sid = target_dict.get("id") if target_dict is not None else None
+    sid_int = _to_int(sid)
+    sid_float = _to_float(sid)
+    if sid_int is not None and sid_float is not None and sid_float.is_integer():
+        return f"id:{sid_int}"
+    try:
+        normalized = sid.strip()
+    except AttributeError:
+        normalized = ""
+    if normalized:
+        if normalized.isdigit():
+            return f"id:{int(normalized)}"
+        return f"id:{normalized.lower()}"
+
+    x = float(target_dict.get("x", 0.0) if target_dict is not None else 0.0)
+    y_raw = target_dict.get("y") if target_dict is not None else None
+    y = _to_float(y_raw)
+    z = float(target_dict.get("z", 0.0) if target_dict is not None else 0.0)
+    y_value = y if y is not None else 0.0
+    return f"xyz:{x:.2f},{y_value:.2f},{z:.2f}"
 
 
 async def dispatch_supply_to_building(
@@ -61,96 +88,107 @@ async def dispatch_supply_to_building(
         target_x = building.get("x")
         target_y = building.get("y")
         target_z = building.get("z")
-        if not isinstance(target_x, (int, float)) or not isinstance(target_z, (int, float)):
+        target_x_f = _to_float(target_x)
+        target_z_f = _to_float(target_z)
+        if target_x_f is None or target_z_f is None:
             return {
                 "asset_id": asset_id,
                 "error": "Invalid supply target coordinates.",
                 "building": building,
             }
 
-        resolved = resolve_scan_target(float(target_x), float(target_z))
-        matched_building = resolved.get("building") if isinstance(resolved, dict) else None
+        resolved = resolve_scan_target(target_x_f, target_z_f)
+        resolved_dict = _as_dict(resolved)
+        matched_building = resolved_dict.get("building") if resolved_dict is not None else None
         recommended_window = (
-            resolved.get("recommended_window_waypoint")
-            if isinstance(resolved, dict)
+            resolved_dict.get("recommended_window_waypoint")
+            if resolved_dict is not None
             else None
         )
         interior_target = False
         window_drop_for_survivor: dict | None = None
-        if isinstance(target_y, (int, float)):
-            host_building = world.building_at(float(target_x), float(target_y), float(target_z))
+        target_y_f = _to_float(target_y)
+        if target_y_f is not None:
+            host_building = world.building_at(target_x_f, target_y_f, target_z_f)
             interior_target = host_building is not None
             if host_building is not None:
                 candidate_windows = host_building.window_scan_waypoints(standoff=window_scan_standoff_m)
                 if candidate_windows:
                     window_drop_for_survivor = select_window_waypoint(
                         candidate_windows,
-                        ref_x=float(target_x),
-                        ref_z=float(target_z),
-                        preferred_y=float(target_y),
+                        ref_x=target_x_f,
+                        ref_z=target_z_f,
+                        preferred_y=target_y_f,
                     )
+
+        window_drop_dict = _as_dict(window_drop_for_survivor)
+        recommended_window_dict = _as_dict(recommended_window)
+        matched_building_dict = _as_dict(matched_building)
+        window_x = _to_float(window_drop_dict.get("x")) if window_drop_dict is not None else None
+        window_y = _to_float(window_drop_dict.get("y")) if window_drop_dict is not None else None
+        window_z = _to_float(window_drop_dict.get("z")) if window_drop_dict is not None else None
+        recommended_x = _to_float(recommended_window_dict.get("x")) if recommended_window_dict is not None else None
+        recommended_y = _to_float(recommended_window_dict.get("y")) if recommended_window_dict is not None else None
+        recommended_z = _to_float(recommended_window_dict.get("z")) if recommended_window_dict is not None else None
 
         if (
             interior_target
-            and isinstance(window_drop_for_survivor, dict)
-            and isinstance(window_drop_for_survivor.get("x"), (int, float))
-            and isinstance(window_drop_for_survivor.get("y"), (int, float))
-            and isinstance(window_drop_for_survivor.get("z"), (int, float))
+            and window_x is not None
+            and window_y is not None
+            and window_z is not None
         ):
-            drop_x = float(window_drop_for_survivor["x"])
-            drop_y = float(window_drop_for_survivor["y"])
-            drop_z = float(window_drop_for_survivor["z"])
+            drop_x = window_x
+            drop_y = window_y
+            drop_z = window_z
         elif (
             interior_target
-            and isinstance(recommended_window, dict)
-            and isinstance(recommended_window.get("x"), (int, float))
-            and isinstance(recommended_window.get("y"), (int, float))
-            and isinstance(recommended_window.get("z"), (int, float))
+            and recommended_x is not None
+            and recommended_y is not None
+            and recommended_z is not None
         ):
-            drop_x = float(recommended_window["x"])
-            drop_y = float(recommended_window["y"])
-            drop_z = float(recommended_window["z"])
+            drop_x = recommended_x
+            drop_y = recommended_y
+            drop_z = recommended_z
         elif (
-            isinstance(target_y, (int, float))
-            and isinstance(matched_building, dict)
-            and all(
-                isinstance(matched_building.get(k), (int, float))
-                for k in ("min_x", "max_x", "min_z", "max_z", "height")
-            )
+            target_y_f is not None
+            and matched_building_dict is not None
         ):
-            min_x = float(matched_building["min_x"])
-            max_x = float(matched_building["max_x"])
-            min_z = float(matched_building["min_z"])
-            max_z = float(matched_building["max_z"])
-            height = float(matched_building["height"])
-            tx = float(target_x)
-            tz = float(target_z)
-
-            if tz >= max_z:
-                drop_x = min(max(tx, min_x), max_x)
-                drop_z = max_z
-            elif tz <= min_z:
-                drop_x = min(max(tx, min_x), max_x)
-                drop_z = min_z
-            elif tx >= max_x:
-                drop_x = max_x
-                drop_z = min(max(tz, min_z), max_z)
-            elif tx <= min_x:
-                drop_x = min_x
-                drop_z = min(max(tz, min_z), max_z)
+            min_x = _to_float(matched_building_dict.get("min_x"))
+            max_x = _to_float(matched_building_dict.get("max_x"))
+            min_z = _to_float(matched_building_dict.get("min_z"))
+            max_z = _to_float(matched_building_dict.get("max_z"))
+            height = _to_float(matched_building_dict.get("height"))
+            if None in (min_x, max_x, min_z, max_z, height):
+                matched_building_dict = None
             else:
-                drop_x = tx
-                drop_z = tz
-            drop_y = max(height + 2.5, float(target_y) + 2.0, 10.0)
-        elif isinstance(target_y, (int, float)):
-            drop_x = float(target_x)
-            drop_y = max(float(target_y) + 2.0, 5.0)
-            drop_z = float(target_z)
+                tx = target_x_f
+                tz = target_z_f
+
+                if tz >= max_z:
+                    drop_x = min(max(tx, min_x), max_x)
+                    drop_z = max_z
+                elif tz <= min_z:
+                    drop_x = min(max(tx, min_x), max_x)
+                    drop_z = min_z
+                elif tx >= max_x:
+                    drop_x = max_x
+                    drop_z = min(max(tz, min_z), max_z)
+                elif tx <= min_x:
+                    drop_x = min_x
+                    drop_z = min(max(tz, min_z), max_z)
+                else:
+                    drop_x = tx
+                    drop_z = tz
+                drop_y = max(height + 2.5, target_y_f + 2.0, 10.0)
+        elif target_y_f is not None:
+            drop_x = target_x_f
+            drop_y = max(target_y_f + 2.0, 5.0)
+            drop_z = target_z_f
         else:
             target_height = float(building.get("height", 0.0) or 0.0)
-            drop_x = float(target_x)
+            drop_x = target_x_f
             drop_y = max(target_height + 5.0, 10.0)
-            drop_z = float(target_z)
+            drop_z = target_z_f
 
         to_base = await return_to_base_fn(asset_id)
         if "error" in to_base:
@@ -230,9 +268,9 @@ async def dispatch_supply_to_building(
             "waypoint_count": len(waypoints),
             "message": (
                 f"SUPPLY SENT - {asset_id} delivered to building "
-                f"at (x={float(target_x):.1f}, z={float(target_z):.1f})."
+                f"at (x={target_x_f:.1f}, z={target_z_f:.1f})."
             ),
-            "target_type": "survivor" if isinstance(target_y, (int, float)) else "building",
+            "target_type": "survivor" if target_y_f is not None else "building",
             "matched_building": matched_building,
             "target_key": target_key,
             "final_status": final_status,
@@ -259,8 +297,9 @@ async def parallel_fleet_supply(
     rows = []
     for assignment in assignments:
         target = assignment.get("target", assignment.get("survivor", assignment.get("building")))
-        if isinstance(target, dict):
-            rows.append({"asset_id": assignment["asset_id"], "target": target})
+        target_dict = _as_dict(target)
+        if target_dict is not None:
+            rows.append({"asset_id": assignment["asset_id"], "target": target_dict})
 
     batch = await asyncio.gather(
         *[_dispatch_one(row["asset_id"], row["target"]) for row in rows],
@@ -269,15 +308,17 @@ async def parallel_fleet_supply(
 
     all_results: list[dict] = []
     for i, result in enumerate(batch):
-        if isinstance(result, Exception):
+        try:
+            raise result
+        except Exception as exc:
             all_results.append(
                 {
                     "asset_id": assignments[i]["asset_id"],
                     "target": rows[i]["target"],
-                    "supply_result": {"error": str(result)},
+                    "supply_result": {"error": str(exc)},
                 }
             )
-        else:
+        except TypeError:
             all_results.append(result)
 
     pending_targets = (

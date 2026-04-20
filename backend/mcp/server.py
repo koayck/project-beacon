@@ -211,9 +211,11 @@ def find_survivors_in_area_tool(
 @beacon_mcp.tool(name="assign_fleet_to_buildings")
 async def assign_fleet_to_buildings_tool(buildings: list[dict]) -> dict:
     """
-    Assign the closest available IDLE drones to a list of buildings using greedy
-    nearest-first matching. Returns assignments (drone→building), unassigned buildings
-    (when fewer drones than buildings), and idle drones that were not needed.
+    Assign available IDLE drones to buildings using optimization:
+    highest battery first when all eligible drones are at base, otherwise greedy
+    nearest-first matching by distance. Returns assignments (drone→building),
+    unassigned buildings (when fewer drones than buildings), and idle drones
+    that were not needed.
     """
     return await assign_fleet_to_buildings(buildings)
 

@@ -152,6 +152,45 @@ async def test_assign_greedy_picks_globally_closest():
     assert assignment_map["BEACON-02"] == 1  # B2
 
 
+@pytest.mark.asyncio
+async def test_assign_prefers_highest_battery_when_all_drones_at_base():
+    """When all eligible drones are at base, highest battery drone is assigned first."""
+    buildings = [_make_building(0, 10.0, -10.0)]
+    statuses = [
+        _make_status("BEACON-01", 0.0, 0.0, battery=55.0),
+        _make_status("BEACON-02", 0.0, 0.0, battery=90.0),
+        _make_status("BEACON-03", 0.0, 0.0, battery=72.0),
+    ]
+    mock_client = _mock_client(["BEACON-01", "BEACON-02", "BEACON-03"], statuses)
+
+    with patch("backend.services.api.control.grpc_client", mock_client):
+        result = await assign_fleet_to_buildings(buildings)
+
+    assert result["total_assigned"] == 1
+    assert result["selection_strategy"] == "battery_priority_when_all_at_base"
+    assert result["assignments"][0]["asset_id"] == "BEACON-02"
+    assert result["assignments"][0]["assignment_reason"] == "highest_battery_all_at_base"
+
+
+@pytest.mark.asyncio
+async def test_assign_prefers_closest_drone_when_not_all_at_base():
+    """When at least one drone is away from base, assignment uses nearest building distance."""
+    buildings = [_make_building(0, 30.0, 0.0)]
+    statuses = [
+        _make_status("BEACON-01", 0.0, 0.0, battery=95.0),
+        _make_status("BEACON-02", 29.0, 0.0, battery=40.0),
+    ]
+    mock_client = _mock_client(["BEACON-01", "BEACON-02"], statuses)
+
+    with patch("backend.services.api.control.grpc_client", mock_client):
+        result = await assign_fleet_to_buildings(buildings)
+
+    assert result["total_assigned"] == 1
+    assert result["selection_strategy"] == "global_nearest_first"
+    assert result["assignments"][0]["asset_id"] == "BEACON-02"
+    assert result["assignments"][0]["assignment_reason"] == "closest_drone_to_building"
+
+
 # ── parallel_fleet_scan tests ─────────────────────────────────────────────────
 
 def _make_scan_result(survivors: int = 0) -> dict:
