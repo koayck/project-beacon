@@ -271,6 +271,21 @@ class Tree:
     z: float
 
 
+@dataclass(frozen=True)
+class DecorBuilding:
+    """A non-mission building (e.g. shophouse) present for scene realism.
+
+    Not scannable for survivors, but counts toward fog-of-war reveal info
+    so the operator sees an accurate structure count per sector.
+    """
+    cx: float
+    cz: float
+    w: float
+    d: float
+    h: float
+    kind: str = "shophouse"
+
+
 # ── World Model singleton ─────────────────────────────────────────────────────
 
 @dataclass
@@ -278,6 +293,7 @@ class WorldModel:
     buildings: list[Building] = field(default_factory=list)
     survivors: list[Survivor] = field(default_factory=list)
     trees: list[Tree] = field(default_factory=list)
+    decor_buildings: list[DecorBuilding] = field(default_factory=list)
 
     def buildings_near(self, x: float, z: float, radius: float) -> list[Building]:
         """All buildings whose edge is within `radius` metres (XZ plane)."""
@@ -389,7 +405,24 @@ def _build_world(world_json: dict) -> WorldModel:
         Tree(id=i, x=float(t["x"]), z=float(t["z"]))
         for i, t in enumerate(world_json.get("trees", []))
     ]
-    return WorldModel(buildings=buildings, survivors=survivors, trees=trees)
+    environment = world_json.get("environment") or {}
+    decor_buildings = [
+        DecorBuilding(
+            cx=float(b["cx"]),
+            cz=float(b["cz"]),
+            w=float(b["w"]),
+            d=float(b["d"]),
+            h=float(b["h"]),
+            kind=str(b.get("type", "shophouse")),
+        )
+        for b in environment.get("decor_buildings", [])
+    ]
+    return WorldModel(
+        buildings=buildings,
+        survivors=survivors,
+        trees=trees,
+        decor_buildings=decor_buildings,
+    )
 
 
 def load_world(world_id: int = 1) -> WorldModel:
@@ -409,6 +442,7 @@ def load_world(world_id: int = 1) -> WorldModel:
     WORLD.buildings[:] = fresh.buildings
     WORLD.survivors[:] = fresh.survivors
     WORLD.trees[:] = fresh.trees
+    WORLD.decor_buildings[:] = fresh.decor_buildings
     CURRENT_WORLD_ID = world_id
     return WORLD
 

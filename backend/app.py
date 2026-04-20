@@ -436,7 +436,14 @@ async def set_speed(asset_id: str, req: SpeedRequest) -> dict:
 async def switch_world(world_id: int) -> dict:
     """Switch the active world for backend and all connected drones."""
     from backend.world.model import load_world as load_backend_world
+    from backend.services.scout import cancel_scout_sweep, exploration_tracker
+
     load_backend_world(world_id)
+    # Fog-of-war lives in World 2 only — wipe exploration state on every switch
+    # so re-entering a world starts fresh.
+    cancel_scout_sweep()
+    exploration_tracker.reset()
+
     # Tell each connected drone container to reload its world data
     results = {}
     for aid in grpc_client.registered_asset_ids():
@@ -543,6 +550,33 @@ async def establish_uplink(asset_id: str) -> UplinkResponse:
         raise HTTPException(status_code=404, detail=exc.args[0]) from exc
 
     return UplinkResponse(**result)
+
+
+@app.post("/scout/sweep")
+async def deploy_scout_sweep() -> dict:
+    """Start the scout drone lawnmower sweep. Requires BEACON-SCOUT to be uplinked."""
+    from backend.services.scout import start_scout_sweep, SCOUT_ASSET_ID
+    if SCOUT_ASSET_ID not in grpc_client.registered_asset_ids():
+        raise HTTPException(status_code=400, detail="BEACON-SCOUT not uplinked")
+    start_scout_sweep()
+    return {"status": "sweep_started", "asset_id": SCOUT_ASSET_ID}
+
+
+@app.post("/scout/reset")
+async def reset_scout_exploration() -> dict:
+    """Clear the exploration tracker (e.g. on world switch)."""
+    from backend.services.scout import exploration_tracker
+    exploration_tracker.reset()
+    return {"status": "reset"}
+
+
+@app.post("/scout/cancel")
+async def cancel_scout_sweep_endpoint() -> dict:
+    """Cancel an in-flight scout sweep."""
+    from backend.services.scout import cancel_scout_sweep
+    cancelled = cancel_scout_sweep()
+    return {"status": "cancelled" if cancelled else "not_running"}
+
 
 
 @app.get("/scan")
@@ -795,7 +829,7 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
 @app.websocket("/ws/telemetry")
 async def telemetry_ws(websocket: WebSocket):
     await websocket.accept()
-    ws_broadcaster.connect(websocket)
+    await ws_broadcaster.connect(websocket)
     try:
         while True:
             await asyncio.sleep(30)

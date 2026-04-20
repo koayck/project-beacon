@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any
 
 from fastapi import WebSocket
 
@@ -19,9 +18,12 @@ class TelemetryBroadcaster:
     def __init__(self) -> None:
         self._clients: set[WebSocket] = set()
 
-    def connect(self, ws: WebSocket) -> None:
+    async def connect(self, ws: WebSocket) -> None:
         self._clients.add(ws)
         logger.debug("WS client connected (%d total)", len(self._clients))
+        # Bring a newly connected client up to speed with the current
+        # exploration state, so late joiners see existing fog reveals.
+        await self._send_exploration_snapshot(ws)
 
     def disconnect(self, ws: WebSocket) -> None:
         self._clients.discard(ws)
@@ -30,12 +32,46 @@ class TelemetryBroadcaster:
     def broadcast(self, payload: dict) -> None:
         """
         Called by UDPTelemetryListener on every incoming heartbeat.
-        Schedules async sends to all WebSocket clients.
+        Always updates the scout exploration tracker so sectors are
+        recorded even when no WS clients are connected. Enriches scout
+        payloads with exploration state and schedules fan-out to clients.
         """
+        from backend.services.scout import SCOUT_ASSET_ID, exploration_tracker
+
+        asset_id = payload.get("asset_id", "")
+
+        if asset_id == SCOUT_ASSET_ID:
+            exploration_tracker.process_heartbeat(payload)
+            payload = {
+                **payload,
+                "explored_sectors": exploration_tracker.explored_sectors,
+            }
+            reveals = exploration_tracker.pop_pending_reveals()
+            if reveals:
+                payload["sector_reveals"] = reveals
+
         if not self._clients:
             return
+
         message = json.dumps(payload)
         asyncio.ensure_future(self._send_all(message))
+
+    async def _send_exploration_snapshot(self, ws: WebSocket) -> None:
+        """Send the current explored sector set to a newly connected client."""
+        from backend.services.scout import exploration_tracker
+
+        explored = exploration_tracker.explored_sectors
+        if not explored:
+            return
+        snapshot = {
+            "type": "exploration_snapshot",
+            "asset_id": "BEACON-SCOUT",
+            "explored_sectors": explored,
+        }
+        try:
+            await ws.send_text(json.dumps(snapshot))
+        except Exception:
+            self.disconnect(ws)
 
     async def _send_all(self, message: str) -> None:
         dead: set[WebSocket] = set()

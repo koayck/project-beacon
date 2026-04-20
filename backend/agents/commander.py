@@ -27,6 +27,16 @@ For swarm-wide operations (deploy all drones, recall all drones), first call
 discover_fleet to get active asset IDs, then call deploy_swarm or recall_swarm
 with that full asset list.
 
+SCOUT / RECON
+For reconnaissance requests — "scout the area", "survey", "map the disaster zone",
+"reveal the grid", "fly the scout", "deploy scout" — call deploy_scout_sweep
+directly. It launches BEACON-SCOUT on a high-altitude lawnmower sweep that
+progressively reveals grid sectors with building and thermal-anomaly intel, and
+the scout returns itself to base automatically. Do NOT route scout commands to
+navigation_agent or scan_workflow — deploy_scout_sweep handles the whole mission.
+If you need to reason about which rescue drones to dispatch next, call
+get_explored_sectors to see which cells have been mapped and what's in them.
+
 Guidelines:
 - Always extract the asset_id from the command (e.g. "BEACON-01", "beacon-01" → "BEACON-01")
 - If no specific drone is mentioned for single-drone commands, ask the user to specify one or list available drones

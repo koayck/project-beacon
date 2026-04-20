@@ -29,6 +29,8 @@ SWARM_TOOLS = [
     "deploy_swarm",
     "recall_swarm",
     "discover_fleet",
+    "deploy_scout_sweep",
+    "get_explored_sectors",
 ]
 
 FLEET_TOOLS = [
@@ -47,7 +49,10 @@ def make_toolset(tool_filter: list[str] | None = None) -> McpToolset:
         connection_params=StreamableHTTPConnectionParams(
             url=_MCP_URL,
             timeout=10.0,
-            sse_read_timeout=100.0,
+            # Long enough to cover a full scout sweep (~90s at 15 m/s across
+            # the 5x5 grid) plus RTB, with a comfortable margin for slower
+            # runs.
+            sse_read_timeout=360.0,
         ),
         tool_filter=tool_filter,
     )
