@@ -94,7 +94,7 @@ const WS_URL   = 'ws://localhost:8000/ws/telemetry'
 const AUTO_RECALL_UI_DELAY_MS = 5000
 
 export default function SARScene() {
-  const [activeWorld, setActiveWorld] = useState<1 | 2>(1)
+  const [activeWorld, setActiveWorld] = useState<1 | 2>(2)
 
   // ── Per-world derived data ──────────────────────────────────────────────────
   const worldBuildings = activeWorld === 1 ? W1_BUILDINGS : W2_BUILDINGS

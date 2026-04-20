@@ -48,9 +48,9 @@ export function TopStatusBar({
         </div>
         <span className="text-sm text-[#3a4a5a]">|</span>
         <div className="flex gap-0.5">
-          {([1, 2] as const).map(w => {
+          {([2, 1] as const).map(w => {
             const active = activeWorld === w
-            const label = w === 1 ? 'WORLD 1' : 'HAT YAI'
+            const label = w === 2 ? 'HAT YAI' : 'WORLD 1'
             return (
               <button
                 key={w}
