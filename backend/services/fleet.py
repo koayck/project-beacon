@@ -6,8 +6,16 @@ from backend.runtime import grpc_client, udp_listener
 from backend.world.model import get_active_world_id
 
 
+_GRPC_PORT_OVERRIDES: dict[str, int] = {
+    "BEACON-SCOUT": 50056,
+}
+
+
 def _grpc_target(asset_id: str) -> tuple[str, int]:
-    idx = int(asset_id.upper().split("-")[1])
+    upper = asset_id.upper()
+    if upper in _GRPC_PORT_OVERRIDES:
+        return "localhost", _GRPC_PORT_OVERRIDES[upper]
+    idx = int(upper.split("-")[1])
     return "localhost", 50050 + idx
 
 
