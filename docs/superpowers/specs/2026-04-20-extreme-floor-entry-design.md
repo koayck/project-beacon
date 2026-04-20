@@ -88,7 +88,7 @@ def plan_building_vertical_sweep(
 
 1. Compute `floor_levels = sorted({round(w["y"], 2) for w in above_flood})` (ascending) as today.
 2. If `entry_floor == "highest"`, reverse it: `floor_levels = list(reversed(floor_levels))`.
-3. The existing entry-window selection (finds the `first_level_windows` closest to `(approach_x, approach_z)`) operates on `floor_levels[0]` — which, after the optional reverse, is the top floor when `entry_floor="highest"`. This matches the window that `plan_route` just landed the drone at.
+3. The existing entry-window selection (finds the `first_level_windows` closest to `(approach_x, approach_z)`) operates on `floor_levels[0]` — which, after the optional reverse, is the top floor when `entry_floor="highest"`. Because the sweep workflow passes the drone's current XZ (already at the `plan_route`-chosen entry window) as `approach_x/approach_z`, the sweep's own selection resolves to the same window by minimum-distance — no extra parameter needed to reconcile the two selections.
 4. The serpentine ring logic, inter-floor climb handling, and final rooftop ascent are **unchanged**. We are only changing the iteration order of `floor_levels`.
 
 **Rooftop wrap-up:** The final "ascent to rooftop altitude" + "rooftop scan" waypoints are unchanged. For top-down sweeps, the drone descends through floors and then ascends from the final bottom-floor corner to `rooftop_y`. This ascent is short but still ensures every mission ends on the roof, matching the return_workflow's assumptions.
