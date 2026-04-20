@@ -102,7 +102,9 @@ async def plan_route(
             lowest_floor = min(floors)
             highest_floor = max(floors)
             # Iterate lowest-floor candidates first so ties resolve to "lowest"
-            # (Python's min() is stable on equal keys).
+            # (Python's min() is stable on equal keys). The lowest-floor list is
+            # non-empty whenever available_window_waypoints is non-empty, since
+            # lowest_floor = min(floors) is guaranteed to exist in the set.
             ordered_candidates: list[dict] = [
                 wp for wp in available_window_waypoints
                 if int(wp["floor"]) == lowest_floor
@@ -110,6 +112,10 @@ async def plan_route(
                 wp for wp in available_window_waypoints
                 if int(wp["floor"]) == highest_floor and highest_floor != lowest_floor
             ]
+            assert ordered_candidates, (
+                "extreme_floor candidate set is empty despite non-empty "
+                "available_window_waypoints — this is a logic error"
+            )
 
             def _drone_dist_3d(wp: dict) -> float:
                 dx = float(wp["x"]) - cx
@@ -117,18 +123,19 @@ async def plan_route(
                 dz = float(wp["z"]) - cz
                 return math.sqrt(dx * dx + dy * dy + dz * dz)
 
-            if ordered_candidates:
-                selected_window_waypoint = min(ordered_candidates, key=_drone_dist_3d)
-                entry_floor_kind = (
-                    "lowest"
-                    if int(selected_window_waypoint["floor"]) == lowest_floor
-                    else "highest"
-                )
-            else:
-                entry_mode_fallback = True
+            selected_window_waypoint = min(ordered_candidates, key=_drone_dist_3d)
+            entry_floor_kind = (
+                "lowest"
+                if int(selected_window_waypoint["floor"]) == lowest_floor
+                else "highest"
+            )
 
         if selected_window_waypoint is None:
-            # Either entry_mode == "nearest_floor", or extreme_floor fallback.
+            # Either entry_mode == "nearest_floor", or extreme_floor had no
+            # candidates (e.g. building has no windows). In the latter case,
+            # record the fallback so callers can detect it.
+            if entry_mode == "extreme_floor":
+                entry_mode_fallback = True
             selected_window_waypoint = select_window_waypoint(
                 available_window_waypoints,
                 ref_x=requested_x,

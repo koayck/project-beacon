@@ -573,6 +573,17 @@
       ],
       "balcony": null,
       "type": "shophouse"
+    },
+    {
+      "id": 6,
+      "name": "utility_block",
+      "cx": 0,
+      "cz": -55,
+      "w": 8,
+      "d": 8,
+      "h": 6,
+      "windows": [],
+      "balcony": null
     }
   ],
   "survivors": [

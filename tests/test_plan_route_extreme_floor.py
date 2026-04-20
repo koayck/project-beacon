@@ -117,3 +117,38 @@ class TestEntryModeExtremeFloor:
         # No window selected because no snap requested.
         assert "selected_window_waypoint" not in tr
         assert tr.get("entry_floor_kind") is None or "entry_floor_kind" not in tr
+
+    @pytest.mark.asyncio
+    async def test_extreme_floor_records_fallback_when_building_has_no_windows(self, _mock_client):
+        # Building id=6 (utility_block) in world2.json has no windows. With snap_to_building_center=True
+        # and entry_mode='extreme_floor', target snaps to building center and
+        # entry_mode_fallback=True is recorded.
+        _mock_client.get_status.return_value = {
+            "asset_id": "BEACON-01",
+            "x": 0.0, "y": 5.0, "z": 0.0,
+            "battery": 80, "status": "IDLE",
+        }
+        # Find a no-windows building in world2.json and target it. If building id=6
+        # has no windows, use its coordinates. Otherwise pick any building with
+        # an empty windows list from WORLD.buildings.
+        from backend.world.model import WORLD
+        no_window_building = next(
+            (b for b in WORLD.buildings if not b.windows),
+            None,
+        )
+        assert no_window_building is not None, (
+            "test fixture requires at least one building with no windows"
+        )
+        result = await plan_route(
+            "BEACON-01",
+            float(no_window_building.cx), float(no_window_building.cz),
+            snap_to_building_center=True,
+            entry_mode="extreme_floor",
+        )
+        tr = result.get("target_resolution", {})
+        assert tr.get("entry_mode") == "extreme_floor"
+        assert tr.get("entry_mode_fallback") is True
+        assert "selected_window_waypoint" not in tr
+        # Target should have snapped to building center (no window waypoint).
+        assert result["to"]["x"] == pytest.approx(float(no_window_building.cx), abs=0.01)
+        assert result["to"]["z"] == pytest.approx(float(no_window_building.cz), abs=0.01)
