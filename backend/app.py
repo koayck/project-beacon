@@ -735,10 +735,6 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
         session_id=session_id,
     )
 
-    runner = _adk_runner
-    if runner is None:
-        raise HTTPException(status_code=503, detail="ADK runner not initialised")
-
     async def generate() -> AsyncGenerator[str, None]:
         final_text = ""
         queue: asyncio.Queue = asyncio.Queue()
@@ -750,7 +746,7 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
 
         async def adk_loop() -> None:
             try:
-                async for event in runner.run_async(
+                async for event in _adk_runner.run_async(
                     user_id="gcs",
                     session_id=session_id,
                     new_message=content,
@@ -792,8 +788,8 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                 if not event.content or not event.content.parts:
                     continue
                 for part in event.content.parts:
-                    if part.text and part.text.strip() and getattr(part, "thought", False):
-                        payload = {"type": "thought", "text": part.text, "agent": event.author}
+                    if getattr(part, "thought", False) and part.text and part.text.strip():
+                        payload = {"type": "thinking", "text": part.text, "agent": event.author}
                         yield f"data: {json.dumps(payload)}\n\n"
                         continue
                     if part.function_call:
@@ -811,15 +807,15 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
                         supply_dispatches = _extract_supply_dispatches(part.function_response.name, resp)
                         if (
                             sweep_prompt
-                            and is_structured_sweep_report(str(message))
+                            and isinstance(message, str)
+                            and is_structured_sweep_report(message)
                         ):
-                            message_text = str(message)
-                            preferred_sweep_report = message_text
-                            final_text = message_text
+                            preferred_sweep_report = message
+                            final_text = message
                             if first_token_time is None:
                                 first_token_time = time.perf_counter()
-                            total_chars += len(message_text)
-                            payload: dict = {"type": "text", "text": message_text, "agent": event.author}
+                            total_chars += len(message)
+                            payload: dict = {"type": "text", "text": message, "agent": event.author}
                             if survivors_payload:
                                 payload["survivors"] = survivors_payload
                             if supply_dispatches:
@@ -889,6 +885,7 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
             "Connection": "keep-alive",
         },
     )
+
 
 
 @app.websocket("/ws/telemetry")
