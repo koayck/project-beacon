@@ -45,7 +45,7 @@ async def test_rooftop_recovery_replan_excludes_target_building() -> None:
             "waypoints": [
                 {
                     "x": kwargs["target_x"],
-                    "y": kwargs["target_y"],
+                    "y": kwargs.get("target_y", 10.0),
                     "z": kwargs["target_z"],
                     "reason": "direct path clear",
                 }
@@ -116,7 +116,7 @@ async def test_sweep_error_text_uses_scan_route_context() -> None:
             "waypoints": [
                 {
                     "x": kwargs["target_x"],
-                    "y": kwargs["target_y"],
+                    "y": kwargs.get("target_y", 10.0),
                     "z": kwargs["target_z"],
                     "reason": "direct path clear",
                 }
