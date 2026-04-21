@@ -119,6 +119,52 @@ class TestEntryModeExtremeFloor:
         assert tr.get("entry_floor_kind") is None or "entry_floor_kind" not in tr
 
     @pytest.mark.asyncio
+    async def test_extreme_floor_single_floor_windows_resolves_to_lowest(self, _mock_client, monkeypatch):
+        # Edge case: a building with windows on only one floor (lowest == highest).
+        # The tie-break must resolve to entry_floor_kind='lowest'.
+        from backend.services.core import context
+        from backend.world.model import Building, WindowAperture
+
+        single_floor_building = Building(
+            id=999,
+            cx=40.0, cz=40.0,
+            w=8.0, d=8.0, h=12.0,
+            windows=(
+                WindowAperture(face="south", axis_center=40.0,
+                               sill_y=3.4, width=2.0, height=1.6),
+            ),
+        )
+
+        class _SingleFloorWorld:
+            buildings = (single_floor_building,)
+
+            def building_near_xz(self, x, z, margin=2.0):
+                return single_floor_building
+
+            def obstacles_in_path(self, *_args, **_kwargs):
+                return []
+
+            def buildings_near(self, *_args, **_kwargs):
+                return [single_floor_building]
+
+        monkeypatch.setattr(context, "get_world", lambda: _SingleFloorWorld())
+
+        _mock_client.get_status.return_value = {
+            "asset_id": "BEACON-01",
+            "x": 20.0, "y": 8.0, "z": 40.0,
+            "battery": 80, "status": "IDLE",
+        }
+        result = await plan_route(
+            "BEACON-01", 40.0, 40.0,
+            snap_to_building_center=True,
+            entry_mode="extreme_floor",
+        )
+        tr = result.get("target_resolution", {})
+        assert tr.get("entry_mode") == "extreme_floor"
+        assert tr.get("entry_floor_kind") == "lowest"
+        assert tr["selected_window_waypoint"]["floor"] == 2
+
+    @pytest.mark.asyncio
     async def test_extreme_floor_records_fallback_when_building_has_no_windows(self, _mock_client):
         # Building id=6 (utility_block) in world2.json has no windows. With snap_to_building_center=True
         # and entry_mode='extreme_floor', target snaps to building center and
