@@ -49,7 +49,7 @@ async def plan_route(
     target_y: float | None = None,
     snap_to_building_center: bool = False,
     exclude_building_id: int | None = None,
-    entry_mode: Literal["nearest_floor", "extreme_floor"] = "nearest_floor",
+    entry_mode: Literal["nearest_floor", "ground_entry"] = "nearest_floor",
 ) -> dict:
     """
     Pre-compute a collision-free route from the drone's current position.
@@ -62,10 +62,13 @@ async def plan_route(
       - ``"nearest_floor"`` (default): pick the window closest in Y to ``target_y``
         (building center by default), with XZ distance as tiebreaker. Preserves
         historical behavior.
-      - ``"extreme_floor"``: restrict candidates to the lowest- and highest-floor
-        windows only, and pick the one minimizing 3D Euclidean distance from the
-        drone's current position. When the restricted set is empty, fall back to
-        ``nearest_floor`` behavior with ``entry_mode_fallback=True`` recorded.
+      - ``"ground_entry"``: restrict candidates to the lowest-floor windows only,
+        and pick the one minimizing horizontal (XZ) distance from the drone's
+        current position. This mimics a human pilot entering a building at the
+        ground floor nearest their approach, rather than climbing to the roof
+        first. When the restricted set is empty (e.g. building has no windows),
+        fall back to ``nearest_floor`` behavior with ``entry_mode_fallback=True``
+        recorded.
 
     Args:
         asset_id: Drone identifier.
@@ -91,50 +94,32 @@ async def plan_route(
     if nearby is not None and nearby.windows:
         available_window_waypoints = nearby.window_scan_waypoints(standoff=WINDOW_SCAN_STANDOFF_M)
 
-    entry_floor_kind: str | None = None
     entry_mode_fallback = False
     if snap_to_building_center and nearby is not None:
         target_x = nearby.cx
         target_z = nearby.cz
 
-        if entry_mode == "extreme_floor" and available_window_waypoints:
+        if entry_mode == "ground_entry" and available_window_waypoints:
             floors = {int(wp["floor"]) for wp in available_window_waypoints}
             lowest_floor = min(floors)
-            highest_floor = max(floors)
-            # Iterate lowest-floor candidates first so ties resolve to "lowest"
-            # (Python's min() is stable on equal keys). The lowest-floor list is
-            # non-empty whenever available_window_waypoints is non-empty, since
-            # lowest_floor = min(floors) is guaranteed to exist in the set.
-            ordered_candidates: list[dict] = [
+            ground_candidates: list[dict] = [
                 wp for wp in available_window_waypoints
                 if int(wp["floor"]) == lowest_floor
-            ] + [
-                wp for wp in available_window_waypoints
-                if int(wp["floor"]) == highest_floor and highest_floor != lowest_floor
             ]
-            assert ordered_candidates, (
-                "extreme_floor candidate set is empty despite non-empty "
+            assert ground_candidates, (
+                "ground_entry candidate set is empty despite non-empty "
                 "available_window_waypoints — this is a logic error"
             )
 
-            def _drone_dist_3d(wp: dict) -> float:
+            def _drone_dist_xz(wp: dict) -> float:
                 dx = float(wp["x"]) - cx
-                dy = float(wp["y"]) - cy
                 dz = float(wp["z"]) - cz
-                return math.sqrt(dx * dx + dy * dy + dz * dz)
+                return math.sqrt(dx * dx + dz * dz)
 
-            selected_window_waypoint = min(ordered_candidates, key=_drone_dist_3d)
-            entry_floor_kind = (
-                "lowest"
-                if int(selected_window_waypoint["floor"]) == lowest_floor
-                else "highest"
-            )
+            selected_window_waypoint = min(ground_candidates, key=_drone_dist_xz)
 
         if selected_window_waypoint is None:
-            # Either entry_mode == "nearest_floor", or extreme_floor had no
-            # candidates (e.g. building has no windows). In the latter case,
-            # record the fallback so callers can detect it.
-            if entry_mode == "extreme_floor":
+            if entry_mode == "ground_entry":
                 entry_mode_fallback = True
             selected_window_waypoint = select_window_waypoint(
                 available_window_waypoints,
@@ -184,10 +169,8 @@ async def plan_route(
             target_resolution["selected_window_waypoint"] = selected_window_waypoint
 
     if target_resolution is not None:
-        if entry_mode == "extreme_floor":
-            target_resolution["entry_mode"] = "extreme_floor"
-            if entry_floor_kind is not None:
-                target_resolution["entry_floor_kind"] = entry_floor_kind
+        if entry_mode == "ground_entry":
+            target_resolution["entry_mode"] = "ground_entry"
             if entry_mode_fallback:
                 target_resolution["entry_mode_fallback"] = True
 
