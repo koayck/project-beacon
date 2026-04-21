@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 from collections.abc import Iterable
+from typing import Literal
 
 from backend.services.fleet_assignment import (
     assign_fleet_to_buildings as _assign_fleet_to_buildings_service,
@@ -171,6 +172,7 @@ def plan_building_vertical_sweep(
     flood_clearance: float = 0.5,
     approach_x: float | None = None,
     approach_z: float | None = None,
+    entry_floor: Literal["lowest", "highest"] = "lowest",
 ) -> dict:
     return _plan_building_vertical_sweep(
         target_x=target_x,
@@ -180,6 +182,7 @@ def plan_building_vertical_sweep(
         flood_clearance=flood_clearance,
         approach_x=approach_x,
         approach_z=approach_z,
+        entry_floor=entry_floor,
     )
 
 
