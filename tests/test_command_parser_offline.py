@@ -27,3 +27,15 @@ def test_parse_command_deploy_priority_over_scan_keyword() -> None:
     assert intent.asset_ids == ["auto"]
     assert intent.targets == [{"type": "area", "name": "district"}]
     assert intent.is_complex_mission() is True
+
+
+def test_parse_command_deploy_scout_sweep_phrase() -> None:
+    intent = parse_command(
+        "Deploy the scout drone to survey the disaster zone and map every sector."
+    )
+    assert intent.mission_type == MissionType.DEPLOY_SWARM
+    assert intent.asset_ids == ["auto"]
+    assert intent.constraints.get("operation") == "deploy_scout_sweep"
+    assert intent.targets == [
+        {"type": "area", "name": "disaster zone", "scope": "every sector"}
+    ]

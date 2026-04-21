@@ -117,6 +117,33 @@ def _first_exception_message(exc: BaseException) -> str:
     return f"{type(current).__name__}: {current}"
 
 
+def _enrich_scout_telemetry(payload: dict) -> dict:
+    """Add scout exploration fields to telemetry payloads.
+
+    Args:
+        payload: Raw telemetry payload received from UDP heartbeat.
+
+    Returns:
+        A new payload dictionary. For scout heartbeats, the dictionary includes
+        `explored_sectors` and (when present) `sector_reveals` so the frontend
+        can progressively clear fog-of-war. Non-scout payloads are returned
+        unchanged except for being copied.
+    """
+    from backend.services.scout import SCOUT_ASSET_ID, exploration_tracker
+
+    enriched_payload = dict(payload)
+    asset_id = str(enriched_payload.get("asset_id", "")).strip()
+    if asset_id != SCOUT_ASSET_ID:
+        return enriched_payload
+
+    exploration_tracker.process_heartbeat(enriched_payload)
+    enriched_payload["explored_sectors"] = exploration_tracker.explored_sectors
+    pending_reveals = exploration_tracker.pop_pending_reveals()
+    if pending_reveals:
+        enriched_payload["sector_reveals"] = pending_reveals
+    return enriched_payload
+
+
 def _extract_survivor_coords(payload: object) -> list[dict[str, float]]:
     """Extract unique survivor coordinates from nested tool responses."""
     seen: set[tuple[float, float, float]] = set()
@@ -250,9 +277,10 @@ async def app_lifespan(app: FastAPI):
     _auto_recall_monitor.start()
 
     def _on_telemetry_update(payload: dict) -> None:
-        ws_broadcaster.broadcast(payload)
+        enriched_payload = _enrich_scout_telemetry(payload)
+        ws_broadcaster.broadcast(enriched_payload)
         if _auto_recall_monitor is not None:
-            _auto_recall_monitor.handle_telemetry(payload)
+            _auto_recall_monitor.handle_telemetry(enriched_payload)
 
     await udp_listener.start(on_update=_on_telemetry_update)
     await restore_registered_connections()
@@ -868,6 +896,12 @@ async def telemetry_ws(websocket: WebSocket):
     await websocket.accept()
     ws_broadcaster.connect(websocket)
     try:
+        from backend.services.scout import exploration_tracker
+
+        await websocket.send_text(json.dumps({
+            "type": "exploration_snapshot",
+            "explored_sectors": exploration_tracker.explored_sectors,
+        }))
         while True:
             await asyncio.sleep(30)
     except WebSocketDisconnect:
