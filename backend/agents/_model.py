@@ -51,7 +51,7 @@ model = "gemini-3-flash-preview"
 # # Drop unsupported params silently (e.g. presence_penalty not supported by ollama_chat)
 litellm.drop_params = True
 
-_THINKING_CONFIG = types.ThinkingConfig(include_thoughts=True, thinking_budget=2048)
+_THINKING_CONFIG = types.ThinkingConfig(include_thoughts=True, thinking_budget=4096)
 
 QWEN3_INSTRUCT = model
 
