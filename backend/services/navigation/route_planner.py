@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Literal
 
 from backend.services.core import context
 from backend.services.core.survivor_registry import get_detected_survivor_ids
@@ -49,12 +49,23 @@ async def plan_route(
     target_y: float | None = None,
     snap_to_building_center: bool = False,
     exclude_building_id: int | None = None,
+    entry_mode: Literal["nearest_floor", "extreme_floor"] = "nearest_floor",
 ) -> dict:
     """
     Pre-compute a collision-free route from the drone's current position.
 
     ``exclude_building_id`` removes a specific building from obstacle checks -
     used when the destination IS the target building (e.g. rooftop approach).
+
+    ``entry_mode`` controls window-waypoint selection when ``snap_to_building_center``
+    is True and the target building has windows:
+      - ``"nearest_floor"`` (default): pick the window closest in Y to ``target_y``
+        (building center by default), with XZ distance as tiebreaker. Preserves
+        historical behavior.
+      - ``"extreme_floor"``: restrict candidates to the lowest- and highest-floor
+        windows only, and pick the one minimizing 3D Euclidean distance from the
+        drone's current position. When the restricted set is empty, fall back to
+        ``nearest_floor`` behavior with ``entry_mode_fallback=True`` recorded.
 
     Args:
         asset_id: Drone identifier.
@@ -63,6 +74,7 @@ async def plan_route(
         target_y: Optional target altitude.
         snap_to_building_center: Whether to snap target onto building center/window waypoint.
         exclude_building_id: Optional building id to ignore as obstacle.
+        entry_mode: Window-waypoint selection policy (see above).
     Returns:
         Structured route payload with strategy, waypoints, and optional error.
     """
@@ -79,15 +91,58 @@ async def plan_route(
     if nearby is not None and nearby.windows:
         available_window_waypoints = nearby.window_scan_waypoints(standoff=WINDOW_SCAN_STANDOFF_M)
 
+    entry_floor_kind: str | None = None
+    entry_mode_fallback = False
     if snap_to_building_center and nearby is not None:
         target_x = nearby.cx
         target_z = nearby.cz
-        selected_window_waypoint = select_window_waypoint(
-            available_window_waypoints,
-            ref_x=requested_x,
-            ref_z=requested_z,
-            preferred_y=target_y if target_y is not None else nearby.h / 2,
-        )
+
+        if entry_mode == "extreme_floor" and available_window_waypoints:
+            floors = {int(wp["floor"]) for wp in available_window_waypoints}
+            lowest_floor = min(floors)
+            highest_floor = max(floors)
+            # Iterate lowest-floor candidates first so ties resolve to "lowest"
+            # (Python's min() is stable on equal keys). The lowest-floor list is
+            # non-empty whenever available_window_waypoints is non-empty, since
+            # lowest_floor = min(floors) is guaranteed to exist in the set.
+            ordered_candidates: list[dict] = [
+                wp for wp in available_window_waypoints
+                if int(wp["floor"]) == lowest_floor
+            ] + [
+                wp for wp in available_window_waypoints
+                if int(wp["floor"]) == highest_floor and highest_floor != lowest_floor
+            ]
+            assert ordered_candidates, (
+                "extreme_floor candidate set is empty despite non-empty "
+                "available_window_waypoints — this is a logic error"
+            )
+
+            def _drone_dist_3d(wp: dict) -> float:
+                dx = float(wp["x"]) - cx
+                dy = float(wp["y"]) - cy
+                dz = float(wp["z"]) - cz
+                return math.sqrt(dx * dx + dy * dy + dz * dz)
+
+            selected_window_waypoint = min(ordered_candidates, key=_drone_dist_3d)
+            entry_floor_kind = (
+                "lowest"
+                if int(selected_window_waypoint["floor"]) == lowest_floor
+                else "highest"
+            )
+
+        if selected_window_waypoint is None:
+            # Either entry_mode == "nearest_floor", or extreme_floor had no
+            # candidates (e.g. building has no windows). In the latter case,
+            # record the fallback so callers can detect it.
+            if entry_mode == "extreme_floor":
+                entry_mode_fallback = True
+            selected_window_waypoint = select_window_waypoint(
+                available_window_waypoints,
+                ref_x=requested_x,
+                ref_z=requested_z,
+                preferred_y=target_y if target_y is not None else nearby.h / 2,
+            )
+
         if selected_window_waypoint is not None:
             target_x = float(selected_window_waypoint["x"])
             target_z = float(selected_window_waypoint["z"])
@@ -100,6 +155,14 @@ async def plan_route(
         else:
             target_y = 10.0
     target_y = max(target_y, 5.0)
+
+    # If the requested target XZ falls inside a building's footprint and the
+    # requested altitude would place the drone inside or on the rooftop, lift
+    # target_y above the roof. Otherwise A*'s goal snapping lands the drone on
+    # the roof surface where any obstacle perturbation leaves it BLOCKED.
+    footprint_building = world.building_near_xz(target_x, target_z, margin=0.0)
+    if footprint_building is not None and target_y <= footprint_building.max_y + 0.5:
+        target_y = footprint_building.max_y + 5.0
 
     target_resolution: dict | None = None
     if nearby is not None:
@@ -119,6 +182,14 @@ async def plan_route(
             target_resolution["window_waypoints"] = available_window_waypoints
         if selected_window_waypoint is not None:
             target_resolution["selected_window_waypoint"] = selected_window_waypoint
+
+    if target_resolution is not None:
+        if entry_mode == "extreme_floor":
+            target_resolution["entry_mode"] = "extreme_floor"
+            if entry_floor_kind is not None:
+                target_resolution["entry_floor_kind"] = entry_floor_kind
+            if entry_mode_fallback:
+                target_resolution["entry_mode_fallback"] = True
 
     window_summary_suffix = ""
     if selected_window_waypoint is not None:

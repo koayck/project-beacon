@@ -40,7 +40,7 @@ async def test_sweep_summary_counts_visible_survivor_even_if_outside_scan_radius
             "waypoints": [
                 {
                     "x": kwargs["target_x"],
-                    "y": kwargs["target_y"],
+                    "y": kwargs.get("target_y", 10.0),
                     "z": kwargs["target_z"],
                     "reason": "direct path clear",
                 }

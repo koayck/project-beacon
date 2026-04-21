@@ -60,6 +60,32 @@ async def sweep_scan_building(
     if target_z is None:
         target_z = status["z"]
 
+    # 1. Pick the entry window via drone-distance on lowest/highest floors only,
+    #    and compute a collision-free route to it. This also returns entry_floor_kind
+    #    so we can iterate the sweep in the matching direction.
+    entry_route = await plan_route_fn(
+        asset_id=asset_id,
+        target_x=target_x,
+        target_z=target_z,
+        snap_to_building_center=True,
+        entry_mode="extreme_floor",
+    )
+    if "error" in entry_route:
+        return {
+            "asset_id": asset_id,
+            "error": "Sweep route blocked",
+            "route_error": entry_route["error"],
+            "route_obstacles": entry_route.get("obstacles", []),
+            "completed_waypoints": 0,
+        }
+    entry_floor_kind = (
+        entry_route.get("target_resolution", {}).get("entry_floor_kind") or "lowest"
+    )
+
+    # 2. Build the sweep plan with the matching iteration direction. The drone
+    #    will be navigated to the entry window first (below), so by the time
+    #    the sweep executes, approach_x/approach_z naturally match the first
+    #    sweep waypoint and the sweep's internal window selection re-chooses it.
     plan = plan_building_vertical_sweep(
         target_x=target_x,
         target_z=target_z,
@@ -67,6 +93,7 @@ async def sweep_scan_building(
         standoff=standoff,
         approach_x=status.get("x"),
         approach_z=status.get("z"),
+        entry_floor=entry_floor_kind,
     )
     if not plan.get("matched_building", False):
         return {
@@ -116,14 +143,10 @@ async def sweep_scan_building(
     building_id = int(building_id_raw) if isinstance(building_id_raw, (int, float)) else None
 
     if plan["waypoints"]:
-        first_wp = plan["waypoints"][0]
-        transition_route = await plan_route_fn(
-            asset_id=asset_id,
-            target_x=first_wp["x"],
-            target_z=first_wp["z"],
-            target_y=first_wp["y"],
-            exclude_building_id=building_id,
-        )
+        # Use the entry route computed pre-sweep to drive the drone to the first
+        # sweep waypoint. The sweep's first waypoint equals the entry window we
+        # already routed to, so no second route computation is needed.
+        transition_route = entry_route
         if "error" in transition_route:
             return {
                 "asset_id": asset_id,

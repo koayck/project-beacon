@@ -210,19 +210,35 @@ def _reconstruct_path(came_from: dict[tuple[int, int, int], tuple[int, int, int]
     return path
 
 
-def _simplify_path(world: object, points: list[tuple[float, float, float]], margin: float, exclude_building_id: int | None) -> list[tuple[float, float, float]]:
+def _simplify_path(
+    world: object,
+    points: list[tuple[float, float, float]],
+    margin: float,
+    exclude_building_id: int | None,
+    *,
+    cell_size: float,
+) -> list[tuple[float, float, float]]:
     """Reduce waypoint count by collapsing line-of-sight segments.
+
+    Uses a stricter margin than planning (``margin + cell_size / 2``) to
+    prevent diagonal corner-cuts: A* keeps voxel centers ``margin`` metres
+    from walls, but a straight line between two such voxels taken diagonally
+    can cut up to ``cell_size / 2`` closer to a wall corner. The stricter
+    simplify margin absorbs that geometric excess.
 
     Args:
         world: World model instance providing ``obstacles_in_path``.
         points: Full waypoint sequence.
-        margin: Obstacle safety margin.
+        margin: Planning obstacle safety margin.
         exclude_building_id: Optional building id to ignore.
+        cell_size: Grid voxel size used during planning.
     Returns:
         Simplified waypoint list preserving collision safety.
     """
     if len(points) <= 2:
         return points
+
+    simplify_margin = margin + cell_size / 2
 
     simplified = [points[0]]
     anchor_index = 0
@@ -233,7 +249,7 @@ def _simplify_path(world: object, points: list[tuple[float, float, float]], marg
             world,
             points[anchor_index],
             points[probe_index],
-            margin,
+            simplify_margin,
             exclude_building_id,
         ):
             probe_index += 1
@@ -276,7 +292,7 @@ def find_3d_path(
     max_x = max([start[0], goal[0], *(b.max_x for b in buildings)] or [start[0], goal[0]]) + 8.0
     min_z = min([start[2], goal[2], *(b.min_z for b in buildings)] or [start[2], goal[2]]) - 8.0
     max_z = max([start[2], goal[2], *(b.max_z for b in buildings)] or [start[2], goal[2]]) + 8.0
-    min_y = max(3.0, min(start[1], goal[1], 5.0) - 2.0)
+    min_y = max(0.0, min(start[1], goal[1]) - 2.0)
     tallest = max([start[1], goal[1], *(b.max_y for b in buildings)] or [start[1], goal[1]])
     max_y = max_altitude if max_altitude is not None else max(tallest + 10.0, goal[1] + 5.0, start[1] + 5.0)
     max_y = max(max_y, min_y + 5.0)
@@ -318,7 +334,7 @@ def find_3d_path(
             if world_path:
                 world_path[0] = start
                 world_path[-1] = goal
-            return _simplify_path(world, world_path, margin, exclude_building_id)
+            return _simplify_path(world, world_path, margin, exclude_building_id, cell_size=cell_size)
 
         for neighbor in _grid_neighbors(world, grid, current, margin, exclude_building_id):
             tentative_g = g_score[current] + _distance_3d(current, neighbor)
