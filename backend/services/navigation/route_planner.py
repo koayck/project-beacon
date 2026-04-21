@@ -156,6 +156,14 @@ async def plan_route(
             target_y = 10.0
     target_y = max(target_y, 5.0)
 
+    # If the requested target XZ falls inside a building's footprint and the
+    # requested altitude would place the drone inside or on the rooftop, lift
+    # target_y above the roof. Otherwise A*'s goal snapping lands the drone on
+    # the roof surface where any obstacle perturbation leaves it BLOCKED.
+    footprint_building = world.building_near_xz(target_x, target_z, margin=0.0)
+    if footprint_building is not None and target_y <= footprint_building.max_y + 0.5:
+        target_y = footprint_building.max_y + 5.0
+
     target_resolution: dict | None = None
     if nearby is not None:
         target_resolution = {
