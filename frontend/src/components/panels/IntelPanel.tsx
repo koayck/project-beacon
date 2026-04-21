@@ -61,11 +61,11 @@ export function IntelCard({
 
   return (
     <div
-      className={`pointer-events-auto relative flex max-h-[440px] min-w-[240px] flex-col overflow-hidden rounded-lg border border-l-2 bg-[linear-gradient(135deg,rgba(6,8,16,0.88),rgba(4,6,14,0.82))] font-mono text-[13px] leading-[1.7] text-[#8899bb] shadow-[0_4px_30px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(200,136,0,0.06)] backdrop-blur-[12px] ${panelBorderClass}`}
+      className={`pointer-events-auto relative flex max-h-[390px] min-w-[240px] flex-col overflow-hidden rounded-lg border border-l-2 bg-[linear-gradient(135deg,rgba(6,8,16,0.88),rgba(4,6,14,0.82))] font-mono text-[12px] leading-[1.55] text-[#8899bb] shadow-[0_4px_30px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(200,136,0,0.06)] backdrop-blur-[12px] ${panelBorderClass}`}
     >
       <div className="pointer-events-none absolute left-[-30%] top-0 z-0 h-full w-[30%] animate-[beacon-scanLine_4s_linear_infinite] bg-[linear-gradient(90deg,transparent,rgba(80,170,255,0.03),transparent)]" />
 
-      <div className="relative z-[2] shrink-0 bg-[linear-gradient(135deg,rgba(6,8,16,0.95),rgba(4,6,14,0.9))] px-[14px] pb-0 pt-[10px]">
+      <div className="relative z-[2] shrink-0 bg-[linear-gradient(135deg,rgba(6,8,16,0.95),rgba(4,6,14,0.9))] px-[12px] pb-0 pt-[8px]">
         {alertSignal && (
           <div className="mb-2 animate-[beacon-alertFlash_3s_ease-in-out_forwards] rounded border border-[rgba(255,120,0,0.5)] bg-[linear-gradient(135deg,rgba(255,60,0,0.2),rgba(255,120,0,0.15))] px-[10px] py-[6px] text-center">
             <div className="text-[13px] font-bold tracking-[1.5px] text-[#ff8833]">
@@ -102,7 +102,7 @@ export function IntelCard({
         </div> */}
       </div>
 
-      <div className="relative z-[1] max-h-[220px] overflow-y-auto px-[14px] pb-[10px] pt-0">
+      <div className="relative z-[1] max-h-[185px] overflow-y-auto px-[12px] pb-[8px] pt-0">
         {detected === 0 ? (
           <div className="py-2 text-xs italic text-[#6a7a8a]">
             No heat signatures in sensor range.
@@ -131,7 +131,7 @@ export function IntelCard({
             const signalDotClass = isDelivered ? 'bg-[#4cf]' : isSubmerged ? 'bg-[#f66]' : 'bg-[#6f6]'
 
             return (
-              <div key={i} className={`mb-[5px] rounded border px-2 py-1.5 ${cardStateClass} ${cardAnimationClass}`}>
+              <div key={i} className={`mb-1 rounded border px-2 py-1 ${cardStateClass} ${cardAnimationClass}`}>
                 <div className="mb-[3px] flex items-center justify-between">
                   <span className={`flex items-center gap-[5px] font-bold ${signalColorClass}`}>
                     <span

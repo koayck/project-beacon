@@ -72,11 +72,11 @@ export function TopStatusBar({
           {networkLabel}
           {networkMockStatus?.target_ssid ? ` • SSID ${networkMockStatus.target_ssid}` : ''}
         </span>
-        {selectMode && (
+        {/* {selectMode && (
           <span className="rounded-[3px] border border-[rgba(255,140,0,0.3)] bg-[rgba(255,100,0,0.1)] px-2 py-0.5 font-bold tracking-[1px] text-[#ff9933]">
             AREA SELECT
           </span>
-        )}
+        )} */}
         {submerged > 0 && (
           <span className="flex items-center gap-1 rounded-[3px] border border-[rgba(255,60,60,0.25)] bg-[rgba(255,40,40,0.08)] px-2 py-0.5 text-[#ff5555]">
             <span className="h-[5px] w-[5px] shrink-0 animate-[beacon-livePulse_1.5s_ease-in-out_infinite] rounded-full bg-[#ff4444]" />

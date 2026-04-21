@@ -34,7 +34,7 @@ export function Controls({
   const canCycleTargets = activeAssetIds.length > 1
 
   return (
-    <div className={`pointer-events-auto min-w-[210px] rounded-lg border p-[10px_12px] font-mono text-xs leading-[1.6] text-[#8899aa] backdrop-blur-[12px] ${
+    <div className={`pointer-events-auto w-[320px] min-w-[320px] rounded-lg border p-[10px_12px] font-mono text-xs leading-[1.6] text-[#8899aa] backdrop-blur-[12px] ${
       selectMode
         ? 'border-[rgba(255,136,0,0.3)] bg-[linear-gradient(135deg,rgba(30,16,0,0.85),rgba(20,10,0,0.75))]'
         : 'border-[rgba(40,60,100,0.25)] bg-[linear-gradient(135deg,rgba(8,10,20,0.82),rgba(6,8,16,0.72))]'
