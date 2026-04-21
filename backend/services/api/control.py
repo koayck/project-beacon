@@ -186,6 +186,28 @@ def plan_building_vertical_sweep(
     )
 
 
+_move_locks: dict[str, asyncio.Lock] = {}
+
+
+def _move_lock_for(asset_id: str) -> asyncio.Lock:
+    """Return (creating on first use) a per-drone async lock.
+
+    LLM agents often emit multiple ``move_drone_to`` tool calls as a parallel
+    batch when issuing multi-waypoint routes. Without serialization, the three
+    concurrent calls all issue gRPC ``move_to`` commands in rapid succession;
+    each overwrites the drone's target, the last one wins, and the drone flies
+    a single 3D diagonal from its start position to the final waypoint —
+    skipping every intermediate waypoint and clipping obstacles that the plan
+    had explicitly routed around. A per-asset lock serializes calls for the
+    same drone while preserving concurrency across different drones.
+    """
+    lock = _move_locks.get(asset_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _move_locks[asset_id] = lock
+    return lock
+
+
 async def move_drone_to(
     asset_id: str,
     x: float,
@@ -195,31 +217,30 @@ async def move_drone_to(
 ) -> dict:
     """Issue a move command and await arrival at the target waypoint.
 
-    Blocking semantics let callers chain sequential move_drone_to calls for
-    multi-waypoint routes without the drone skipping intermediate waypoints
-    (each call overwrites the drone's target, so non-blocking fire-and-forget
-    calls would collapse to the final target and fly a direct line through
-    intermediate obstacles). On BLOCKED, the wait helper re-plans from the
-    drone's current position and resumes, so single-call recovery is handled
-    transparently.
+    Blocking semantics + per-drone lock guarantee that multi-waypoint routes
+    actually follow waypoints: the drone reaches each waypoint before the next
+    move command overwrites its target. On BLOCKED, the wait helper re-plans
+    from the drone's current position and resumes, so single-call recovery is
+    handled transparently.
     """
-    target_speed = get_drone_speed(asset_id) if speed is None else speed
-    command_result = await grpc_client.move_to(asset_id, x, y, z, target_speed)
-    if not command_result.get("success", True):
-        return command_result
+    async with _move_lock_for(asset_id):
+        target_speed = get_drone_speed(asset_id) if speed is None else speed
+        command_result = await grpc_client.move_to(asset_id, x, y, z, target_speed)
+        if not command_result.get("success", True):
+            return command_result
 
-    wait_result = await _wait_until_waypoint_reached(asset_id, x, y, z)
-    if wait_result.get("ok", False):
+        wait_result = await _wait_until_waypoint_reached(asset_id, x, y, z)
+        if wait_result.get("ok", False):
+            return {
+                "success": True,
+                "message": f"Arrived at ({x}, {y}, {z})",
+                "status": wait_result.get("status"),
+            }
         return {
-            "success": True,
-            "message": f"Arrived at ({x}, {y}, {z})",
+            "success": False,
+            "message": wait_result.get("error", "Move failed"),
             "status": wait_result.get("status"),
         }
-    return {
-        "success": False,
-        "message": wait_result.get("error", "Move failed"),
-        "status": wait_result.get("status"),
-    }
 
 
 async def list_all_drones() -> dict:
