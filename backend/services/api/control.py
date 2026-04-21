@@ -193,8 +193,33 @@ async def move_drone_to(
     z: float,
     speed: float | None = None,
 ) -> dict:
+    """Issue a move command and await arrival at the target waypoint.
+
+    Blocking semantics let callers chain sequential move_drone_to calls for
+    multi-waypoint routes without the drone skipping intermediate waypoints
+    (each call overwrites the drone's target, so non-blocking fire-and-forget
+    calls would collapse to the final target and fly a direct line through
+    intermediate obstacles). On BLOCKED, the wait helper re-plans from the
+    drone's current position and resumes, so single-call recovery is handled
+    transparently.
+    """
     target_speed = get_drone_speed(asset_id) if speed is None else speed
-    return await grpc_client.move_to(asset_id, x, y, z, target_speed)
+    command_result = await grpc_client.move_to(asset_id, x, y, z, target_speed)
+    if not command_result.get("success", True):
+        return command_result
+
+    wait_result = await _wait_until_waypoint_reached(asset_id, x, y, z)
+    if wait_result.get("ok", False):
+        return {
+            "success": True,
+            "message": f"Arrived at ({x}, {y}, {z})",
+            "status": wait_result.get("status"),
+        }
+    return {
+        "success": False,
+        "message": wait_result.get("error", "Move failed"),
+        "status": wait_result.get("status"),
+    }
 
 
 async def list_all_drones() -> dict:
