@@ -48,7 +48,7 @@ def test_drone_moves_toward_target():
     sim = DroneSimulator("TEST-01")
     sim.move_to(100.0, 0.0, 0.0, speed=50.0)
     sim.start()
-    time.sleep(0.3)  # 3 physics ticks at 0.1s each, speed=50 → ~15 units
+    time.sleep(0.3)  # ~0.3s elapsed, speed=50 → ~15 units
     sim.stop()
     s = sim.get_snapshot()
     assert s.position.x > 0.0, "Drone should have moved toward target"
@@ -72,6 +72,17 @@ def test_battery_drains_while_moving():
     sim.stop()
     s = sim.get_snapshot()
     assert s.battery < 100.0
+
+
+def test_tick_uses_elapsed_seconds_for_drain() -> None:
+    sim = DroneSimulator("TEST-01")
+    sim.move_to(100.0, 0.0, 0.0, speed=10.0)
+
+    start = sim.get_snapshot()
+    updated = sim._tick(start, elapsed_s=2.0)
+
+    expected_battery = 100.0 - (sim.DRAIN_MOVING_PER_SEC * 2.0)
+    assert abs(updated.battery - expected_battery) < 1e-9
 
 
 def test_vec3_distance():
