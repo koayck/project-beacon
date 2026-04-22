@@ -8,23 +8,24 @@ SCAN_PICKER_INSTRUCTION = """You manage the building scan queue.
    SCAN TARGET: Navigate <asset_id> to building at (x=<x>, z=<z>). Height: <height>m. Remaining: <remaining>.
 """
 
-SCAN_NAV_INSTRUCTION = """You are a navigation specialist for autonomous drones.
+SCAN_NAV_INSTRUCTION = """You are a navigation coordinator for autonomous drones.
 
 COORDINATES: X=East, Y=Up, Z=South. Home pad at (0, 2, 0).
 
 Your target for this iteration is in state["current_building"]. Parse the asset_id,
 x, and z from it (e.g. "Navigate BEACON-01 to building at (x=-15.0, z=-20.0). Height: 12m.").
 
-MOVE PROCEDURE
-1. Set target_y = 5.0 (low approach altitude for ground-floor window entry).
-2. Call plan_route(asset_id, target_x, target_z, target_y).
-3. If plan_route returns {"error": "No clear route found"}:
-   - Call get_drone_status(asset_id) and retry with target_y = max(current_y, 5.0).
-   - Retry once more with target_y = max(current_y, 10.0) if still failing.
-   - Report failure and stop if all retries fail. Do NOT call move_drone_to.
-4. If waypoints list is empty, the drone is already at destination — skip move step.
-5. For each waypoint in "waypoints", call move_drone_to(asset_id, wp.x, wp.y, wp.z).
-6. After the final move: "BEACON-XX arrived at (x, y, z)."
+HANDOFF PROCEDURE
+The actual approach and scan are handled downstream by sweep_scan_building,
+which routes the drone directly to the nearest ground-floor window and
+performs the vertical sweep. Your job is just to announce readiness.
+
+Do NOT call plan_route. Do NOT call move_drone_to. Do NOT call get_drone_status.
+
+Output EXACTLY one line (no extra text, no reasoning, no tool calls):
+   BEACON-XX ready for sweep at (x, z).
+
+Substitute the asset_id for BEACON-XX and the actual x/z values.
 """
 
 SCAN_SILENT_THERMAL_INSTRUCTION = """You are a thermal imaging specialist for search and rescue drones.
@@ -123,23 +124,24 @@ ASSET_SCAN_PICKER_INSTRUCTION_TEMPLATE = """You manage the building scan queue f
    SCAN TARGET: Navigate <asset_id> to building at (x=<x>, z=<z>). Height: <height>m. Remaining: <remaining>.
 """
 
-ASSET_SCAN_NAV_INSTRUCTION_TEMPLATE = """You are a navigation specialist for autonomous drones.
+ASSET_SCAN_NAV_INSTRUCTION_TEMPLATE = """You are a navigation coordinator for autonomous drones.
 
 COORDINATES: X=East, Y=Up, Z=South. Home pad at (0, 2, 0).
 
 Your target for this iteration is in state["{current_key}"]. Parse the asset_id,
 x, and z from it (e.g. "Navigate BEACON-01 to building at (x=-15.0, z=-20.0). Height: 12m.").
 
-MOVE PROCEDURE
-1. Set target_y = 5.0 (low approach altitude for ground-floor window entry).
-2. Call plan_route(asset_id, target_x, target_z, target_y).
-3. If plan_route returns {{"error": "No clear route found"}}:
-   - Call get_drone_status(asset_id) and retry with target_y = max(current_y, 5.0).
-   - Retry once more with target_y = max(current_y, 10.0) if still failing.
-   - Report failure and stop if all retries fail. Do NOT call move_drone_to.
-4. If waypoints list is empty, the drone is already at destination — skip move step.
-5. For each waypoint in "waypoints", call move_drone_to(asset_id, wp.x, wp.y, wp.z).
-6. After the final move: "BEACON-XX arrived at (x, y, z)."
+HANDOFF PROCEDURE
+The actual approach and scan are handled downstream by sweep_scan_building,
+which routes the drone directly to the nearest ground-floor window and
+performs the vertical sweep. Your job is just to announce readiness.
+
+Do NOT call plan_route. Do NOT call move_drone_to. Do NOT call get_drone_status.
+
+Output EXACTLY one line (no extra text, no reasoning, no tool calls):
+   BEACON-XX ready for sweep at (x, z).
+
+Substitute the asset_id for BEACON-XX and the actual x/z values.
 """
 
 ASSET_SCAN_THERMAL_INSTRUCTION_TEMPLATE = """You are a thermal imaging specialist for search and rescue drones.
