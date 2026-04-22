@@ -113,11 +113,11 @@ class TestVerticalSweepExecution:
         assert result["success"] is True
         assert result["strategy"] == "vertical_building_sweep"
         assert result["waypoint_count"] == 2
-        # entry_route(1) + sweep waypoints(2) + workflow-level rooftop move(1) = 4 move_to calls
-        assert _mock_client.move_to.await_count == 4
+        # entry_route(1) + sweep waypoints(2) = 3 move_to calls (no final rooftop move)
+        assert _mock_client.move_to.await_count == 3
         assert _mock_client.scan_area.await_count == 2
-        # entry_route wait(1) + sweep(2 × (move_wait + scan_wait)) + workflow rooftop wait(1) = 6 wait calls
-        assert wait_mock.await_count == 6
+        # entry_route wait(1) + sweep(2 × (move_wait + scan_wait)) = 5 wait calls (no final rooftop wait)
+        assert wait_mock.await_count == 5
         assert result["max_survivors_in_range"] == 1
         assert result["unique_survivor_count"] == 1
         assert result["total_survivor_detections"] == 2

@@ -316,15 +316,6 @@ async def sweep_scan_building(
             }
         )
 
-    move_result = await move_to(
-        asset_id, rooftop["x"], rooftop["y"], rooftop["z"],
-        get_speed(asset_id),
-    )
-    if move_result.get("success", True):
-        await wait_until_waypoint_reached(
-            asset_id, rooftop["x"], rooftop["y"], rooftop["z"],
-        )
-
     max_survivors_seen = max((r["survivors_in_range"] for r in waypoint_reports), default=0)
 
     survivor_detection_index: dict[int, dict] = {}
