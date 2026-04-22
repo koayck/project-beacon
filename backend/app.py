@@ -4,21 +4,24 @@ import asyncio
 import json
 import os
 import re
+import socket
 import subprocess
 import time
-import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncGenerator
+from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastmcp.utilities.lifespan import combine_lifespans
+from google.adk.errors.already_exists_error import AlreadyExistsError
 from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
+from google.adk.sessions import DatabaseSessionService
 from google.genai import types
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from dotenv import load_dotenv
 
 from backend.db.repository import init_db, asset_repo, mission_log_repo
 from backend.db.models import Asset, MissionLog
@@ -44,6 +47,7 @@ from backend.services.api import (
     set_drone_speed,
 )
 from backend.services.auto_recall import AutoRecallMonitor
+from backend.services.simulation_store import ParsedScanTargets, SimulationStore
 
 import logging
 
@@ -52,8 +56,15 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
 
+load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
+
 _adk_runner: Runner | None = None
 _auto_recall_monitor: AutoRecallMonitor | None = None
+_simulation_store: SimulationStore | None = None
+_ADK_APP_NAME = "beacon"
+_ADK_USER_ID = "gcs"
+_ADK_SHARED_SESSION_ID = "gcs-shared-session"
+_ADK_SESSION_DB_URL = os.environ.get("SUPABASE_DB_URL", "").strip()
 
 _ASSET_ID_PATTERN = re.compile(r"^BEACON-(\d+)$")
 _DOCKER_IMAGE = "project-beacon-drone-sim"
@@ -76,7 +87,6 @@ _STARLINK_STATUS_FILE = Path(
 
 
 _mcp_http_app = beacon_mcp.http_app(path="/", transport="streamable-http")
-
 
 def _as_dict(value: object) -> dict | None:
     try:
@@ -266,7 +276,7 @@ def _extract_supply_dispatches(tool_name: str, payload: object) -> list[dict[str
 
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
-    global _adk_runner, _auto_recall_monitor
+    global _adk_runner, _auto_recall_monitor, _simulation_store
 
     await init_db()
     _auto_recall_monitor = AutoRecallMonitor(
@@ -296,11 +306,26 @@ async def app_lifespan(app: FastAPI):
 
     from backend.agents.commander import enhanced_commander
 
+    try:
+        _simulation_store = SimulationStore(_ADK_SESSION_DB_URL)
+        await _simulation_store.start()
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Simulation store unavailable; continuing without persistence: %s",
+            exc,
+        )
+        _simulation_store = None
+
     _adk_runner = Runner(
         agent=enhanced_commander,
-        session_service=InMemorySessionService(),
-        app_name="beacon",
+        session_service=_create_adk_session_service(),
+        app_name=_ADK_APP_NAME,
     )
+    try:
+        await _ensure_adk_shared_session(_adk_runner)
+    except OSError as exc:
+        logging.getLogger(__name__).error("Failed to create ADK session service: %s", exc)
+        raise RuntimeError("ADK session service initialization failed") from exc
     logging.getLogger(__name__).info("ADK enhanced commander agent ready")
 
     try:
@@ -309,6 +334,9 @@ async def app_lifespan(app: FastAPI):
         if _adk_runner is not None:
             await _adk_runner.close()
             _adk_runner = None
+        if _simulation_store is not None:
+            await _simulation_store.stop()
+            _simulation_store = None
         await udp_listener.stop()
         if _auto_recall_monitor is not None:
             await _auto_recall_monitor.stop()
@@ -351,6 +379,28 @@ class UplinkResponse(BaseModel):
 class CommandRequest(BaseModel):
     asset_id: str | None = None
     prompt: str
+    simulation_id: str | None = None
+    confirm_rescan: bool = False
+
+
+class SimulationCreateRequest(BaseModel):
+    simulation_id: str | None = None
+
+
+class SimulationSurvivor(BaseModel):
+    x: float
+    y: float
+    z: float
+    supplied: bool = False
+
+
+class SimulationBuilding(BaseModel):
+    building_id: int
+    detected_survivors: list[SimulationSurvivor] = Field(default_factory=list)
+
+
+class SimulationStateSyncRequest(BaseModel):
+    scanned_buildings: list[SimulationBuilding]
 
 
 def _extract_asset_index(asset_id: str) -> int | None:
@@ -414,15 +464,84 @@ def _assert_container_running(container_name: str) -> None:
     raise HTTPException(status_code=500, detail=f"Spawn failed for {container_name}: {detail}")
 
 
-def _build_agent_prompt(req: CommandRequest) -> str:
-    prompt_parts: list[str] = []
-    if req.asset_id and req.asset_id.upper() not in ("AUTO", ""):
-        prompt_parts.append(
-            f"Preferred asset: {req.asset_id}. Use it if it is active and suitable, "
-            "but discover the fleet first before committing to it."
+async def _ensure_adk_shared_session(runner: Runner) -> str:
+    """Ensure a stable ADK session exists for this process lifespan.
+
+    Args:
+        runner: Active ADK runner with a session service.
+
+    Returns:
+        Stable session ID reused across all command requests in this process.
+    """
+    try:
+        await runner.session_service.create_session(
+            app_name=_ADK_APP_NAME,
+            user_id=_ADK_USER_ID,
+            session_id=_ADK_SHARED_SESSION_ID,
         )
-    prompt_parts.append(f"Mission: {req.prompt}")
-    return " ".join(prompt_parts)
+    except (ValueError, AlreadyExistsError):
+        # ADK session backends may raise either ValueError or AlreadyExistsError
+        # when the same shared session is created concurrently.
+        pass
+    return _ADK_SHARED_SESSION_ID
+
+
+def _create_adk_session_service() -> DatabaseSessionService:
+    """Create a persistent ADK session service backed by Supabase Postgres.
+
+    Returns:
+        Configured DatabaseSessionService instance using the Supabase DB URL.
+
+    Raises:
+        RuntimeError: If SUPABASE_DB_URL is missing from the environment.
+    """
+    if not _ADK_SESSION_DB_URL:
+        raise RuntimeError(
+            "SUPABASE_DB_URL is required for persistent ADK session storage"
+        )
+    return DatabaseSessionService(db_url=_ADK_SESSION_DB_URL)
+
+
+def _known_building_rows() -> list[dict[str, float | int]]:
+    """Build minimal building rows for scan target resolution.
+
+    Returns:
+        List of building dictionaries with id/cx/cz fields.
+    """
+    from backend.services.core import context as service_context
+
+    world = service_context.get_world()
+    return [
+        {"id": b.id, "cx": b.cx, "cz": b.cz}
+        for b in world.buildings
+    ]
+
+
+async def _scan_confirmation_conflict(
+    prompt: str,
+    simulation_id: str | None,
+    confirm_rescan: bool,
+) -> tuple[list[int], ParsedScanTargets]:
+    """Evaluate whether a scan command should require confirmation.
+
+    Args:
+        prompt: User command text.
+        simulation_id: Active simulation ID.
+        confirm_rescan: Explicit override from caller.
+
+    Returns:
+        Tuple of already-scanned building IDs and parsed scan target info.
+    """
+    if simulation_id is None or confirm_rescan:
+        return [], ParsedScanTargets(building_ids=[], has_scan_intent=False)
+    simulation_store = _simulation_store
+    if simulation_store is None:
+        return [], ParsedScanTargets(building_ids=[], has_scan_intent=False)
+    parsed = SimulationStore.parse_scan_targets(prompt, _known_building_rows())
+    if not parsed.has_scan_intent or not parsed.building_ids:
+        return [], parsed
+    already = await simulation_store.get_already_scanned_buildings(simulation_id, parsed.building_ids)
+    return already, parsed
 
 
 def _read_starlink_mock_status() -> dict[str, object]:
@@ -647,17 +766,33 @@ async def send_command(req: CommandRequest) -> dict:
     if _adk_runner is None:
         raise HTTPException(status_code=503, detail="ADK runner not initialised")
 
-    prompt = _build_agent_prompt(req)
+    simulation_store = _simulation_store
+    if req.simulation_id and simulation_store is not None:
+        await simulation_store.create(req.simulation_id)
+        already_scanned, _ = await _scan_confirmation_conflict(
+            req.prompt,
+            req.simulation_id,
+            req.confirm_rescan,
+        )
+        if already_scanned:
+            return {
+                "asset_id": req.asset_id or "FLEET",
+                "response": (
+                    "Scan already completed for building(s): "
+                    + ", ".join(str(item) for item in already_scanned)
+                    + ". Confirm to run another scan."
+                ),
+                "prompt": req.prompt,
+                "requires_confirmation": True,
+                "already_scanned_buildings": already_scanned,
+            }
+
+    prompt = "Mission: " + req.prompt
     content = types.Content(
         role="user", parts=[types.Part(text=prompt)]
     )
 
-    session_id = str(uuid.uuid4())
-    await _adk_runner.session_service.create_session(
-        app_name="beacon",
-        user_id="gcs",
-        session_id=session_id,
-    )
+    session_id = await _ensure_adk_shared_session(_adk_runner)
 
     response_text = ""
     text_candidates: list[str] = []
@@ -667,7 +802,7 @@ async def send_command(req: CommandRequest) -> dict:
         raise HTTPException(status_code=503, detail="ADK runner not initialised")
 
     async for event in runner.run_async(
-        user_id="gcs",
+        user_id=_ADK_USER_ID,
         session_id=session_id,
         new_message=content,
     ):
@@ -707,6 +842,11 @@ async def send_command(req: CommandRequest) -> dict:
         result=response_text,
     ))
 
+    if req.simulation_id and simulation_store is not None:
+        parsed = SimulationStore.parse_scan_targets(req.prompt, _known_building_rows())
+        if parsed.has_scan_intent and parsed.building_ids:
+            await simulation_store.mark_buildings_scanned(req.simulation_id, parsed.building_ids)
+
     return {
         "asset_id": req.asset_id or "FLEET",
         "response": response_text,
@@ -715,25 +855,51 @@ async def send_command(req: CommandRequest) -> dict:
 
 
 @app.post("/command/stream")
-async def send_command_stream(req: CommandRequest) -> StreamingResponse:
+async def send_command_stream(req: CommandRequest, request: Request) -> StreamingResponse:
     """
     Stream ADK agent events via Server-Sent Events.
     Emits tool_call, tool_result, text, and done events as they happen.
     """
     if _adk_runner is None:
         raise HTTPException(status_code=503, detail="ADK runner not initialised")
+    runner = _adk_runner
+    simulation_store = _simulation_store
 
-    prompt = _build_agent_prompt(req)
+    parsed_targets = ParsedScanTargets(building_ids=[], has_scan_intent=False)
+    if req.simulation_id and simulation_store is not None:
+        await simulation_store.create(req.simulation_id)
+        already_scanned, parsed_targets = await _scan_confirmation_conflict(
+            req.prompt,
+            req.simulation_id,
+            req.confirm_rescan,
+        )
+        if already_scanned:
+            async def blocked_stream() -> AsyncGenerator[str, None]:
+                message = (
+                    "RESCAN_CONFIRM_REQUIRED|"
+                    "Building(s) already scanned in this simulation: "
+                    + ", ".join(str(item) for item in already_scanned)
+                    + ". Press confirm to rescan."
+                )
+                yield f"data: {json.dumps({'type': 'error', 'text': message})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'ttft_ms': None, 'tps': None})}\n\n"
+
+            return StreamingResponse(
+                blocked_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "Connection": "keep-alive",
+                },
+            )
+
+    prompt = "Mission: " + req.prompt
     content = types.Content(
         role="user", parts=[types.Part(text=prompt)]
     )
 
-    session_id = str(uuid.uuid4())
-    await _adk_runner.session_service.create_session(
-        app_name="beacon",
-        user_id="gcs",
-        session_id=session_id,
-    )
+    session_id = await _ensure_adk_shared_session(runner)
 
     async def generate() -> AsyncGenerator[str, None]:
         final_text = ""
@@ -746,8 +912,8 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
 
         async def adk_loop() -> None:
             try:
-                async for event in _adk_runner.run_async(
-                    user_id="gcs",
+                async for event in runner.run_async(
+                    user_id=_ADK_USER_ID,
                     session_id=session_id,
                     new_message=content,
                 ):
@@ -771,6 +937,8 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
 
         try:
             while True:
+                if await request.is_disconnected():
+                    break
                 kind, data = await queue.get()
 
                 if kind == "heartbeat":
@@ -874,6 +1042,13 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
             ttft_ms = round((first_token_time - stream_start) * 1000, 1) if first_token_time else None
             gen_secs = (now - first_token_time) if first_token_time else None
             tps = round((total_chars / 4) / gen_secs, 1) if gen_secs and gen_secs > 0 else None
+            if req.simulation_id and simulation_store is not None:
+                if not parsed_targets.has_scan_intent:
+                    parsed_targets_local = SimulationStore.parse_scan_targets(req.prompt, _known_building_rows())
+                else:
+                    parsed_targets_local = parsed_targets
+                if parsed_targets_local.building_ids:
+                    await simulation_store.mark_buildings_scanned(req.simulation_id, parsed_targets_local.building_ids)
             yield f"data: {json.dumps({'type': 'done', 'ttft_ms': ttft_ms, 'tps': tps})}\n\n"
 
     return StreamingResponse(
@@ -885,6 +1060,67 @@ async def send_command_stream(req: CommandRequest) -> StreamingResponse:
             "Connection": "keep-alive",
         },
     )
+
+
+@app.post("/simulation")
+async def create_simulation(req: SimulationCreateRequest) -> dict[str, object]:
+    """Create (or reuse) a simulation row in Supabase.
+
+    Args:
+        req: Optional simulation ID payload.
+
+    Returns:
+        Persisted simulation snapshot.
+    """
+    simulation_store = _simulation_store
+    if simulation_store is None:
+        raise HTTPException(status_code=503, detail="Simulation store not initialised")
+    simulation_id = await simulation_store.create(req.simulation_id)
+    snapshot = await simulation_store.get(simulation_id)
+    return snapshot if snapshot is not None else {"id": simulation_id, "scanned_buildings": []}
+
+
+@app.get("/simulation/{simulation_id}")
+async def get_simulation(simulation_id: str) -> dict[str, object]:
+    """Fetch a simulation snapshot from Supabase by ID.
+
+    Args:
+        simulation_id: Stable simulation ID.
+
+    Returns:
+        Simulation snapshot.
+    """
+    simulation_store = _simulation_store
+    if simulation_store is None:
+        raise HTTPException(status_code=503, detail="Simulation store not initialised")
+    snapshot = await simulation_store.get(simulation_id)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    return snapshot
+
+
+@app.post("/simulation/{simulation_id}/state")
+async def sync_simulation_state(
+    simulation_id: str,
+    req: SimulationStateSyncRequest,
+) -> dict[str, object]:
+    """Merge frontend survivor supplied/detected state into simulation row.
+
+    Args:
+        simulation_id: Stable simulation ID.
+        req: Scanned building payload with detected survivors and supplied flags.
+
+    Returns:
+        Updated simulation snapshot.
+    """
+    simulation_store = _simulation_store
+    if simulation_store is None:
+        raise HTTPException(status_code=503, detail="Simulation store not initialised")
+    merged = await simulation_store.merge_survivor_state(
+        simulation_id,
+        [row.model_dump() for row in req.scanned_buildings],
+    )
+    return merged
 
 
 

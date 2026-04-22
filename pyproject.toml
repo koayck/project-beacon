@@ -18,6 +18,7 @@ dependencies = [
     "fastmcp>=2.0.0",
     # Database
     "aiosqlite>=0.20.0",
+    "asyncpg>=0.30.0",
     # Validation
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
