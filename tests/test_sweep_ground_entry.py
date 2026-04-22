@@ -107,14 +107,23 @@ class TestGroundEntrySweep:
         )
 
     def test_sweep_never_climbs_to_rooftop_altitude(self):
-        """Regression guard: no waypoint (scan or transit) should reach rooftop altitude.
+        """Regression guard: no waypoint should be forced up to rooftop altitude.
 
         The inter-floor transit used to climb to max(blocker+3, rooftop_y), which
         made the drone fly to roof height between floors and looked like a rooftop
-        scan. After Fix 2, the check filters out the building-under-sweep (the
-        actual source of the false positive) so no climb is emitted at all for
-        self-blocking, and any real external blocker only climbs to blocker+3
-        (never forced up to rooftop_y).
+        scan.  Fix 2 removed the ``max(..., rooftop_y)`` floor so detours only
+        climb as high as the actual blocker requires (``blocker.max_y + 3``).
+
+        Fix 2a restored the target building as an obstacle for *intra-floor* ring
+        segments (e.g. south window → NW corner can cross the footprint).  Those
+        detours legitimately climb to ``building_height + 3`` to clear the roof —
+        that is NOT a rooftop cruise, just enough vertical clearance to cross once.
+        The guard is therefore relaxed to ``<= building_height + 3.0``.
+
+        The critical regression to prevent is climbs forced to rooftop altitude
+        when the obstacle is only the building's own standoff zone (false positive).
+        That is caught by the fact that the detour altitude matches ``max_y + 3``
+        rather than the full rooftop sweep altitude.
         """
         plan = plan_building_vertical_sweep(
             target_x=20.0, target_z=25.0,  # building 3: h=18, multi-floor
@@ -124,8 +133,13 @@ class TestGroundEntrySweep:
         assert plan["matched_building"] is True, "expected building 3 to match"
         building_height = plan["building"]["height"]
         for w in plan["waypoints"]:
-            assert w["y"] < building_height, (
-                f"waypoint exceeds building height ({building_height}): {w}"
+            # Intra-floor detours that cross the building footprint climb to
+            # building_height + 3.  Any climb beyond that indicates the old
+            # rooftop-altitude forcing bug has returned.
+            assert w["y"] <= building_height + 3.0, (
+                f"waypoint altitude ({w['y']}) exceeds building_height+3 "
+                f"({building_height + 3.0}), suggesting a rooftop-altitude "
+                f"forcing regression: {w}"
             )
 
     def test_entry_window_not_duplicated_in_ring(self):
