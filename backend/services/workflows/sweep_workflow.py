@@ -60,15 +60,16 @@ async def sweep_scan_building(
     if target_z is None:
         target_z = status["z"]
 
-    # 1. Pick the entry window via drone-distance on lowest/highest floors only,
-    #    and compute a collision-free route to it. This also returns entry_floor_kind
-    #    so we can iterate the sweep in the matching direction.
+    # 1. Pick the entry window via drone-XZ-distance on lowest-floor windows
+    #    only, and compute a collision-free route to it. Ground-entry mimics
+    #    a human pilot entering a building at the ground floor nearest to
+    #    their approach rather than climbing to the roof first.
     entry_route = await plan_route_fn(
         asset_id=asset_id,
         target_x=target_x,
         target_z=target_z,
         snap_to_building_center=True,
-        entry_mode="extreme_floor",
+        entry_mode="ground_entry",
     )
     if "error" in entry_route:
         return {
@@ -78,14 +79,11 @@ async def sweep_scan_building(
             "route_obstacles": entry_route.get("obstacles", []),
             "completed_waypoints": 0,
         }
-    entry_floor_kind = (
-        entry_route.get("target_resolution", {}).get("entry_floor_kind") or "lowest"
-    )
 
-    # 2. Build the sweep plan with the matching iteration direction. The drone
-    #    will be navigated to the entry window first (below), so by the time
-    #    the sweep executes, approach_x/approach_z naturally match the first
-    #    sweep waypoint and the sweep's internal window selection re-chooses it.
+    # 2. Build the sweep plan. The drone will be navigated to the entry window
+    #    first (below), so by the time the sweep executes, approach_x/approach_z
+    #    naturally match the first sweep waypoint and the sweep's internal
+    #    window selection re-chooses it.
     plan = plan_building_vertical_sweep(
         target_x=target_x,
         target_z=target_z,
@@ -93,7 +91,6 @@ async def sweep_scan_building(
         standoff=standoff,
         approach_x=status.get("x"),
         approach_z=status.get("z"),
-        entry_floor=entry_floor_kind,
     )
     if not plan.get("matched_building", False):
         return {
