@@ -116,7 +116,47 @@ async def plan_route(
                 dz = float(wp["z"]) - cz
                 return math.sqrt(dx * dx + dz * dz)
 
-            selected_window_waypoint = min(ground_candidates, key=_drone_dist_xz)
+            def _is_candidate_reachable(wp: dict, target_building_id: int) -> bool:
+                """Return True if a straight line from the drone to wp is free of
+                external obstacles (target building excluded from check).
+
+                Uses a fast line-of-sight sample with no safety margin so the check
+                only catches hard physical blockers, not proximity warnings.
+                """
+                wp_x = float(wp["x"])
+                wp_y = float(wp["y"])
+                wp_z = float(wp["z"])
+                approach_y = max(float(cy), wp_y)
+                los_samples = _segment_sample_count(
+                    float(cx), approach_y, float(cz),
+                    wp_x, wp_y, wp_z,
+                    base_samples=30,
+                )
+                blockers = world.obstacles_in_path(
+                    float(cx), approach_y, float(cz),
+                    wp_x, wp_y, wp_z,
+                    samples=los_samples,
+                    margin=0.0,
+                )
+                # Exclude the target building — its own facade is not a blocker for
+                # a window-approach path.
+                external_blockers = [
+                    b for b in blockers
+                    if getattr(b, "id", None) != target_building_id
+                ]
+                return len(external_blockers) == 0
+
+            ranked = sorted(ground_candidates, key=_drone_dist_xz)
+            # Pick the first XZ-nearest candidate with a clear straight-line path.
+            # Cap at 4 checks to bound worst-case cost when many candidates exist.
+            target_building_id = nearby.id
+            for candidate in ranked[:4]:
+                if _is_candidate_reachable(candidate, target_building_id):
+                    selected_window_waypoint = candidate
+                    break
+            # If no reachable candidate found, fall through to nearest_floor fallback.
+            if selected_window_waypoint is None:
+                entry_mode_fallback = True
 
         if selected_window_waypoint is None:
             if entry_mode == "ground_entry":

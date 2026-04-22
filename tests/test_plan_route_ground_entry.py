@@ -186,6 +186,92 @@ class TestEntryModeGroundEntry:
         assert wp["floor"] == 1
 
     @pytest.mark.asyncio
+    async def test_ground_entry_skips_unreachable_xz_nearest_when_cleaner_candidate_exists(
+        self, _mock_client, monkeypatch
+    ):
+        """Regression: when the XZ-nearest candidate requires circumnavigating the
+        target building through external obstacles, prefer a farther candidate with
+        a clear path (human-pilot behavior).
+
+        Drone at (0, 0, 0). Target building center (-25, 20).
+          - East window at (-11, 4.2, 22.0): XZ dist ≈ 24.6 — BLOCKED by neighbor.
+          - North window at (-28, 4.2, 8.5): XZ dist ≈ 29.3 — clear straight line.
+
+        XZ-only ranking picks east (closer). The fix must detect that the straight
+        line to east is blocked and fall through to north instead.
+        """
+        from backend.services.core import context
+        from backend.world.model import Building, WindowAperture
+
+        # The market-hall target building (id=2).
+        # north face: min_z=12.5, standoff 4 → waypoint z=8.5
+        # east face:  max_x=-15,  standoff 4 → waypoint x=-11
+        # floor 1 (sill_y=1.2): waypoint y = 1.2 + 1.0 = 2.2
+        target_building = Building(
+            id=2,
+            cx=-25.0, cz=20.0,
+            w=20.0, d=15.0, h=6.0,
+            windows=(
+                # Floor 1, north face: waypoint (-28, 2.2, 8.5)  XZ dist from (0,0) ≈ 29.3
+                WindowAperture(face="north", axis_center=-28.0, sill_y=1.2, width=2.0, height=2.0),
+                # Floor 1, east face:  waypoint (-11, 2.2, 22.0) XZ dist from (0,0) ≈ 24.6
+                WindowAperture(face="east",  axis_center=22.0,  sill_y=1.2, width=2.0, height=2.0),
+            ),
+        )
+
+        # A neighbor building that blocks the straight line to the east waypoint.
+        blocker = Building(
+            id=99,
+            cx=-17.0, cz=27.6,
+            w=6.0, d=6.0, h=10.0,
+        )
+
+        # Standoff = 4.0 (world2 scene value).
+        # north waypoint: x = axis_center = -28, z = min_z - 4 = 12.5 - 4 = 8.5
+        # east  waypoint: x = max_x + 4   = -15 + 4 = -11, z = axis_center = 22.0
+        NORTH_WP_Z = 8.5
+        EAST_WP_X  = -11.0
+
+        class _BlockedEastWorld:
+            """World where the straight line to the east window hits blocker id=99."""
+            buildings = (target_building, blocker)
+
+            def building_near_xz(self, x, z, margin=2.0):
+                return target_building
+
+            def buildings_near(self, *_args, **_kwargs):
+                return [target_building, blocker]
+
+            def obstacles_in_path(self, fx, fy, fz, tx, ty, tz, samples=20, margin=0.0):
+                # Block paths whose destination is near the east waypoint.
+                # Clear paths whose destination is near the north waypoint.
+                if abs(tx - EAST_WP_X) < 2.0 and abs(tz - 22.0) < 2.0:
+                    return [blocker]
+                if abs(tz - NORTH_WP_Z) < 2.0:
+                    return []
+                return []
+
+        monkeypatch.setattr(context, "get_world", lambda: _BlockedEastWorld())
+
+        _mock_client.get_status.return_value = {
+            "asset_id": "BEACON-01",
+            "x": 0.0, "y": 0.0, "z": 0.0,
+            "battery": 100, "status": "IDLE",
+        }
+        result = await plan_route(
+            "BEACON-01", -25.0, 20.0,
+            snap_to_building_center=True,
+            entry_mode="ground_entry",
+        )
+        tr = result.get("target_resolution", {})
+        wp = tr.get("selected_window_waypoint")
+        assert wp is not None, "expected a selected_window_waypoint in target_resolution"
+        assert wp["face"] == "north", (
+            f"expected north (reachable), got {wp['face']!r} "
+            "(likely XZ-nearest east was picked even though it is blocked)"
+        )
+
+    @pytest.mark.asyncio
     async def test_ground_entry_records_fallback_when_building_has_no_windows(self, _mock_client):
         from backend.world.model import WORLD
         no_window_building = next(
