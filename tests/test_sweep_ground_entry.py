@@ -87,3 +87,26 @@ class TestGroundEntrySweep:
         assert first_dist == min_dist, (
             f"entry window not nearest to approach: first_dist={first_dist}, min={min_dist}"
         )
+
+    def test_entry_window_not_duplicated_in_ring(self):
+        """Regression guard: the entry window must be filtered out of the
+        first-floor ring so the drone does not double-visit it."""
+        plan = plan_building_vertical_sweep(
+            target_x=-15.0, target_z=-15.0,
+            level_step=3.0, standoff=2.0,
+            approach_x=-10.0, approach_z=-5.0,
+        )
+        non_transit = [w for w in plan["waypoints"] if not w.get("transit")]
+        assert non_transit, "expected at least one non-transit waypoint"
+        entry = non_transit[0]
+        entry_level = entry["level_y"]
+        same_floor_matches = [
+            w for w in non_transit
+            if w["level_y"] == entry_level
+            and abs(w["x"] - entry["x"]) < 0.01
+            and abs(w["z"] - entry["z"]) < 0.01
+        ]
+        assert len(same_floor_matches) == 1, (
+            f"entry window visited {len(same_floor_matches)} times on entry floor, expected 1: "
+            f"matches={same_floor_matches}"
+        )

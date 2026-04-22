@@ -80,10 +80,12 @@ async def sweep_scan_building(
             "completed_waypoints": 0,
         }
 
-    # 2. Build the sweep plan. The drone will be navigated to the entry window
-    #    first (below), so by the time the sweep executes, approach_x/approach_z
-    #    naturally match the first sweep waypoint and the sweep's internal
-    #    window selection re-chooses it.
+    # 2. Build the sweep plan. Both the route planner above and the sweep
+    #    planner below use the drone's pre-flight XZ to pick the nearest
+    #    lowest-floor entry window, so they typically agree on the entry.
+    #    They may diverge only in pathological entry routes where the drone
+    #    traverses significant XZ distance before reaching the building —
+    #    not observed in current world geometries.
     plan = plan_building_vertical_sweep(
         target_x=target_x,
         target_z=target_z,
