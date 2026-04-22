@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
 
 from backend.services.navigation.internal.corner_ops import (
     _build_ring,
@@ -28,16 +27,12 @@ def plan_building_vertical_sweep(
     flood_clearance: float = 0.5,
     approach_x: float | None = None,
     approach_z: float | None = None,
-    entry_floor: Literal["lowest", "highest"] = "lowest",
 ) -> dict:
     """Plan a perimeter sweep around a building across all heights above water level.
 
-    ``entry_floor`` controls the direction of floor-by-floor iteration:
-      - ``"lowest"`` (default): sweep bottom-up, matching legacy behavior.
-      - ``"highest"``: sweep top-down. The entry window is chosen from the
-        top-floor windows closest to the approach coordinates, and floors
-        are processed in descending order. Final rooftop scan still closes
-        the mission.
+    The sweep always enters at a lowest-floor window closest to
+    ``(approach_x, approach_z)`` and iterates floors ascending, concluding with
+    a rooftop scan waypoint at the building center.
     """
     building = WORLD.building_near_xz(target_x, target_z, margin=BUILDING_PROXIMITY_MARGIN_M)
     if building is None:
@@ -94,8 +89,6 @@ def plan_building_vertical_sweep(
     above_flood = [w for w in all_window_wps if w["y"] >= start_y]
 
     floor_levels = sorted({round(w["y"], 2) for w in above_flood})
-    if entry_floor == "highest":
-        floor_levels = list(reversed(floor_levels))
 
     perimeter_margin = 1.0
     p_min_x = building.min_x - perimeter_margin
