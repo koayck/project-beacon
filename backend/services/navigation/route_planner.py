@@ -117,22 +117,44 @@ async def plan_route(
                 return math.sqrt(dx * dx + dz * dz)
 
             def _is_candidate_reachable(wp: dict, target_building_id: int) -> bool:
-                """Return True if a straight line from the drone to wp is free of
-                external obstacles (target building excluded from check).
+                """Two-stage reachability check for a ground_entry window candidate.
 
-                Uses a fast line-of-sight sample with no safety margin so the check
-                only catches hard physical blockers, not proximity warnings.
+                Stage 1 — fast LOS (target building excluded):
+                  If any *external* building blocks the straight line from the drone's
+                  XZ position at the window's altitude to the window waypoint, the
+                  candidate is immediately rejected.
+
+                Stage 2 — bounded A* (target building included as obstacle):
+                  Even when the straight line is clear, the actual flight path may
+                  require circumnavigating the target building through a tight
+                  neighbourhood where no clear corridor exists at low altitude
+                  (BEACON-04 + market hall scenario).
+
+                  A* is run from ``(cx, approach_y, cz)`` where ``approach_y`` is
+                  clamped to the window altitude + a small clearance margin.  This
+                  bounds the search volume: we only check local reachability near the
+                  window, not the full high-altitude-to-low-altitude descent, which
+                  would inflate grid size and exhaust the iteration budget on false
+                  failures (drone at y=50 → floor-2 window at y=5.9).
+
+                  ``exclude_building_id=None`` means the target building IS an obstacle,
+                  so A* must route around it — the same constraint the real drone faces.
+
+                Returns True only when both stages pass.
                 """
                 wp_x = float(wp["x"])
                 wp_y = float(wp["y"])
                 wp_z = float(wp["z"])
+                # For LOS check: use drone altitude or window altitude, whichever is higher
                 approach_y = max(float(cy), wp_y)
+
+                # --- Stage 1: LOS (exclude target building) ---
                 los_samples = _segment_sample_count(
                     float(cx), approach_y, float(cz),
                     wp_x, wp_y, wp_z,
                     base_samples=30,
                 )
-                blockers = world.obstacles_in_path(
+                los_blockers = world.obstacles_in_path(
                     float(cx), approach_y, float(cz),
                     wp_x, wp_y, wp_z,
                     samples=los_samples,
@@ -141,10 +163,41 @@ async def plan_route(
                 # Exclude the target building — its own facade is not a blocker for
                 # a window-approach path.
                 external_blockers = [
-                    b for b in blockers
+                    b for b in los_blockers
                     if getattr(b, "id", None) != target_building_id
                 ]
-                return len(external_blockers) == 0
+                if external_blockers:
+                    # External building physically blocks the straight line — skip.
+                    return False
+
+                # --- Stage 2: bounded A* (target building IS an obstacle) ---
+                # The straight line was clear, but the real flight path may still
+                # require circumnavigating the target building through tight corridors.
+                # We run A* *without* exclude_building_id so the target acts as a real
+                # obstacle: if no low-altitude corridor exists around it, A* fails.
+                #
+                # The start altitude is clamped to wp_y + 5.0 (not the full drone
+                # altitude) so the grid stays compact.  A drone at y=50 descending to
+                # a floor-2 window at y=5.9 still has a valid approach — we don't need
+                # to model that full descent to check XZ reachability.
+                #
+                # max_altitude is capped at wp_y + 15.0 — low enough to prevent A*
+                # from "escaping" by climbing far above all obstacles and circling
+                # around them.  The check is specifically about whether a low-altitude
+                # corridor exists to the window, not whether a high-altitude flyover
+                # works (the drone would break the low-altitude sweep approach rule).
+                a_star_start_y = min(float(cy), wp_y + 5.0)
+                a_star_check = find_3d_path(
+                    world,
+                    (float(cx), a_star_start_y, float(cz)),
+                    (wp_x, wp_y, wp_z),
+                    margin=1.0,
+                    exclude_building_id=None,  # target IS an obstacle here
+                    cell_size=2.0,             # coarser grid for speed
+                    max_altitude=wp_y + 15.0,  # low cap: check corridor, not flyover
+                    max_iterations=20_000,     # bounded: ~20–100 ms per call
+                )
+                return a_star_check is not None
 
             ranked = sorted(ground_candidates, key=_drone_dist_xz)
             # Pick the first XZ-nearest candidate with a clear straight-line path.

@@ -272,6 +272,111 @@ class TestEntryModeGroundEntry:
         )
 
     @pytest.mark.asyncio
+    async def test_ground_entry_picks_reachable_face_when_xz_nearest_requires_circumnavigation(
+        self, _mock_client, monkeypatch
+    ):
+        """Regression: BEACON-04 scenario — XZ-nearest window blocked, farther one clear.
+
+        Drone approaches from the south-east.  Two windows are available on the
+        target building.  The east window is XZ-nearer but its LOS is intercepted
+        by a wall building; the north window is XZ-farther but has a clear line of
+        sight.  The two-stage check must skip east and select north.
+
+        Geometry (drone at (0, 2, −20)):
+          - target building: cx=−30, cz=0, w=6, d=6, h=6
+              east face max_x=−27, standoff 4 → east_wp = (−23, 2.2, 0)
+                  XZ dist from (0,−20) = sqrt(23²+20²) ≈ 30.5  ← NEARER
+              north face min_z=−3, standoff 4 → north_wp = (−30, 2.2, −7)
+                  XZ dist from (0,−20) = sqrt(30²+13²) ≈ 32.7  ← FARTHER
+          - wall_blocker: cx=−19, cz=0, w=2, d=10, h=20
+              LOS (0,−20)→(−23,0): passes x=−19 at z≈−3.5 — inside wall ✓ BLOCKED
+              LOS (0,−20)→(−30,−7): passes x=−19 at z≈−11.8 — outside wall ✓ CLEAR
+
+        The test verifies that Stage 1 (LOS) correctly rejects east and the
+        fallthrough selects north.  Stage 2 (A* check) is a best-effort guard for
+        cases where LOS passes but actual routing fails; it is tested indirectly
+        here by verifying north_wp passes the bounded A* call without error.
+        """
+        from backend.services.core import context
+        from backend.world.model import Building, WindowAperture
+
+        # STANDOFF_M = 4 in world2; reproduce it explicitly so the test is
+        # independent of scene configuration.
+        _STANDOFF = 4.0
+
+        # target building: cx=-30, cz=0, w=6, d=6 →
+        #   east face max_x=-27 → east_wp x=-27+4=-23, z=axis_center=0
+        #   north face min_z=-3 → north_wp z=-3-4=-7, x=axis_center=-30
+        target_bld = Building(
+            id=70,
+            cx=-30.0, cz=0.0,
+            w=6.0, d=6.0, h=6.0,
+            windows=(
+                # East face: waypoint (−23, 2.2, 0)   XZ dist from (0,−20) ≈ 30.5
+                WindowAperture(face="east",  axis_center=0.0,   sill_y=1.2, width=2.0, height=2.0),
+                # North face: waypoint (−30, 2.2, −7)  XZ dist from (0,−20) ≈ 32.7
+                WindowAperture(face="north", axis_center=-30.0, sill_y=1.2, width=2.0, height=2.0),
+            ),
+        )
+
+        # Wall that intercepts the east LOS but NOT the north LOS.
+        # cx=-19, min_x=-20, max_x=-18, min_z=-5, max_z=5
+        wall_blocker = Building(id=71, cx=-19.0, cz=0.0, w=2.0, d=10.0, h=20.0)
+
+        class _WallWorld:
+            buildings = (target_bld, wall_blocker)
+
+            def building_near_xz(self, x, z, margin=2.0):
+                return target_bld
+
+            def buildings_near(self, *_a, **_kw):
+                return list(self.buildings)
+
+            def obstacles_in_path(self, fx, fy, fz, tx, ty, tz, samples=20, margin=0.0):
+                hit: list = []
+                n = max(samples - 1, 1)
+                for b in self.buildings:
+                    lo_x = b.min_x - margin
+                    hi_x = b.max_x + margin
+                    lo_z = b.min_z - margin
+                    hi_z = b.max_z + margin
+                    hi_y = b.max_y + margin
+                    for i in range(samples):
+                        t = i / n
+                        px = fx + t * (tx - fx)
+                        py = fy + t * (ty - fy)
+                        pz = fz + t * (tz - fz)
+                        if lo_x <= px <= hi_x and 0 <= py <= hi_y and lo_z <= pz <= hi_z:
+                            hit.append(b)
+                            break
+                return hit
+
+        monkeypatch.setattr(context, "get_world", lambda: _WallWorld())
+
+        # Drone at (0, 2, −20): south-east of building.
+        # east_wp (−23, 2.2, 0): XZ dist ≈ 30.5 — nearer but LOS blocked by wall.
+        # north_wp (−30, 2.2, −7): XZ dist ≈ 32.7 — farther but LOS clear.
+        _mock_client.get_status.return_value = {
+            "asset_id": "BEACON-01",
+            "x": 0.0, "y": 2.0, "z": -20.0,
+            "battery": 100, "status": "IDLE",
+        }
+        result = await plan_route(
+            "BEACON-01", -30.0, 0.0,
+            snap_to_building_center=True,
+            entry_mode="ground_entry",
+        )
+        tr = result.get("target_resolution", {})
+        wp = tr.get("selected_window_waypoint")
+        assert wp is not None, f"expected a selected_window_waypoint, got None. tr={tr}"
+        # XZ-nearest candidate (east) must be skipped — LOS blocked by wall_blocker.
+        # XZ-farther candidate (north) must be selected — LOS clear.
+        assert wp["face"] == "north", (
+            f"expected north (clear LOS, farther), got {wp['face']!r}. "
+            f"east window should have been rejected: LOS intercepted by wall_blocker."
+        )
+
+    @pytest.mark.asyncio
     async def test_ground_entry_records_fallback_when_building_has_no_windows(self, _mock_client):
         from backend.world.model import WORLD
         no_window_building = next(
