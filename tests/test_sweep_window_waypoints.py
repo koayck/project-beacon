@@ -14,10 +14,18 @@ class TestSweepPlanWindowAndRooftop:
         rooftop = result["rooftop_position"]
         assert wp0["y"] < rooftop["y"]
 
-    def test_rooftop_scan_is_last_waypoint(self):
+    def test_sweep_ends_at_last_floor_not_rooftop(self):
+        """Rooftop scan was removed — sweep ends at the last floor's perimeter."""
         result = plan_building_vertical_sweep(-15.0, -20.0, level_step=3.0, standoff=2.0)
-        assert result["waypoints"][-1]["reason"] == "rooftop scan"
-        assert result["waypoints"][-1]["y"] > result["building"]["height"]
+        last_wp = result["waypoints"][-1]
+        assert last_wp["reason"] != "rooftop scan", (
+            f"expected sweep to end on a floor waypoint, not 'rooftop scan'; got: {last_wp}"
+        )
+        # Last waypoint should be at a floor level (below rooftop_y)
+        rooftop_y = result["rooftop_position"]["y"]
+        assert last_wp["y"] < rooftop_y, (
+            f"expected last waypoint below rooftop y={rooftop_y}, got y={last_wp['y']}"
+        )
 
     def test_window_waypoints_present_in_plan(self):
         result = plan_building_vertical_sweep(-15.0, -20.0, level_step=3.0, standoff=2.0)

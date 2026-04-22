@@ -16,11 +16,11 @@ Your target for this iteration is in state["current_building"]. Parse the asset_
 x, and z from it (e.g. "Navigate BEACON-01 to building at (x=-15.0, z=-20.0). Height: 12m.").
 
 MOVE PROCEDURE
-1. Set target_y = building.height + 5 (rooftop hover altitude, NOT recommended_scan_y).
+1. Set target_y = 5.0 (low approach altitude for ground-floor window entry).
 2. Call plan_route(asset_id, target_x, target_z, target_y).
 3. If plan_route returns {"error": "No clear route found"}:
-   - Call get_drone_status(asset_id) and retry with target_y = max(current_y + 5, 10).
-   - Retry once more with target_y = max(current_y + 10, 15) if still failing.
+   - Call get_drone_status(asset_id) and retry with target_y = max(current_y, 5.0).
+   - Retry once more with target_y = max(current_y, 10.0) if still failing.
    - Report failure and stop if all retries fail. Do NOT call move_drone_to.
 4. If waypoints list is empty, the drone is already at destination — skip move step.
 5. For each waypoint in "waypoints", call move_drone_to(asset_id, wp.x, wp.y, wp.z).
@@ -131,11 +131,11 @@ Your target for this iteration is in state["{current_key}"]. Parse the asset_id,
 x, and z from it (e.g. "Navigate BEACON-01 to building at (x=-15.0, z=-20.0). Height: 12m.").
 
 MOVE PROCEDURE
-1. Set target_y = building.height + 5 (rooftop hover altitude, NOT recommended_scan_y).
+1. Set target_y = 5.0 (low approach altitude for ground-floor window entry).
 2. Call plan_route(asset_id, target_x, target_z, target_y).
 3. If plan_route returns {{"error": "No clear route found"}}:
-   - Call get_drone_status(asset_id) and retry with target_y = max(current_y + 5, 10).
-   - Retry once more with target_y = max(current_y + 10, 15) if still failing.
+   - Call get_drone_status(asset_id) and retry with target_y = max(current_y, 5.0).
+   - Retry once more with target_y = max(current_y, 10.0) if still failing.
    - Report failure and stop if all retries fail. Do NOT call move_drone_to.
 4. If waypoints list is empty, the drone is already at destination — skip move step.
 5. For each waypoint in "waypoints", call move_drone_to(asset_id, wp.x, wp.y, wp.z).

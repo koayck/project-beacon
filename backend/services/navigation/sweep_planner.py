@@ -31,8 +31,8 @@ def plan_building_vertical_sweep(
     """Plan a perimeter sweep around a building across all heights above water level.
 
     The sweep always enters at a lowest-floor window closest to
-    ``(approach_x, approach_z)`` and iterates floors ascending, concluding with
-    a rooftop scan waypoint at the building center.
+    ``(approach_x, approach_z)`` and iterates floors ascending, ending at
+    the last floor's perimeter. No rooftop scan waypoint is emitted.
     """
     building = WORLD.building_near_xz(target_x, target_z, margin=BUILDING_PROXIMITY_MARGIN_M)
     if building is None:
@@ -294,51 +294,6 @@ def plan_building_vertical_sweep(
                 )
                 prev_rx, prev_rz = rx, rz
 
-    if not floor_levels and top_y > start_y:
-        levels.append(rooftop_y)
-        prev_rx, prev_rz = nw_x, nw_z
-        for rx, rz, label in [
-            (nw_x, nw_z, "rooftop NW scan"),
-            (ne_x, ne_z, "rooftop NE scan"),
-            (se_x, se_z, "rooftop SE scan"),
-            (sw_x, sw_z, "rooftop SW scan"),
-        ]:
-            for extra in _route_sweep_segment(prev_rx, rooftop_y, prev_rz, rx, rooftop_y, rz, building.id, rooftop_y):
-                waypoints.append({**extra, "level_y": rooftop_y})
-            waypoints.append(
-                {
-                    "x": round(rx, 2),
-                    "y": rooftop_y,
-                    "z": round(rz, 2),
-                    "level_y": rooftop_y,
-                    "reason": label,
-                }
-            )
-            prev_rx, prev_rz = rx, rz
-
-    if floor_levels:
-        ac_x, ac_z = corners[_current_corner]
-        waypoints.append(
-            {
-                "x": ac_x,
-                "y": rooftop_y,
-                "z": ac_z,
-                "level_y": rooftop_y,
-                "reason": "ascent to rooftop altitude",
-            }
-        )
-
-    if rooftop_y not in levels:
-        levels.append(rooftop_y)
-    waypoints.append(
-        {
-            "x": building.cx,
-            "y": rooftop_y,
-            "z": building.cz,
-            "level_y": rooftop_y,
-            "reason": "rooftop scan",
-        }
-    )
 
     return {
         "matched_building": True,
@@ -361,7 +316,10 @@ def plan_building_vertical_sweep(
         "rooftop_position": {"x": building.cx, "y": rooftop_y, "z": building.cz},
         "summary": (
             f"Vertical perimeter sweep for building {building.id}: "
-            f"{len(levels)} level(s), {len(waypoints)} waypoint(s), "
-            f"covering y={levels[0]:.1f}..{levels[-1]:.1f} above flood={FLOOD_LEVEL:.1f}."
+            f"{len(levels)} level(s), {len(waypoints)} waypoint(s)."
+            if not levels
+            else f"Vertical perimeter sweep for building {building.id}: "
+                 f"{len(levels)} level(s), {len(waypoints)} waypoint(s), "
+                 f"covering y={levels[0]:.1f}..{levels[-1]:.1f} above flood={FLOOD_LEVEL:.1f}."
         ),
     }

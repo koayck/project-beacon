@@ -53,7 +53,7 @@ class TestVerticalSweepPlan:
         assert result["building"]["min_x"] == -20.0
         assert result["building"]["max_x"] == -10.0
         assert all(level > FLOOD_LEVEL for level in result["levels"])
-        assert result["levels"][-1] == 14.0
+        assert result["levels"][-1] == 10.2  # last floor level (rooftop no longer appended)
         assert result["waypoint_count"] == len(result["waypoints"])
 
     def test_plan_building_vertical_sweep_returns_error_without_building(self):
@@ -113,10 +113,10 @@ class TestVerticalSweepExecution:
         assert result["success"] is True
         assert result["strategy"] == "vertical_building_sweep"
         assert result["waypoint_count"] == 2
-        # entry(1) + sweep(2) + rooftop(1) = 4 move_to calls
+        # entry_route(1) + sweep waypoints(2) + workflow-level rooftop move(1) = 4 move_to calls
         assert _mock_client.move_to.await_count == 4
         assert _mock_client.scan_area.await_count == 2
-        # entry(1) + sweep(4: move+scan per waypoint) + rooftop(1) = 6 wait calls
+        # entry_route wait(1) + sweep(2 × (move_wait + scan_wait)) + workflow rooftop wait(1) = 6 wait calls
         assert wait_mock.await_count == 6
         assert result["max_survivors_in_range"] == 1
         assert result["unique_survivor_count"] == 1

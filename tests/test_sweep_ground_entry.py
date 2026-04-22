@@ -43,15 +43,33 @@ class TestGroundEntrySweep:
         wp_levels = [w["level_y"] for w in non_transit if w["level_y"] < rooftop_y]
         assert wp_levels == sorted(wp_levels), f"waypoint level_y not ascending: {wp_levels}"
 
-    def test_sweep_still_ends_on_rooftop(self):
+    def test_sweep_emits_no_rooftop_waypoint(self):
+        """Regression guard: the final rooftop scan waypoint was removed.
+
+        After the ground-entry refactor, the sweep ends at the last floor's
+        perimeter. No waypoint should have reason 'rooftop scan' or
+        'ascent to rooftop altitude', and none should be a 'rooftop NW/NE/SE/SW scan'.
+        """
         plan = plan_building_vertical_sweep(
             target_x=-15.0, target_z=-15.0,
             level_step=3.0, standoff=2.0,
-            approach_x=-15.0, approach_z=-5.0,
+            approach_x=-10.0, approach_z=-5.0,
         )
-        last_wp = plan["waypoints"][-1]
-        assert last_wp["reason"] == "rooftop scan"
-        assert last_wp["y"] == plan["rooftop_position"]["y"]
+        forbidden_reasons = {
+            "rooftop scan",
+            "ascent to rooftop altitude",
+            "rooftop NW scan",
+            "rooftop NE scan",
+            "rooftop SE scan",
+            "rooftop SW scan",
+        }
+        offenders = [
+            w for w in plan["waypoints"]
+            if w.get("reason") in forbidden_reasons
+        ]
+        assert not offenders, (
+            f"expected no rooftop-scan waypoints, found: {offenders}"
+        )
 
     def test_entry_window_is_closest_to_approach_on_lowest_floor(self):
         # approach_x=-10 breaks the x=-13 / x=-17 window symmetry: x=-13 is
