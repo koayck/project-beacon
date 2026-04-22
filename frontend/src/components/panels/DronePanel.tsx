@@ -1,11 +1,9 @@
 import type { DroneMap } from '@/lib/ws'
-import { Progress } from '@/components/ui/progress'
-import { useState } from 'react'
 
 interface DroneStatusPanelProps {
   drones: DroneMap
-  dronesVisible?: boolean
-  onToggleDronesVisible?: () => void
+  dronesVisible: boolean
+  onToggleDronesVisible: () => void
 }
 
 
@@ -45,13 +43,6 @@ function batteryTextClass(pct: number): string {
   return batteryFillClass(pct).replace('bg-', 'text-')
 }
 
-function batteryTrackClass(pct: number): string {
-  if (pct > 50) return 'bg-[#44cc66]'
-  if (pct > 20) return 'bg-[#ffcc00]'
-  if (pct > 10) return 'bg-[#ff8800]'
-  return 'bg-[#ff3333]'
-}
-
 function statusGlowClass(status: string): string {
   switch (status.toUpperCase()) {
     case 'MOVING': return 'shadow-[0_0_6px_#00ff8880]'
@@ -67,66 +58,29 @@ export function DroneStatusPanel({
   dronesVisible,
   onToggleDronesVisible,
 }: DroneStatusPanelProps) {
-  const [localDronesVisible, setLocalDronesVisible] = useState(true)
-  const visible = dronesVisible ?? localDronesVisible
-  const handleToggleVisible = () => {
-    if (onToggleDronesVisible) {
-      onToggleDronesVisible()
-      return
-    }
-    setLocalDronesVisible(prev => !prev)
-  }
-
   const entries = Object.values(drones)
   if (entries.length === 0) return null
 
   return (
     <div className="pointer-events-auto min-w-[240px] overflow-hidden rounded-lg border border-[rgba(40,140,180,0.2)] bg-[linear-gradient(135deg,rgba(6,8,16,0.88),rgba(4,6,14,0.82))] p-[8px_10px] font-mono shadow-[0_4px_30px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(80,140,180,0.08)] backdrop-blur-[12px]">
-      <button
-        onClick={handleToggleVisible}
-        className="mb-2 flex w-full cursor-pointer items-center justify-between border-b border-[rgba(32,144,176,0.15)] border-x-0 border-t-0 bg-[linear-gradient(135deg,rgba(6,8,16,0.95),rgba(4,6,14,0.9))] px-2 pb-[8px] pt-2 text-left font-mono tracking-[1.2px] text-[#99b]"
-        title={visible ? 'Collapse drone fleet' : 'Expand drone fleet'}
-      >
+      <div className="mb-2 flex items-center justify-between tracking-[1.2px] text-[#99b]">
         <span className="text-[12px] font-bold">DRONE FLEET</span>
-        <span className="text-[10px] text-[#556]">{visible ? '▾' : '▸'}</span>
-      </button>
+        <button
+          onClick={onToggleDronesVisible}
+          className="cursor-pointer border-none bg-transparent p-0 font-mono"
+          title={dronesVisible ? 'Collapse drone fleet' : 'Expand drone fleet'}
+        >
+          <span className="text-[10px] text-[#556]">{dronesVisible ? '▾' : '▸'}</span>
+        </button>
+      </div>
 
-      {!visible && (
-        <div className="rounded border border-[rgba(90,120,150,0.25)] bg-[rgba(8,12,22,0.45)] p-2">
-          <div className="mb-1.5 text-[10px] tracking-[0.4px] text-[#7f93a8]">
-            Fleet panel collapsed ({entries.length} active)
-          </div>
-          <div className="space-y-1.5">
-            {entries.map(d => {
-              const batteryClass = batteryTrackClass(d.battery)
-              return (
-                <div
-                  key={`collapsed-${d.asset_id}`}
-                  className="grid grid-cols-[auto_1fr_auto] items-center gap-2"
-                  title={`${d.asset_id}: ${d.battery}% battery`}
-                >
-                  <span className="w-[72px] truncate text-[10px] font-semibold tracking-[0.2px] text-[#b8c8d7]">
-                    {d.asset_id}
-                  </span>
-                  <div className="relative flex items-center">
-                    <Progress
-                      value={d.battery}
-                      indicatorClassName={batteryClass}
-                      className="h-2.5 border border-[rgba(130,150,170,0.5)] bg-[rgba(11,17,27,0.75)]"
-                    />
-                    <span className="ml-0.5 h-1.5 w-[2px] rounded-r-[1px] bg-[rgba(130,150,170,0.7)]" />
-                  </div>
-                  <span className="w-[34px] text-right text-[10px] font-semibold text-[#9fb3c6]">
-                    {d.battery}%
-                  </span>
-                </div>
-              )
-            })}
-          </div>
+      {!dronesVisible && (
+        <div className="rounded border border-[rgba(90,120,150,0.25)] bg-[rgba(8,12,22,0.45)] px-2 py-[6px] text-[11px] text-[#7f93a8]">
+          Fleet panel collapsed ({entries.length} active).
         </div>
       )}
 
-      {visible && (
+      {dronesVisible && (
         <div className="space-y-2">
           {entries.map(d => {
             const cardClass = droneCardClass(d.status)

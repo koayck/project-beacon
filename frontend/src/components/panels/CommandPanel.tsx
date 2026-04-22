@@ -24,7 +24,7 @@ interface Props {
   uplinked: boolean
   battery: number | null
   onCommand: (prompt: string, onEvent: (e: AgentStreamEvent) => void, assetIdOverride?: string) => Promise<void>
-  onStop?: () => void
+  onStop?: () => Promise<void> | void
   externalPrompt?: string | null
   onExternalPromptConsumed?: () => void
   externalAssetId?: string | null
@@ -74,6 +74,7 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
   const [copied, setCopied]     = useState(false)
   const [fastMode, setFastMode] = useState(false)
   const [resetting, setResetting] = useState(false)
+  const [stopping, setStopping] = useState(false)
   const copiedTimer             = useRef<ReturnType<typeof setTimeout> | null>(null)
   const bottomRef               = useRef<HTMLDivElement>(null)
 
@@ -473,7 +474,15 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
         )}
         {busy ? (
           <button
-            onClick={() => { onStop?.(); setBusy(false) }}
+            onClick={async () => {
+              if (stopping) return
+              setStopping(true)
+              try {
+                await onStop?.()
+              } finally {
+                setStopping(false)
+              }
+            }}
             title="Abort running agent"
             style={{
               background: 'rgba(200, 40, 40, 0.15)',
@@ -481,13 +490,14 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
               borderLeft: '1px solid rgba(200, 60, 60, 0.35)',
               color: '#f66',
               padding: '0 16px',
-              cursor: 'pointer',
+              cursor: stopping ? 'default' : 'pointer',
               fontFamily: "'Courier New', monospace",
               fontSize: 14,
               letterSpacing: 1,
+              opacity: stopping ? 0.7 : 1,
             }}
           >
-            STOP
+            {stopping ? 'STOPPING...' : 'STOP'}
           </button>
         ) : (
           <button

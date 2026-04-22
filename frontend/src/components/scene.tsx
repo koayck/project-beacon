@@ -8,6 +8,9 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import CommandPanel from './panels/CommandPanel'
 import { useTelemetry } from '@/lib/ws'
 import {
+  createSimulation,
+  getSimulation,
+  syncSimulationState,
   uplink,
   streamCommand,
   healthCheck,
@@ -17,6 +20,7 @@ import {
   resetDroneToBase,
   type AgentStreamEvent,
   type NetworkMockStatus,
+  type SimulationBuilding,
   type SupplyDispatchEvent,
 } from '@/lib/api'
 import { BasePad, GridOverlay, Ground, MissionBuildings, Survivors } from './scene-props/SceneStructures'
@@ -35,6 +39,7 @@ import {
 import { Controls } from './panels/Controls'
 import { CoordOverlay } from './panels/CoordOverlay'
 import { DroneStatusPanel } from './panels/DronePanel'
+import { FpvPanel } from './panels/FpvPanel'
 import { TopStatusBar } from './panels/TopStatusBar'
 import { CameraTracker, FollowBeaconCamera } from './animation/CameraTracker'
 import { SupplyThrow } from './animation/ThrowAnimation'
@@ -92,6 +97,7 @@ import { SCOUT_ASSET_ID } from '@/lib/fogOfWar'
 const ASSET_ID = 'BEACON-01'
 const WS_URL   = 'ws://localhost:8000/ws/telemetry'
 const AUTO_RECALL_UI_DELAY_MS = 5000
+const SIMULATION_ID_STORAGE_KEY = 'beacon.simulationId'
 
 export default function SARScene() {
   const [activeWorld, setActiveWorld] = useState<1 | 2>(2)
@@ -112,6 +118,8 @@ export default function SARScene() {
   const [copied, setCopied]       = useState(false)
   const [followBeacon, setFollowBeacon] = useState(false)
   const [followedAssetId, setFollowedAssetId] = useState<string | null>(ASSET_ID)
+  const [dronesVisible, setDronesVisible] = useState(true)
+  const [fpvAssetId, setFpvAssetId] = useState<string | null>(ASSET_ID)
   const [transparentWalls, setTransparentWalls] = useState(false)
   const [deliveredTo, setDeliveredTo] = useState<Set<string>>(new Set())
   const [deliveringTo, setDeliveringTo] = useState<Set<string>>(new Set())
@@ -146,6 +154,8 @@ export default function SARScene() {
   const survivorDetectionTsRef = useRef<Map<string, number>>(new Map())
   const [survivorDetectionTimestamps, setSurvivorDetectionTimestamps] = useState<Map<string, number>>(new Map())
   const [survivorDeliveryTimestamps, setSurvivorDeliveryTimestamps] = useState<Map<string, number>>(new Map())
+  const [simulationId, setSimulationId] = useState<string | null>(null)
+  const hydrationDoneRef = useRef(false)
   // ── Area selection state ─────────────────────────────────────────────────────
   const [selectMode, setSelectMode]       = useState(false)
   const [dragStart, setDragStart]         = useState<THREE.Vector3 | null>(null)
@@ -196,6 +206,15 @@ export default function SARScene() {
     if (activeDroneAssetIds.includes(ASSET_ID)) return ASSET_ID
     return activeDroneAssetIds[0] ?? null
   }, [activeDroneAssetIds])
+
+  useEffect(() => {
+    if (activeDroneAssetIds.length === 0) {
+      setFpvAssetId(null)
+      return
+    }
+    if (fpvAssetId && activeDroneAssetIds.includes(fpvAssetId)) return
+    setFpvAssetId(defaultFollowAssetId ?? activeDroneAssetIds[0] ?? null)
+  }, [activeDroneAssetIds, defaultFollowAssetId, fpvAssetId])
 
   const telemetry = drones[ASSET_ID] ?? null
   const dronePos = useMemo(
@@ -605,6 +624,13 @@ export default function SARScene() {
   }, [activeDroneAssetIds, defaultFollowAssetId, followedAssetId])
 
   useEffect(() => {
+    if (!followBeacon) return
+    if (!followedAssetId) return
+    if (fpvAssetId === followedAssetId) return
+    setFpvAssetId(followedAssetId)
+  }, [followBeacon, followedAssetId, fpvAssetId])
+
+  useEffect(() => {
     if (autoRecallThreshold === null) return
     const lowBatteryIdle = Object.values(drones)
       .filter(entry => entry.status === 'IDLE' && entry.battery <= autoRecallThreshold)
@@ -755,7 +781,12 @@ export default function SARScene() {
     prompt: string,
     onEvent: (e: AgentStreamEvent) => void,
     assetIdOverride?: string,
+    confirmRescan = false,
   ): Promise<void> => {
+    if (abortRef.current) {
+      abortRef.current.abort()
+      abortRef.current = null
+    }
     const ac = new AbortController()
     abortRef.current = ac
     backendSupplyDispatchSeenRef.current = false
@@ -765,7 +796,18 @@ export default function SARScene() {
     setActivities(prev => [...prev, { id: nextActivityId(), icon: '◆', label: prompt.length > 50 ? prompt.slice(0, 47) + '...' : prompt, ts: Date.now(), status: 'done', category: 'dispatch' as ActivityCategory }])
     const effectiveAssetId = assetIdOverride ?? ASSET_ID
     try {
-      for await (const event of streamCommand(effectiveAssetId, prompt, ac.signal)) {
+        for await (const event of streamCommand(effectiveAssetId, prompt, simulationId ?? undefined, confirmRescan, ac.signal)) {
+          if (event.type === 'error' && event.text.startsWith('RESCAN_CONFIRM_REQUIRED|')) {
+            const message = event.text.split('|').slice(1).join('|').trim()
+            onEvent({ type: 'error', text: message || 'Building already scanned. Confirm to rescan.' })
+            if (!confirmRescan) {
+              const confirmed = window.confirm((message || 'This building was already scanned.') + '\n\nProceed with rescan?')
+              if (confirmed) {
+                await handleCommand(prompt, onEvent, assetIdOverride, true)
+              }
+            }
+            return
+          }
         onEvent(event)
         if (event.type === 'tool_call') {
           const supplyAssetId = parseSupplyLoopAssetId(event.name)
@@ -873,12 +915,17 @@ export default function SARScene() {
         pendingDeliveryKey.current = null
       }
     } finally {
+      if (abortRef.current === ac) {
+        abortRef.current = null
+      }
       setAgentBusy(false)
     }
-  }, [addLog, markSupplyLoopEnd, markSupplyLoopStart, queueSupplyDispatchAnimations])
+  }, [addLog, markSupplyLoopEnd, markSupplyLoopStart, queueSupplyDispatchAnimations, simulationId])
 
-  const handleStop = useCallback(() => {
-    abortRef.current?.abort()
+  const handleStop = useCallback(async () => {
+    const active = abortRef.current
+    if (!active) return
+    active.abort()
   }, [])
 
   // ── Area scan injection ────────────────────────────────────────────────────
@@ -1113,6 +1160,89 @@ export default function SARScene() {
     setDiscoveredSurvivors(prev => mergeUniqueSurvivors(prev, fleetScannedSurvivors))
   }, [fleetScannedSurvivors])
 
+  const simulationBuildings = useMemo<SimulationBuilding[]>(() => {
+    const byBuilding = new Map<number, SimulationBuilding>()
+    for (const survivor of intelSurvivors) {
+      const buildingId = survivorAssociatedBuildingId(simBuildings, worldBuildings, survivor)
+      if (buildingId === null) continue
+      const existing = byBuilding.get(buildingId) ?? { building_id: buildingId, detected_survivors: [] }
+      existing.detected_survivors.push({
+        x: survivor.x,
+        y: survivor.y,
+        z: survivor.z,
+        supplied: deliveredTo.has(survivorKey(survivor)),
+      })
+      byBuilding.set(buildingId, existing)
+    }
+    return [...byBuilding.values()].sort((a, b) => a.building_id - b.building_id)
+  }, [deliveredTo, intelSurvivors, simBuildings, worldBuildings])
+
+  useEffect(() => {
+    let cancelled = false
+    const init = async () => {
+      try {
+        const stored = window.localStorage.getItem(SIMULATION_ID_STORAGE_KEY)
+        const created = await createSimulation(stored ?? undefined)
+        if (cancelled) return
+        setSimulationId(created.id)
+        window.localStorage.setItem(SIMULATION_ID_STORAGE_KEY, created.id)
+      } catch {
+        // Keep UI functional even when simulation persistence is unavailable.
+      }
+    }
+    void init()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!simulationId || hydrationDoneRef.current) return
+    let cancelled = false
+    const hydrate = async () => {
+      try {
+        const snapshot = await getSimulation(simulationId)
+        if (cancelled) return
+        const restoredDetected: SurvivorPoint[] = []
+        const restoredSupplied = new Set<string>()
+        for (const building of snapshot.scanned_buildings ?? []) {
+          for (const survivor of building.detected_survivors ?? []) {
+            const point: SurvivorPoint = { x: survivor.x, y: survivor.y, z: survivor.z }
+            restoredDetected.push(point)
+            if (survivor.supplied) {
+              restoredSupplied.add(survivorKey(point))
+            }
+          }
+        }
+        setDiscoveredSurvivors(prev => mergeUniqueSurvivors(prev, restoredDetected))
+        setDeliveredTo(prev => {
+          const next = new Set(prev)
+          restoredSupplied.forEach(value => next.add(value))
+          return next
+        })
+      } catch {
+        // Ignore and continue with in-memory-only intel.
+      } finally {
+        hydrationDoneRef.current = true
+      }
+    }
+    void hydrate()
+    return () => {
+      cancelled = true
+    }
+  }, [simulationId])
+
+  useEffect(() => {
+    if (!simulationId || !hydrationDoneRef.current) return
+    if (simulationBuildings.length === 0) return
+    const timeout = setTimeout(() => {
+      void syncSimulationState(simulationId, simulationBuildings).catch(() => {
+        // Ignore sync failures; local mission state remains operational.
+      })
+    }, 400)
+    return () => clearTimeout(timeout)
+  }, [simulationBuildings, simulationId])
+
   return (
     <div
       className={`relative h-full w-full bg-[#0a0a14] ${selectMode ? 'cursor-crosshair' : 'cursor-default'}`}
@@ -1264,7 +1394,7 @@ export default function SARScene() {
       </div>
       {!selectMode && <CoordOverlay point={hoverPt} copied={copied} />}
       <CompassLabels northAngleRef={northAngleRef} />
-      <div className="pointer-events-auto absolute right-4 top-[60px] flex max-h-[calc(100%-180px)] flex-col gap-2">
+      <div className="pointer-events-auto absolute right-4 top-[60px] flex max-h-[calc(100%-180px)] max-w-[400px] flex-col gap-2">
         <Controls
           followBeacon={followBeacon}
           onToggleFollow={toggleFollowBeacon}
@@ -1279,7 +1409,22 @@ export default function SARScene() {
           onFollowNext={followNextBeacon}
           selectMode={selectMode}
         />
-        <DroneStatusPanel drones={drones} />
+        <DroneStatusPanel
+          drones={drones}
+          dronesVisible={dronesVisible}
+          onToggleDronesVisible={() => setDronesVisible((prev) => !prev)}
+        />
+        <FpvPanel
+          drones={drones}
+          selectedAssetId={fpvAssetId}
+          onSelectAsset={setFpvAssetId}
+          span={worldSpan}
+          buildings={worldBuildings}
+          survivors={survivorPositions}
+          floorHeight={FLOOR_H}
+          floorThickness={FLOOR_T}
+          transparentWalls={transparentWalls}
+        />
         <IntelCard
           survivors={intelSurvivors}
           dronePos={dronePos}
