@@ -117,6 +117,75 @@ class TestEntryModeGroundEntry:
         assert "selected_window_waypoint" not in tr
 
     @pytest.mark.asyncio
+    async def test_ground_entry_prefers_xz_over_3d_distance(self, _mock_client, monkeypatch):
+        """Regression guard: selection must rank by XZ distance, not 3D.
+
+        East window (sill_y=0.0) and south window (sill_y=2.9) are both on floor 1.
+        Because sill heights differ, the waypoints are at different Y elevations
+        (east=0.8m, south=3.7m). With the drone at high altitude (y=50) directly
+        above the east-face standoff point (x=59, z=50):
+
+        - XZ distance: east=0, south≈12.7  → east wins under XZ
+        - 3D distance: east≈49.2, south≈48.0 → south wins under 3D
+
+        The test asserts east is chosen, which only holds when the distance
+        function is XZ-only. Reverting to 3D would flip the result.
+        """
+        from backend.services.core import context
+        from backend.world.model import Building, WindowAperture
+
+        two_face_building = Building(
+            id=998,
+            cx=50.0, cz=50.0,
+            w=10.0, d=10.0, h=12.0,
+            windows=(
+                # East face: axis_center is a Z coordinate; sill_y=0.0 → waypoint y=0.8
+                WindowAperture(face="east", axis_center=50.0, sill_y=0.0, width=2.0, height=1.6),
+                # South face: axis_center is an X coordinate; sill_y=2.9 → waypoint y=3.7
+                WindowAperture(face="south", axis_center=50.0, sill_y=2.9, width=2.0, height=1.6),
+            ),
+        )
+
+        class _TwoFaceWorld:
+            buildings = (two_face_building,)
+
+            def building_near_xz(self, x, z, margin=2.0):
+                return two_face_building
+
+            def obstacles_in_path(self, *_args, **_kwargs):
+                return []
+
+            def buildings_near(self, *_args, **_kwargs):
+                return [two_face_building]
+
+        monkeypatch.setattr(context, "get_world", lambda: _TwoFaceWorld())
+
+        # East standoff waypoint is at (max_x + 4, 0.8, 50) = (59, 0.8, 50).
+        # South standoff waypoint is at (50, 3.7, max_z + 4) = (50, 3.7, 59).
+        # Drone placed directly above the east standoff (x=59, z=50) at high altitude.
+        # XZ dist: east=0, south≈12.73  → XZ selects east.
+        # 3D dist: east≈49.2, south≈48.0 → 3D would select south (regression).
+        _mock_client.get_status.return_value = {
+            "asset_id": "BEACON-01",
+            "x": 59.0, "y": 50.0, "z": 50.0,
+            "battery": 80, "status": "IDLE",
+        }
+        result = await plan_route(
+            "BEACON-01", 50.0, 50.0,
+            snap_to_building_center=True,
+            entry_mode="ground_entry",
+        )
+        tr = result.get("target_resolution", {})
+        wp = tr["selected_window_waypoint"]
+        # Under XZ ranking: east face is selected (distance 0).
+        # Under 3D ranking: south face would be selected (smaller 3D distance).
+        assert wp["face"] == "east", (
+            f"expected east face (XZ-nearest, dist=0), got {wp['face']!r}; "
+            "this likely means the distance function reverted to 3D"
+        )
+        assert wp["floor"] == 1
+
+    @pytest.mark.asyncio
     async def test_ground_entry_records_fallback_when_building_has_no_windows(self, _mock_client):
         from backend.world.model import WORLD
         no_window_building = next(
