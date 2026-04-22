@@ -197,25 +197,34 @@ def plan_building_vertical_sweep(
 
             if ring_items:
                 first_rx, first_rz, _ = ring_items[0]
-                inter_blockers = WORLD.obstacles_in_path(
-                    _last_rx,
-                    level_y,
-                    _last_rz,
-                    first_rx,
-                    level_y,
-                    first_rz,
-                    samples=30,
-                    margin=0.0,
-                )
+                # Exclude the building under sweep: the inter-floor diagonal
+                # from the last window waypoint to the first corner of the next
+                # ring often crosses the building's own AABB, causing a false
+                # obstacle detection that triggered a rooftop-altitude climb.
+                # Real external blockers still trigger a clearance climb, but
+                # we drop the `max(..., rooftop_y)` floor so the drone only
+                # climbs as high as actually needed.
+                inter_blockers = [
+                    b for b in WORLD.obstacles_in_path(
+                        _last_rx,
+                        level_y,
+                        _last_rz,
+                        first_rx,
+                        level_y,
+                        first_rz,
+                        samples=30,
+                        margin=0.0,
+                    )
+                    if b.id != building.id
+                ]
                 if inter_blockers:
                     over_y = round(max(b.max_y for b in inter_blockers) + 3.0, 2)
-                    over_y = max(over_y, round(rooftop_y, 2))
                     waypoints.append(
                         {
                             "x": round(_last_rx, 2),
                             "y": over_y,
                             "z": round(_last_rz, 2),
-                            "level_y": rooftop_y,
+                            "level_y": over_y,
                             "reason": "inter-floor climb",
                             "transit": True,
                         }
@@ -225,7 +234,7 @@ def plan_building_vertical_sweep(
                             "x": round(first_rx, 2),
                             "y": over_y,
                             "z": round(first_rz, 2),
-                            "level_y": rooftop_y,
+                            "level_y": over_y,
                             "reason": "inter-floor cruise",
                             "transit": True,
                         }

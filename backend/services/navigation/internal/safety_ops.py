@@ -51,7 +51,13 @@ def _route_sweep_segment(
     clear_y: float,
     margin: float = 1.0,
 ) -> list[dict]:
-    """Return intermediate transit waypoints needed to route around blocked sweep legs."""
+    """Return intermediate transit waypoints needed to route around blocked sweep legs.
+
+    Only *external* buildings (id != exclude_id) trigger a climb-over.  The
+    building-under-sweep is intentionally excluded: the ring already provides
+    a correct perimeter path around it, so a straight-line diagonal that clips
+    the building's own AABB should never force an altitude climb.
+    """
     blockers = [
         b for b in WORLD.obstacles_in_path(
             from_x,
@@ -65,19 +71,6 @@ def _route_sweep_segment(
         )
         if b.id != exclude_id
     ]
-    blockers.extend(
-        b for b in WORLD.obstacles_in_path(
-            from_x,
-            from_y,
-            from_z,
-            to_x,
-            to_y,
-            to_z,
-            samples=30,
-            margin=0.0,
-        )
-        if b.id == exclude_id
-    )
     if not blockers:
         return []
 

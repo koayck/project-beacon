@@ -106,6 +106,28 @@ class TestGroundEntrySweep:
             f"entry window not nearest to approach: first_dist={first_dist}, min={min_dist}"
         )
 
+    def test_sweep_never_climbs_to_rooftop_altitude(self):
+        """Regression guard: no waypoint (scan or transit) should reach rooftop altitude.
+
+        The inter-floor transit used to climb to max(blocker+3, rooftop_y), which
+        made the drone fly to roof height between floors and looked like a rooftop
+        scan. After Fix 2, the check filters out the building-under-sweep (the
+        actual source of the false positive) so no climb is emitted at all for
+        self-blocking, and any real external blocker only climbs to blocker+3
+        (never forced up to rooftop_y).
+        """
+        plan = plan_building_vertical_sweep(
+            target_x=20.0, target_z=25.0,  # building 3: h=18, multi-floor
+            level_step=3.0, standoff=2.0,
+            approach_x=0.0, approach_z=0.0,
+        )
+        assert plan["matched_building"] is True, "expected building 3 to match"
+        building_height = plan["building"]["height"]
+        for w in plan["waypoints"]:
+            assert w["y"] < building_height, (
+                f"waypoint exceeds building height ({building_height}): {w}"
+            )
+
     def test_entry_window_not_duplicated_in_ring(self):
         """Regression guard: the entry window must be filtered out of the
         first-floor ring so the drone does not double-visit it."""
