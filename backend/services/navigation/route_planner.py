@@ -116,39 +116,42 @@ async def plan_route(
                 dz = float(wp["z"]) - cz
                 return math.sqrt(dx * dx + dz * dz)
 
-            def _is_candidate_reachable(wp: dict, target_building_id: int) -> bool:
-                """Two-stage reachability check for a ground_entry window candidate.
+            def _is_on_approach_side(wp: dict, bld: object) -> bool:
+                """Return True when the drone is on the outward side of the window's face.
 
-                Stage 1 — fast LOS (target building excluded):
-                  If any *external* building blocks the straight line from the drone's
-                  XZ position at the window's altitude to the window waypoint, the
-                  candidate is immediately rejected.
+                Filters out windows on faces where the building body sits between the
+                drone and the window (i.e., the drone would need to fly over or around
+                the building to reach that face).  Only outward-side faces are useful
+                as entry candidates.
 
-                Stage 2 — bounded A* (target building included as obstacle):
-                  Even when the straight line is clear, the actual flight path may
-                  require circumnavigating the target building through a tight
-                  neighbourhood where no clear corridor exists at low altitude
-                  (BEACON-04 + market hall scenario).
+                Face outward-normal convention:
+                  north face (outward normal = −Z): drone must be at z < building.min_z
+                  south face (outward normal = +Z): drone must be at z > building.max_z
+                  east  face (outward normal = +X): drone must be at x > building.max_x
+                  west  face (outward normal = −X): drone must be at x < building.min_x
+                """
+                face = wp.get("face", "")
+                if face == "north":
+                    return float(cz) < float(bld.min_z)  # type: ignore[attr-defined]
+                if face == "south":
+                    return float(cz) > float(bld.max_z)  # type: ignore[attr-defined]
+                if face == "east":
+                    return float(cx) > float(bld.max_x)  # type: ignore[attr-defined]
+                if face == "west":
+                    return float(cx) < float(bld.min_x)  # type: ignore[attr-defined]
+                return True
 
-                  A* is run from ``(cx, approach_y, cz)`` where ``approach_y`` is
-                  clamped to the window altitude + a small clearance margin.  This
-                  bounds the search volume: we only check local reachability near the
-                  window, not the full high-altitude-to-low-altitude descent, which
-                  would inflate grid size and exhaust the iteration budget on false
-                  failures (drone at y=50 → floor-2 window at y=5.9).
+            def _is_los_clear(wp: dict, target_building_id: int) -> bool:
+                """LOS check: return True if no *external* building blocks the line.
 
-                  ``exclude_building_id=None`` means the target building IS an obstacle,
-                  so A* must route around it — the same constraint the real drone faces.
-
-                Returns True only when both stages pass.
+                The target building is excluded — its own facade is not a blocker for
+                a window-approach path; the window sits on the surface of the facade.
                 """
                 wp_x = float(wp["x"])
                 wp_y = float(wp["y"])
                 wp_z = float(wp["z"])
-                # For LOS check: use drone altitude or window altitude, whichever is higher
+                # Use drone altitude or window altitude, whichever is higher
                 approach_y = max(float(cy), wp_y)
-
-                # --- Stage 1: LOS (exclude target building) ---
                 los_samples = _segment_sample_count(
                     float(cx), approach_y, float(cz),
                     wp_x, wp_y, wp_z,
@@ -160,53 +163,36 @@ async def plan_route(
                     samples=los_samples,
                     margin=0.0,
                 )
-                # Exclude the target building — its own facade is not a blocker for
-                # a window-approach path.
                 external_blockers = [
                     b for b in los_blockers
                     if getattr(b, "id", None) != target_building_id
                 ]
-                if external_blockers:
-                    # External building physically blocks the straight line — skip.
-                    return False
+                return len(external_blockers) == 0
 
-                # --- Stage 2: bounded A* (target building IS an obstacle) ---
-                # The straight line was clear, but the real flight path may still
-                # require circumnavigating the target building through tight corridors.
-                # We run A* *without* exclude_building_id so the target acts as a real
-                # obstacle: if no low-altitude corridor exists around it, A* fails.
-                #
-                # The start altitude is clamped to wp_y + 5.0 (not the full drone
-                # altitude) so the grid stays compact.  A drone at y=50 descending to
-                # a floor-2 window at y=5.9 still has a valid approach — we don't need
-                # to model that full descent to check XZ reachability.
-                #
-                # max_altitude is capped at wp_y + 15.0 — low enough to prevent A*
-                # from "escaping" by climbing far above all obstacles and circling
-                # around them.  The check is specifically about whether a low-altitude
-                # corridor exists to the window, not whether a high-altitude flyover
-                # works (the drone would break the low-altitude sweep approach rule).
-                a_star_start_y = min(float(cy), wp_y + 5.0)
-                a_star_check = find_3d_path(
-                    world,
-                    (float(cx), a_star_start_y, float(cz)),
-                    (wp_x, wp_y, wp_z),
-                    margin=1.0,
-                    exclude_building_id=None,  # target IS an obstacle here
-                    cell_size=2.0,             # coarser grid for speed
-                    max_altitude=wp_y + 15.0,  # low cap: check corridor, not flyover
-                    max_iterations=20_000,     # bounded: ~20–100 ms per call
-                )
-                return a_star_check is not None
-
-            ranked = sorted(ground_candidates, key=_drone_dist_xz)
-            # Pick the first XZ-nearest candidate with a clear straight-line path.
-            # Cap at 4 checks to bound worst-case cost when many candidates exist.
             target_building_id = nearby.id
+
+            # Apply approach-side filter: only consider windows on faces where
+            # the drone is on the outward side.  This eliminates far-side windows
+            # that would require crossing the building.  If the filter removes all
+            # candidates (edge case: drone is inside the building XZ footprint),
+            # fall back to the unfiltered set so we don't deadlock selection.
+            approach_side_candidates = [
+                wp for wp in ground_candidates
+                if _is_on_approach_side(wp, nearby)
+            ]
+            if not approach_side_candidates:
+                approach_side_candidates = ground_candidates
+
+            ranked = sorted(approach_side_candidates, key=_drone_dist_xz)
+
+            # LOS-only Stage 1: pick the XZ-nearest approach-side candidate whose
+            # straight line to the drone is not blocked by external buildings.
+            # Cap at 4 checks to bound worst-case cost.
             for candidate in ranked[:4]:
-                if _is_candidate_reachable(candidate, target_building_id):
+                if _is_los_clear(candidate, target_building_id):
                     selected_window_waypoint = candidate
                     break
+
             # If no reachable candidate found, fall through to nearest_floor fallback.
             if selected_window_waypoint is None:
                 entry_mode_fallback = True

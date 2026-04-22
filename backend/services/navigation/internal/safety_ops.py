@@ -53,17 +53,15 @@ def _route_sweep_segment(
 ) -> list[dict]:
     """Return intermediate transit waypoints needed to route around blocked sweep legs.
 
-    Both external buildings and the target building (id == exclude_id) are
-    considered as obstacles for intra-floor ring segments.  Ring moves frequently
-    cross the building footprint (e.g. south-face window → NW corner), and without
-    the building in the blocker list the helper emits a straight-line path through
-    it, causing mid-sweep collisions.
+    Only *external* buildings (id != exclude_id) trigger a climb-over.  The
+    building-under-sweep is intentionally excluded: with the ring start corner
+    now derived from the entry window face (sweep_planner.py), intra-floor ring
+    segments stay on the same face at standoff distance and never cross the
+    target building's footprint.  Re-including the target building here is
+    therefore unnecessary and caused false-positive rooftop-altitude climbs.
 
-    Note: the detour altitude is capped at ``blocker.max_y + 3`` — NOT forced up
-    to rooftop altitude.  This is distinct from the inter-floor check in
-    ``sweep_planner.py`` (around the ring-start block) which correctly excludes the
-    target building to avoid false-positive rooftop climbs between same-corner
-    vertical hops.
+    The detour altitude is ``blocker.max_y + 3`` — NOT forced up to the full
+    rooftop sweep altitude.
     """
     blockers = [
         b for b in WORLD.obstacles_in_path(
@@ -78,29 +76,10 @@ def _route_sweep_segment(
         )
         if b.id != exclude_id
     ]
-    # Also check whether the intra-floor segment crosses the target building
-    # itself (zero safety margin to avoid false positives from the standoff
-    # perimeter).  The target building IS a real obstacle for intra-floor ring
-    # traversal — unlike the inter-floor diagonal check in sweep_planner, which
-    # correctly filters it out.
-    blockers.extend(
-        b for b in WORLD.obstacles_in_path(
-            from_x,
-            from_y,
-            from_z,
-            to_x,
-            to_y,
-            to_z,
-            samples=30,
-            margin=0.0,
-        )
-        if b.id == exclude_id
-    )
     if not blockers:
         return []
 
     over_y = round(max(b.max_y for b in blockers) + 3.0, 2)
-    over_y = max(over_y, round(clear_y, 2))
     return [
         {
             "x": round(from_x, 2),

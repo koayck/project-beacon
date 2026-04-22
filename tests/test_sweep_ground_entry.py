@@ -111,19 +111,14 @@ class TestGroundEntrySweep:
 
         The inter-floor transit used to climb to max(blocker+3, rooftop_y), which
         made the drone fly to roof height between floors and looked like a rooftop
-        scan.  Fix 2 removed the ``max(..., rooftop_y)`` floor so detours only
-        climb as high as the actual blocker requires (``blocker.max_y + 3``).
+        scan.  Fix 2 removed the ``max(..., rooftop_y)`` floor.
 
-        Fix 2a restored the target building as an obstacle for *intra-floor* ring
-        segments (e.g. south window → NW corner can cross the footprint).  Those
-        detours legitimately climb to ``building_height + 3`` to clear the roof —
-        that is NOT a rooftop cruise, just enough vertical clearance to cross once.
-        The guard is therefore relaxed to ``<= building_height + 3.0``.
-
-        The critical regression to prevent is climbs forced to rooftop altitude
-        when the obstacle is only the building's own standoff zone (false positive).
-        That is caught by the fact that the detour altitude matches ``max_y + 3``
-        rather than the full rooftop sweep altitude.
+        The unified fix (ring-start-from-entry-face) ensures intra-floor ring
+        segments stay on the same face at standoff distance and never cross the
+        building footprint.  Fix 2a (re-adding the target building as an intra-floor
+        obstacle) is therefore reverted — intra-floor climbs to building_height+3
+        no longer occur.  The guard is tightened back to ``< building_height`` to
+        catch any regression that restores rooftop-altitude forcing.
         """
         plan = plan_building_vertical_sweep(
             target_x=20.0, target_z=25.0,  # building 3: h=18, multi-floor
@@ -133,13 +128,12 @@ class TestGroundEntrySweep:
         assert plan["matched_building"] is True, "expected building 3 to match"
         building_height = plan["building"]["height"]
         for w in plan["waypoints"]:
-            # Intra-floor detours that cross the building footprint climb to
-            # building_height + 3.  Any climb beyond that indicates the old
-            # rooftop-altitude forcing bug has returned.
-            assert w["y"] <= building_height + 3.0, (
-                f"waypoint altitude ({w['y']}) exceeds building_height+3 "
-                f"({building_height + 3.0}), suggesting a rooftop-altitude "
-                f"forcing regression: {w}"
+            # With the entry-face start-corner fix, intra-floor ring segments
+            # stay outside the building footprint — no climb needed.  Any
+            # waypoint at or above building_height indicates a regression.
+            assert w["y"] < building_height, (
+                f"waypoint altitude ({w['y']}) >= building_height ({building_height}), "
+                f"suggesting a rooftop-altitude forcing regression: {w}"
             )
 
     def test_entry_window_not_duplicated_in_ring(self):
@@ -164,3 +158,39 @@ class TestGroundEntrySweep:
             f"entry window visited {len(same_floor_matches)} times on entry floor, expected 1: "
             f"matches={same_floor_matches}"
         )
+
+    def test_ring_start_corner_matches_entry_face(self):
+        """Regression: when entry window is on the south face, ring start
+        corner must be SE or SW (adjacent to south face), not NW or NE.
+
+        Drone at (0, 0, 0) approaches building 3 (cx=20, cz=25) from the NW.
+        Building 3 south face: max_z=30, windows at x=18 and x=22 on floor 2.
+        The drone is south of (NW of) the building; the closest lowest-floor
+        windows are on the south face.  The ring start must be SE or SW — NOT
+        NW or NE — to avoid a cross-building traversal to reach the start corner.
+        """
+        plan = plan_building_vertical_sweep(
+            target_x=20.0, target_z=25.0,  # building 3
+            level_step=3.0, standoff=2.0,
+            approach_x=0.0, approach_z=0.0,  # drone far NW of building
+        )
+        assert plan["matched_building"] is True, "expected building 3 to match"
+        building = plan["building"]
+
+        # First non-transit waypoint should be the entry window (south face).
+        non_transit = [w for w in plan["waypoints"] if not w.get("transit")]
+        assert non_transit, "expected at least one non-transit waypoint"
+        entry = non_transit[0]
+        assert "window scan" in entry["reason"] and "south" in entry["reason"], (
+            f"expected south-face entry window, got: {entry['reason']}"
+        )
+
+        # No scan waypoint should sit inside the building footprint.
+        for w in plan["waypoints"]:
+            if w.get("transit"):
+                continue
+            inside_x = building["min_x"] <= w["x"] <= building["max_x"]
+            inside_z = building["min_z"] <= w["z"] <= building["max_z"]
+            assert not (inside_x and inside_z), (
+                f"scan waypoint inside building footprint: {w}"
+            )

@@ -403,3 +403,39 @@ class TestEntryModeGroundEntry:
         assert "selected_window_waypoint" not in tr
         assert result["to"]["x"] == pytest.approx(float(no_window_building.cx), abs=0.01)
         assert result["to"]["z"] == pytest.approx(float(no_window_building.cz), abs=0.01)
+
+    @pytest.mark.asyncio
+    async def test_ground_entry_filters_windows_on_far_side(self, _mock_client):
+        """Regression: drone approaching from one side of the building must NOT
+        select a window on the opposite face, even if XZ distance is similar.
+        The drone is west of building 3 (residential block); the east-face
+        window is on the far side and requires flying around/over the building.
+        Only west-face windows should be considered.
+
+        Building 3: cx=20, cz=25, min_x=14, max_x=26.  Drone at x=-20 is west
+        of min_x=14, so west face (outward if drone.x < min_x) passes the
+        approach-side filter; east face (outward if drone.x > max_x=26) does not
+        — drone at x=-20 is not east of 26.
+        """
+        _mock_client.get_status.return_value = {
+            "asset_id": "BEACON-01",
+            "x": -20.0, "y": 2.0, "z": 24.0,  # west of building 3 (min_x=14)
+            "battery": 100, "status": "IDLE",
+        }
+        result = await plan_route(
+            "BEACON-01", 20.0, 25.0,  # building 3 center
+            snap_to_building_center=True,
+            entry_mode="ground_entry",
+        )
+        tr = result.get("target_resolution", {})
+        wp = tr.get("selected_window_waypoint")
+        assert wp is not None, (
+            f"expected a selected_window_waypoint in target_resolution; got tr={tr}"
+        )
+        # Drone is west of building 3: east face is on the far side and must not
+        # be selected.  Any other face (south, west) is acceptable since those
+        # windows are on the approach-side or adjacent faces.
+        assert wp["face"] != "east", (
+            f"drone on west side picked east-face window — approach-side filter failed. "
+            f"Selected: face={wp['face']}, floor={wp['floor']}"
+        )

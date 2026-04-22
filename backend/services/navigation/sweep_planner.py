@@ -158,6 +158,40 @@ def plan_building_vertical_sweep(
                 }
             )
 
+    # Derive the ring start corner from the entry window's face so the
+    # traversal from entry window to ring-start stays on the same face at
+    # standoff distance.  Without this, picking the ring start by drone
+    # approach direction independently of the entry window's face forces the
+    # drone to cross the building footprint to reach the start corner.
+    if entry_window is not None and _serpentine:
+        face = entry_window["face"]
+        ex = float(entry_window["x"])
+        ez = float(entry_window["z"])
+        if face == "south":
+            _start_corner = (
+                "SE"
+                if abs(ex - corners["SE"][0]) < abs(ex - corners["SW"][0])
+                else "SW"
+            )
+        elif face == "north":
+            _start_corner = (
+                "NE"
+                if abs(ex - corners["NE"][0]) < abs(ex - corners["NW"][0])
+                else "NW"
+            )
+        elif face == "east":
+            _start_corner = (
+                "NE"
+                if abs(ez - corners["NE"][1]) < abs(ez - corners["SE"][1])
+                else "SE"
+            )
+        elif face == "west":
+            _start_corner = (
+                "NW"
+                if abs(ez - corners["NW"][1]) < abs(ez - corners["SW"][1])
+                else "SW"
+            )
+
     _current_corner = _start_corner
     _cw = True
     _last_rx: float = waypoints[-1]["x"] if waypoints else corners[_start_corner][0]
