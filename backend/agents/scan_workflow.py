@@ -376,6 +376,11 @@ async def assign_drones_to_buildings(tool_context: ToolContext) -> dict:
     tool_context.state["scan_buildings"] = json.dumps(scan_data)
     asset_id: str = scan_data.get("asset_id", "auto") or "auto"
 
+    if asset_id.upper() == "BEACON-SCOUT":
+        asset_id = "auto"
+        scan_data["asset_id"] = asset_id
+        tool_context.state["scan_buildings"] = json.dumps(scan_data)
+
     if asset_id.upper() not in ("AUTO", "", "UNKNOWN"):
         # Explicit single-drone: assign only first building now; keep the rest queued.
         if not buildings:

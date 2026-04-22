@@ -10,7 +10,6 @@ from google.adk.tools import AgentTool
 
 from backend.agents._model import QWEN3_GEN_CONFIG_COMMANDER, QWEN3_INSTRUCT
 from backend.agents.command_parser import command_parser
-from backend.agents.mission_planner import mission_planner
 from backend.agents.recovery import recovery_agent
 from backend.agents.navigation import navigation_agent
 from backend.agents.scan_workflow import scan_workflow
@@ -38,8 +37,7 @@ enhanced_commander = Agent(
     ],
     tools=[
         AgentTool(command_parser),
-        is_complex_mission,
-        # AgentTool(mission_planner),
+        # is_complex_mission,
         make_toolset(["deploy_scout_sweep", "get_explored_sectors"]),
     ],
 )

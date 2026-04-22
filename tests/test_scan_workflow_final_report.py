@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from backend.agents.scan_workflow import (
+    assign_drones_to_buildings,
     build_aggregated_scan_report,
     pick_next_building_for_asset,
     prepare_parallel_fleet_scan,
@@ -140,6 +141,47 @@ def test_prepare_parallel_fleet_scan_skips_queue_when_drone_count_matches_buildi
     assert result["mode"] == "initial_assignment_only_no_queue"
     assert tool_context.state["scan_queue_enabled"] is False
     assert json.loads(tool_context.state["scan_pending_buildings"]) == []
+
+
+@pytest.mark.asyncio
+async def test_assign_drones_to_buildings_routes_scout_to_fleet_assignment(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_assign_fleet_to_buildings(buildings: list[dict]) -> dict:
+        captured["buildings"] = list(buildings)
+        return {
+            "assignments": [{"asset_id": "BEACON-01", "building": buildings[0], "distance_m": 0.0}],
+            "unassigned_buildings": buildings[1:],
+            "idle_drones": [],
+            "total_assigned": 1,
+        }
+
+    monkeypatch.setattr("backend.services.api.assign_fleet_to_buildings", fake_assign_fleet_to_buildings)
+
+    tool_context = SimpleNamespace(
+        state={
+            "scan_buildings": json.dumps(
+                {
+                    "asset_id": "BEACON-SCOUT",
+                    "buildings": [
+                        {"id": 4, "x": -23.0, "z": -28.0, "height": 21.0},
+                        {"id": 9, "x": -10.0, "z": -12.0, "height": 18.0},
+                    ],
+                }
+            )
+        },
+        actions=SimpleNamespace(escalate=False),
+    )
+
+    result = await assign_drones_to_buildings(tool_context)
+
+    assert result["total_assigned"] == 1
+    assert captured["buildings"] == [
+        {"id": 4, "x": -23.0, "z": -28.0, "height": 21.0},
+        {"id": 9, "x": -10.0, "z": -12.0, "height": 18.0},
+    ]
+    stored = json.loads(tool_context.state["scan_buildings"])
+    assert stored["asset_id"] == "auto"
 
 
 @pytest.mark.asyncio
