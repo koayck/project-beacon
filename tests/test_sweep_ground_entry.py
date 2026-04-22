@@ -6,6 +6,8 @@ approach coordinates.
 """
 from __future__ import annotations
 
+import math
+
 from backend.services.navigation.sweep_planner import plan_building_vertical_sweep
 
 
@@ -37,6 +39,9 @@ class TestGroundEntrySweep:
         assert scanning_levels == sorted(scanning_levels), (
             f"expected ascending floor order, got {scanning_levels}"
         )
+        non_transit = [w for w in plan["waypoints"] if not w.get("transit")]
+        wp_levels = [w["level_y"] for w in non_transit if w["level_y"] < rooftop_y]
+        assert wp_levels == sorted(wp_levels), f"waypoint level_y not ascending: {wp_levels}"
 
     def test_sweep_still_ends_on_rooftop(self):
         plan = plan_building_vertical_sweep(
@@ -49,10 +54,14 @@ class TestGroundEntrySweep:
         assert last_wp["y"] == plan["rooftop_position"]["y"]
 
     def test_entry_window_is_closest_to_approach_on_lowest_floor(self):
+        # approach_x=-10 breaks the x=-13 / x=-17 window symmetry: x=-13 is
+        # clearly closer to -10 than x=-17 is, so min() and first()[0] diverge
+        # whenever the list starts with the x=-17 window.
+        approach_x, approach_z = -10.0, -50.0
         plan = plan_building_vertical_sweep(
             target_x=-15.0, target_z=-15.0,
             level_step=3.0, standoff=2.0,
-            approach_x=-15.0, approach_z=-50.0,
+            approach_x=approach_x, approach_z=approach_z,
         )
         rooftop_y = plan["rooftop_position"]["y"]
         scanning_levels = [l for l in plan["levels"] if l < rooftop_y]
@@ -62,4 +71,19 @@ class TestGroundEntrySweep:
         assert first["level_y"] == lowest_y
         assert "window scan" in first["reason"], (
             f"expected first waypoint to be a window scan, got {first['reason']}"
+        )
+
+        lowest_window_wps = [
+            wp for wp in plan["waypoints"]
+            if wp.get("level_y") == lowest_y
+            and "window scan" in wp.get("reason", "")
+        ]
+        assert lowest_window_wps, "expected at least one lowest-floor window scan waypoint"
+        min_dist = min(
+            math.hypot(wp["x"] - approach_x, wp["z"] - approach_z)
+            for wp in lowest_window_wps
+        )
+        first_dist = math.hypot(first["x"] - approach_x, first["z"] - approach_z)
+        assert first_dist == min_dist, (
+            f"entry window not nearest to approach: first_dist={first_dist}, min={min_dist}"
         )
