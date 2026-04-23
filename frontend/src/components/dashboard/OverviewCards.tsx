@@ -20,14 +20,14 @@ function formatDurationMs(ms: number | null): string {
 }
 
 function formatCost(usd: number | null | undefined): string {
-  if (usd === null || usd === undefined) return '--'
+  if (usd === null || usd === undefined || usd === 0) return '--'
   if (usd < 0.01) return `<$0.01`
   if (usd < 1) return `$${usd.toFixed(3)}`
   return `$${usd.toFixed(2)}`
 }
 
 function formatTokens(n: number | null | undefined): string {
-  if (n === null || n === undefined) return '--'
+  if (n === null || n === undefined || n === 0) return '--'
   if (n < 1000) return String(n)
   if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`
   return `${(n / 1_000_000).toFixed(2)}M`

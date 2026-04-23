@@ -18,21 +18,21 @@ export default function DashboardPage() {
 
   if (error) {
     return (
-      <main className="min-h-screen bg-[#040612] p-6 font-mono text-[#ff8888]">
+      <main className="h-screen overflow-y-auto bg-[#040612] p-6 font-mono text-[#ff8888]">
         Failed to load dashboard: {error}
       </main>
     )
   }
   if (!data) {
     return (
-      <main className="min-h-screen bg-[#040612] p-6 font-mono text-[#667788]">
+      <main className="h-screen overflow-y-auto bg-[#040612] p-6 font-mono text-[#667788]">
         Loading…
       </main>
     )
   }
 
   return (
-    <main className="min-h-screen bg-[#040612] p-6 font-mono text-[#cde]">
+    <main className="h-screen overflow-y-auto bg-[#040612] p-6 font-mono text-[#cde]">
       <header className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-lg font-bold tracking-[2px] text-[#5599bb]">
