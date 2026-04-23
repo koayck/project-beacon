@@ -117,6 +117,45 @@ export interface NetworkMockStatus {
   status_file: string
 }
 
+export interface DashboardRun {
+  id: number
+  simulation_id: string | null
+  asset_id: string
+  prompt: string
+  status: 'success' | 'failed' | 'aborted'
+  started_at: string
+  ended_at: string | null
+  duration_ms: number | null
+  ttft_ms: number | null
+  tool_call_count: number
+  survivors_detected: number
+  survivors_rescued: number
+  result_summary: string | null
+  error_message: string | null
+  created_at?: string | null
+}
+
+export interface DashboardOverview {
+  total_missions: number
+  avg_ttft_ms: number | null
+  avg_duration_ms: number | null
+  total_survivors_rescued: number
+  total_survivors_detected: number
+  rescue_success_rate: number
+  avg_rescue_time_s: number | null
+}
+
+export interface DashboardCurrentMission {
+  prompt: string
+  started_at: string
+}
+
+export interface DashboardPayload {
+  overview: DashboardOverview
+  runs: DashboardRun[]
+  currentMission: DashboardCurrentMission | null
+}
+
 export async function uplink(assetId: string): Promise<UplinkResponse> {
   const res = await fetch(`${BASE}/uplink/${assetId}`, { method: 'POST' })
   if (!res.ok) throw new Error(`Uplink failed: ${res.status}`)
@@ -279,4 +318,10 @@ export async function healthCheck(): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+export async function fetchDashboard(): Promise<DashboardPayload> {
+  const res = await fetch(`${BASE}/dashboard`)
+  if (!res.ok) throw new Error(`Dashboard fetch failed: ${res.status}`)
+  return res.json()
 }
