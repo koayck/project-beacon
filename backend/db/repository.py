@@ -10,8 +10,6 @@ import asyncpg
 
 from backend.db.models import Asset, MissionLog, LicenseRecord, MissionRun
 
-_SUPABASE_DB_URL = os.environ.get("SUPABASE_DB_URL", "").strip()
-
 
 async def init_db() -> None:
     """Validate that the configured Supabase database is reachable."""
@@ -22,7 +20,7 @@ async def init_db() -> None:
 @asynccontextmanager
 async def _connect() -> AsyncIterator[asyncpg.Connection]:
     """Open a temporary asyncpg connection to the configured Supabase database."""
-    dsn = _normalize_dsn(_SUPABASE_DB_URL)
+    dsn = _normalize_dsn(os.environ.get("SUPABASE_DB_URL", "").strip())
     conn = await asyncpg.connect(dsn=dsn)
     try:
         yield conn
@@ -50,6 +48,7 @@ def _row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
 
 
 # ── Assets ────────────────────────────────────────────────────────────────────
+
 
 class _AssetRepository:
     async def list_all(self) -> list[Asset]:
@@ -101,6 +100,7 @@ class _AssetRepository:
 
 # ── Mission Logs ──────────────────────────────────────────────────────────────
 
+
 class _MissionLogRepository:
     async def create(self, log: MissionLog) -> None:
         """Persist one mission log entry."""
@@ -126,6 +126,7 @@ class _MissionLogRepository:
 
 
 # ── License ───────────────────────────────────────────────────────────────────
+
 
 class _LicenseRepository:
     async def get_active(self) -> LicenseRecord | None:
@@ -186,6 +187,7 @@ class _LicenseRepository:
 
 # ── Mission Runs ──────────────────────────────────────────────────────────────
 
+
 class _MissionRunRepository:
     async def create(self, run: MissionRun) -> int:
         """Insert one mission run row and return its ID."""
@@ -194,9 +196,9 @@ class _MissionRunRepository:
                 simulation_id, asset_id, prompt, status,
                 started_at, ended_at, duration_ms, ttft_ms,
                 tool_call_count, survivors_detected, survivors_rescued,
-                result_summary, error_message
+                result_summary, error_message, langfuse_trace_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             RETURNING id
         """
         async with _connect() as conn:
@@ -215,6 +217,7 @@ class _MissionRunRepository:
                 run.survivors_rescued,
                 run.result_summary,
                 run.error_message,
+                run.langfuse_trace_id,
             )
         return int(row["id"])
 
@@ -224,7 +227,7 @@ class _MissionRunRepository:
             SELECT id, simulation_id, asset_id, prompt, status,
                    started_at, ended_at, duration_ms, ttft_ms,
                    tool_call_count, survivors_detected, survivors_rescued,
-                   result_summary, error_message, created_at
+                   result_summary, error_message, langfuse_trace_id, created_at
             FROM mission_runs
             ORDER BY id DESC
             LIMIT $1
@@ -242,6 +245,7 @@ class _MissionRunRepository:
               AVG(duration_ms) FILTER (WHERE duration_ms IS NOT NULL)         AS avg_duration_ms,
               COALESCE(SUM(survivors_rescued), 0)                             AS total_survivors_rescued,
               COALESCE(SUM(survivors_detected), 0)                            AS total_survivors_detected,
+              COALESCE(SUM(tool_call_count), 0)                               AS total_tool_calls,
               CASE WHEN COALESCE(SUM(survivors_detected), 0) > 0
                    THEN 100.0 * SUM(survivors_rescued) / SUM(survivors_detected)
                    ELSE 0 END                                                 AS rescue_success_rate,
@@ -253,10 +257,20 @@ class _MissionRunRepository:
             row = await conn.fetchrow(query)
         result = _row_to_dict(row) if row is not None else {}
         # Cast Decimal/numeric types to float for JSON serialisation.
-        for key in ("avg_ttft_ms", "avg_duration_ms", "rescue_success_rate", "avg_rescue_time_s"):
+        for key in (
+            "avg_ttft_ms",
+            "avg_duration_ms",
+            "rescue_success_rate",
+            "avg_rescue_time_s",
+        ):
             if result.get(key) is not None:
                 result[key] = float(result[key])
-        for key in ("total_missions", "total_survivors_rescued", "total_survivors_detected"):
+        for key in (
+            "total_missions",
+            "total_survivors_rescued",
+            "total_survivors_detected",
+            "total_tool_calls",
+        ):
             if result.get(key) is not None:
                 result[key] = int(result[key])
         return result

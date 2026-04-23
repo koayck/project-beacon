@@ -20,6 +20,19 @@ function fmtMs(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`
 }
 
+function fmtCost(usd: number | null | undefined): string {
+  if (usd === null || usd === undefined) return '--'
+  if (usd < 0.001) return `<$0.001`
+  if (usd < 1) return `$${usd.toFixed(4)}`
+  return `$${usd.toFixed(2)}`
+}
+
+function fmtTokens(n: number | null | undefined): string {
+  if (n === null || n === undefined) return '--'
+  if (n < 1000) return String(n)
+  return `${(n / 1000).toFixed(1)}k`
+}
+
 function StatusChip({ status }: { status: DashboardRun['status'] }) {
   const style =
     status === 'success' ? 'bg-[rgba(68,221,136,0.15)] text-[#44dd88] border-[rgba(68,221,136,0.3)]' :
@@ -48,18 +61,21 @@ function RunRow({
         onClick={onToggle}
       >
         <td className="px-3 py-2 tabular-nums">{run.id}</td>
-        <td className="px-3 py-2 max-w-[400px] truncate text-[#cde]">{run.prompt}</td>
+        <td className="px-3 py-2 max-w-[360px] truncate text-[#cde]">{run.prompt}</td>
         <td className="px-3 py-2">{run.asset_id}</td>
         <td className="px-3 py-2"><StatusChip status={run.status} /></td>
         <td className="px-3 py-2 text-right tabular-nums text-[#cc88ff]">{fmtMs(run.ttft_ms)}</td>
         <td className="px-3 py-2 text-right tabular-nums text-[#55aaff]">{fmtMs(run.duration_ms)}</td>
+        <td className="px-3 py-2 text-right tabular-nums text-[#44ddff]">{run.tool_call_count}</td>
         <td className="px-3 py-2 text-right tabular-nums text-[#44ff66]">{run.survivors_detected}</td>
         <td className="px-3 py-2 text-right tabular-nums text-[#44dd88]">{run.survivors_rescued}</td>
+        <td className="px-3 py-2 text-right tabular-nums text-[#e0e8ff]">{fmtTokens(run.total_tokens)}</td>
+        <td className="px-3 py-2 text-right tabular-nums text-[#ffaa55]">{fmtCost(run.cost_usd)}</td>
         <td className="px-3 py-2 text-right text-[#556677]">{timeAgo(run.started_at)}</td>
       </tr>
       {expanded && (
         <tr className="border-b border-[rgba(40,140,180,0.08)] bg-[rgba(4,6,14,0.5)]">
-          <td colSpan={9} className="px-3 py-3 text-[11px] text-[#8899bb]">
+          <td colSpan={12} className="px-3 py-3 text-[11px] text-[#8899bb]">
             <div className="mb-2"><span className="text-[#556677]">PROMPT:</span> {run.prompt}</div>
             {run.result_summary && (
               <div className="mb-2"><span className="text-[#556677]">RESULT:</span> {run.result_summary}</div>
@@ -94,8 +110,11 @@ export function RunsTable({ runs }: { runs: DashboardRun[] }) {
             <th className="px-3 py-2 text-left">STATUS</th>
             <th className="px-3 py-2 text-right">TTFT</th>
             <th className="px-3 py-2 text-right">DURATION</th>
+            <th className="px-3 py-2 text-right">TOOLS</th>
             <th className="px-3 py-2 text-right">DETECT</th>
             <th className="px-3 py-2 text-right">RESCUE</th>
+            <th className="px-3 py-2 text-right">TOKENS</th>
+            <th className="px-3 py-2 text-right">COST</th>
             <th className="px-3 py-2 text-right">WHEN</th>
           </tr>
         </thead>

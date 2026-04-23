@@ -19,6 +19,20 @@ function formatDurationMs(ms: number | null): string {
   return formatSeconds(ms / 1000)
 }
 
+function formatCost(usd: number | null | undefined): string {
+  if (usd === null || usd === undefined) return '--'
+  if (usd < 0.01) return `<$0.01`
+  if (usd < 1) return `$${usd.toFixed(3)}`
+  return `$${usd.toFixed(2)}`
+}
+
+function formatTokens(n: number | null | undefined): string {
+  if (n === null || n === undefined) return '--'
+  if (n < 1000) return String(n)
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`
+  return `${(n / 1_000_000).toFixed(2)}M`
+}
+
 function Card({ label, value, accent }: { label: string; value: string; accent: string }) {
   return (
     <div className="flex flex-col rounded-lg border border-[rgba(40,140,180,0.2)] bg-[linear-gradient(135deg,rgba(6,8,16,0.88),rgba(4,6,14,0.82))] p-4 shadow-[inset_0_1px_0_rgba(50,136,204,0.06)]">
@@ -39,6 +53,9 @@ export function OverviewCards({ overview }: { overview: DashboardOverview }) {
       <Card label="RESCUE SUCCESS" value={`${Math.round(overview.rescue_success_rate)}%`} accent="text-[#44dd88]" />
       <Card label="SURVIVORS RESCUED" value={String(overview.total_survivors_rescued)} accent="text-[#44ff66]" />
       <Card label="AVG MISSION" value={formatDurationMs(overview.avg_duration_ms)} accent="text-[#55aaff]" />
+      <Card label="TOTAL TOOL CALLS" value={String(overview.total_tool_calls ?? '--')} accent="text-[#44ddff]" />
+      <Card label="TOTAL TOKENS" value={formatTokens(overview.total_tokens)} accent="text-[#e0e8ff]" />
+      <Card label="TOTAL COST" value={formatCost(overview.total_cost_usd)} accent="text-[#ffaa55]" />
     </section>
   )
 }

@@ -6,6 +6,7 @@ import { fetchDashboard, type DashboardPayload } from '@/lib/api'
 import { OverviewCards } from '@/components/dashboard/OverviewCards'
 import { RunsTable } from '@/components/dashboard/RunsTable'
 import { CurrentMissionStrip } from '@/components/dashboard/CurrentMissionStrip'
+import { Charts } from '@/components/dashboard/Charts'
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardPayload | null>(null)
@@ -51,6 +52,7 @@ export default function DashboardPage() {
 
       {data.currentMission && <CurrentMissionStrip mission={data.currentMission} />}
       <OverviewCards overview={data.overview} />
+      <Charts runs={data.runs} />
       <RunsTable runs={data.runs} />
     </main>
   )

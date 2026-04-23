@@ -132,6 +132,11 @@ export interface DashboardRun {
   survivors_rescued: number
   result_summary: string | null
   error_message: string | null
+  langfuse_trace_id?: string | null
+  input_tokens?: number | null
+  output_tokens?: number | null
+  total_tokens?: number | null
+  cost_usd?: number | null
   created_at?: string | null
 }
 
@@ -143,6 +148,9 @@ export interface DashboardOverview {
   total_survivors_detected: number
   rescue_success_rate: number
   avg_rescue_time_s: number | null
+  total_tool_calls?: number
+  total_cost_usd?: number
+  total_tokens?: number
 }
 
 export interface DashboardCurrentMission {

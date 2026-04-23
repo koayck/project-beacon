@@ -80,6 +80,7 @@ class MissionRunAccumulator:
         ttft_ms: int | None,
         final_text: str,
         error: str | None = None,
+        langfuse_trace_id: str | None = None,
     ) -> MissionRun:
         ended_at = datetime.now(timezone.utc)
         duration_ms_raw = int((ended_at - self.started_at).total_seconds() * 1000)
@@ -99,4 +100,5 @@ class MissionRunAccumulator:
             survivors_rescued=self.survivors_rescued,
             result_summary=summary,
             error_message=error,
+            langfuse_trace_id=langfuse_trace_id,
         )

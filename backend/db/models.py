@@ -49,4 +49,5 @@ class MissionRun(BaseModel):
     survivors_rescued: int = 0
     result_summary: Optional[str] = None
     error_message: Optional[str] = None
+    langfuse_trace_id: Optional[str] = None
     created_at: Optional[str] = None
