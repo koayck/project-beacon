@@ -631,6 +631,10 @@ async def switch_world(world_id: int) -> dict:
     # so re-entering a world starts fresh.
     cancel_scout_sweep()
     exploration_tracker.reset()
+    # User-placed stations are world-specific (their coords may be inside
+    # buildings in a different world). Reset the registry and notify clients.
+    _supply_stations_registry.reset()
+    ws_broadcaster.broadcast({"type": "supply_stations_reset"})
     # Tell each connected drone container to reload its world data
     results = {}
     for aid in grpc_client.registered_asset_ids():

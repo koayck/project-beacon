@@ -4,6 +4,7 @@ import type { SupplyStation } from './api'
 export type SupplyStationEvent =
   | { type: 'supply_station_added'; station: SupplyStation }
   | { type: 'supply_station_removed'; id: string }
+  | { type: 'supply_stations_reset' }
 
 export interface TelemetryPayload {
   asset_id: string
@@ -103,7 +104,11 @@ export function useTelemetry(
             return
           }
 
-          if (raw.type === 'supply_station_added' || raw.type === 'supply_station_removed') {
+          if (
+            raw.type === 'supply_station_added'
+            || raw.type === 'supply_station_removed'
+            || raw.type === 'supply_stations_reset'
+          ) {
             onSupplyStationEventRef.current?.(raw as SupplyStationEvent)
             return
           }

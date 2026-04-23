@@ -93,6 +93,45 @@ class TestSupplyStationRoutes:
         assert resp.status_code == 404
         assert client.broadcasts == []
 
+    def test_world_switch_resets_registry_and_broadcasts(self, client, monkeypatch):
+        """Switching worlds wipes user-placed stations and emits a reset event.
+
+        Stations placed in one world may fall inside buildings in another,
+        so the registry is cleared on world switch. Clients re-hydrate via GET.
+        """
+        # Stub the world-loading / scout side-effects that /world/{id} touches
+        # so the test runs without a real world model swap.
+        monkeypatch.setattr("backend.world.model.load_world", lambda _wid: None)
+        monkeypatch.setattr("backend.services.scout.cancel_scout_sweep", lambda: False)
+
+        class _StubTracker:
+            def reset(self) -> None:
+                pass
+
+        monkeypatch.setattr("backend.services.scout.exploration_tracker", _StubTracker())
+
+        # Also stub the gRPC client so the route doesn't try to reach drones.
+        class _StubClient:
+            def registered_asset_ids(self) -> list[str]:
+                return []
+
+        monkeypatch.setattr("backend.app.grpc_client", _StubClient())
+
+        # Place a user station, then trigger the world switch.
+        added = client.post("/supply-stations", json={"x": 1.0, "z": 2.0}).json()["station"]
+        assert added["id"] != "home"
+        client.broadcasts.clear()
+
+        resp = client.post("/world/1")
+        assert resp.status_code == 200
+
+        # Registry now contains only home.
+        get_resp = client.get("/supply-stations")
+        assert [s["id"] for s in get_resp.json()["stations"]] == ["home"]
+
+        # A reset broadcast fired.
+        assert {"type": "supply_stations_reset"} in client.broadcasts
+
 
 def test_lifespan_is_restored_after_fixture_teardown(client):
     """Sanity: the fixture's lifespan-noop shim must not leak to later tests.

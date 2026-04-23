@@ -304,9 +304,18 @@ export default function SARScene() {
   const onSupplyStationEvent = useCallback((e: SupplyStationEvent) => {
     if (e.type === 'supply_station_added') {
       setStations(prev => (prev.some(s => s.id === e.station.id) ? prev : [...prev, e.station]))
-    } else {
+    } else if (e.type === 'supply_station_removed') {
       setStations(prev => prev.filter(s => s.id !== e.id))
       setSelectedStationId(sel => (sel === e.id ? null : sel))
+    } else {
+      // supply_stations_reset — backend wiped the registry (e.g., world switch).
+      // Re-hydrate from REST so we pick up the fresh list (home-only post-reset).
+      fetchSupplyStations()
+        .then(setStations)
+        .catch(err => console.warn('supply stations re-hydrate failed', err))
+      setSelectedStationId(null)
+      setPlacingStation(false)
+      setGhostPos(null)
     }
   }, [])
 
