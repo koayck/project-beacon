@@ -11,6 +11,8 @@ interface ControlsProps {
   onFollowPrevious: () => void
   onFollowNext: () => void
   selectMode: boolean
+  placingStation: boolean
+  onTogglePlaceStation: () => void
 }
 
 export function Controls({
@@ -26,6 +28,8 @@ export function Controls({
   onFollowPrevious,
   onFollowNext,
   selectMode,
+  placingStation,
+  onTogglePlaceStation,
 }: ControlsProps) {
   const buttonClass = (enabled: boolean, onClasses: string, offClasses: string) =>
     `flex-1 rounded border px-[6px] py-[6px] text-center font-mono text-[11px] tracking-[0.5px] transition-all duration-150 ${enabled ? onClasses : offClasses}`
@@ -94,6 +98,17 @@ export function Controls({
             FOG {fogEnabled ? 'ON' : 'OFF'}
           </button>
         )}
+        <button
+          onClick={onTogglePlaceStation}
+          className={buttonClass(
+            placingStation,
+            'border-[#ff8800] bg-[rgba(255,136,0,0.18)] text-[#ffaa55]',
+            'border-[rgba(40,60,100,0.25)] bg-[rgba(10,14,24,0.6)] text-[#7a8a9a]',
+          )}
+          title="Click the ground to place a supply station"
+        >
+          {placingStation ? 'PLACING…  Esc' : '+ STATION'}
+        </button>
       </div>
       {followBeacon && activeAssetIds.length > 0 && (
         <div className="mt-2 flex items-center gap-1">

@@ -18,11 +18,18 @@ import {
   getAutoRecallConfig,
   getNetworkMockStatus,
   resetDroneToBase,
+  fetchSupplyStations,
+  placeSupplyStation,
+  removeSupplyStation,
   type AgentStreamEvent,
   type NetworkMockStatus,
   type SimulationBuilding,
   type SupplyDispatchEvent,
+  type SupplyStation,
 } from '@/lib/api'
+import type { SupplyStationEvent } from '@/lib/ws'
+import { SupplyStations } from './scene-props/SupplyStations'
+import { StationGhost } from './scene-props/StationGhost'
 import { BasePad, GridOverlay, Ground, MissionBuildings, Survivors } from './scene-props/SceneStructures'
 import { World2Environment } from './scene-props/World2Environment'
 import {
@@ -162,6 +169,11 @@ export default function SARScene() {
   const [dragEnd, setDragEnd]             = useState<THREE.Vector3 | null>(null)
   const [selection, setSelection]         = useState<AreaSelection | null>(null)
   const [showContextMenu, setShowContextMenu] = useState(false)
+  // ── Supply station placement state ───────────────────────────────────────────
+  const [stations, setStations] = useState<SupplyStation[]>([])
+  const [placingStation, setPlacingStation] = useState(false)
+  const [selectedStationId, setSelectedStationId] = useState<string | null>(null)
+  const [ghostPos, setGhostPos] = useState<THREE.Vector3 | null>(null)
   // ─────────────────────────────────────────────────────────────────────────────
   const copiedTimer               = useRef<ReturnType<typeof setTimeout> | null>(null)
   const orbitRef                  = useRef<OrbitControlsImpl | null>(null)
@@ -186,6 +198,61 @@ export default function SARScene() {
     if (copiedTimer.current) clearTimeout(copiedTimer.current)
     copiedTimer.current = setTimeout(() => setCopied(false), 1500)
   }, [])
+
+  // ── Supply station placement helpers ─────────────────────────────────────────
+  const WORLD_HALF_SPAN = 50.0
+
+  const isValidStationPosition = useCallback(
+    (pt: THREE.Vector3) => {
+      if (Math.abs(pt.x) > WORLD_HALF_SPAN || Math.abs(pt.z) > WORLD_HALF_SPAN) return false
+      for (const b of simBuildings) {
+        const halfW = b.w / 2
+        const halfD = b.d / 2
+        if (
+          pt.x >= b.cx - halfW && pt.x <= b.cx + halfW &&
+          pt.z >= b.cz - halfD && pt.z <= b.cz + halfD
+        ) return false
+      }
+      return true
+    },
+    [simBuildings],
+  )
+
+  const handleGroundHover = useCallback(
+    (pt: THREE.Vector3 | null) => {
+      setHoverPt(pt)
+      if (placingStation) setGhostPos(pt)
+    },
+    [placingStation],
+  )
+
+  const handlePlacementClick = useCallback(
+    async (pt: THREE.Vector3) => {
+      if (!placingStation) return
+      if (!isValidStationPosition(pt)) return
+      try {
+        await placeSupplyStation(pt.x, pt.z)
+        // WS event will update state; no local append needed.
+      } catch (err) {
+        console.warn('place station failed', err)
+      }
+    },
+    [placingStation, isValidStationPosition],
+  )
+
+  const handleRemoveSelected = useCallback(
+    async () => {
+      if (!selectedStationId) return
+      try {
+        await removeSupplyStation(selectedStationId)
+      } catch (err) {
+        console.warn('remove station failed', err)
+      }
+    },
+    [selectedStationId],
+  )
+  // ─────────────────────────────────────────────────────────────────────────────
+
   const handleSystemEvent = useCallback((event: { event: string; asset_id?: string; battery?: number; message?: string; error?: string }) => {
     if (event.event === 'auto_recall_started') {
       const batteryText = typeof event.battery === 'number' ? ` · ${event.battery.toFixed(1)}%` : ''
@@ -233,7 +300,23 @@ export default function SARScene() {
       ])
     }
   }, [])
-  const { drones, exploredSectors, latestReveals } = useTelemetry(WS_URL, handleSystemEvent)
+
+  const onSupplyStationEvent = useCallback((e: SupplyStationEvent) => {
+    if (e.type === 'supply_station_added') {
+      setStations(prev => (prev.some(s => s.id === e.station.id) ? prev : [...prev, e.station]))
+    } else {
+      setStations(prev => prev.filter(s => s.id !== e.id))
+      setSelectedStationId(sel => (sel === e.id ? null : sel))
+    }
+  }, [])
+
+  const { drones, exploredSectors, latestReveals } = useTelemetry(WS_URL, handleSystemEvent, onSupplyStationEvent)
+
+  useEffect(() => {
+    fetchSupplyStations()
+      .then(setStations)
+      .catch(err => console.warn('supply stations hydrate failed', err))
+  }, [])
 
   // ── Fog-of-war exploration state ──────────────────────────────────────────
   const exploration = useExploration(exploredSectors, latestReveals, worldBuildings, survivorPositions)
@@ -751,9 +834,12 @@ export default function SARScene() {
         return
       }
 
-      // Escape — exit select mode
-      if (event.key === 'Escape' && selectMode) {
-        clearAreaSelectionState()
+      // Escape — exit select mode and/or cancel placement mode
+      if (event.key === 'Escape') {
+        if (selectMode) clearAreaSelectionState()
+        setPlacingStation(false)
+        setGhostPos(null)
+        setSelectedStationId(null)
       }
     }
 
@@ -1382,7 +1468,12 @@ export default function SARScene() {
           />
         ) : (
           <>
-            <GroundProbe worldSpan={worldSpan} onMove={setHoverPt} onDoubleClick={handleGroundClick} />
+            <GroundProbe
+              worldSpan={worldSpan}
+              onMove={handleGroundHover}
+              onDoubleClick={handleGroundClick}
+              onClick={placingStation ? handlePlacementClick : undefined}
+            />
             <GroundCursor point={hoverPt} />
           </>
         )}
@@ -1409,6 +1500,17 @@ export default function SARScene() {
             from={activeThrow.from}
             to={activeThrow.to}
             onComplete={handleThrowComplete}
+          />
+        )}
+        <SupplyStations
+          stations={stations}
+          selectedId={selectedStationId}
+          onSelect={setSelectedStationId}
+        />
+        {placingStation && (
+          <StationGhost
+            position={ghostPos}
+            valid={ghostPos ? isValidStationPosition(ghostPos) : false}
           />
         )}
         <SupplyCrates deliveredTo={deliveredTo} survivors={survivorPositions} />
@@ -1455,6 +1557,11 @@ export default function SARScene() {
           onFollowPrevious={followPreviousBeacon}
           onFollowNext={followNextBeacon}
           selectMode={selectMode}
+          placingStation={placingStation}
+          onTogglePlaceStation={() => {
+            setPlacingStation(v => !v)
+            setGhostPos(null)
+          }}
         />
         <DroneStatusPanel
           drones={drones}
@@ -1482,6 +1589,31 @@ export default function SARScene() {
           onRetryDelivery={handleRetryDelivery}
         />
       </div>
+      {selectedStationId && (() => {
+        const s = stations.find(st => st.id === selectedStationId)
+        if (!s) return null
+        return (
+          <div className="pointer-events-auto absolute bottom-28 left-1/2 z-30 -translate-x-1/2 rounded border border-[rgba(255,136,0,0.4)] bg-[rgba(18,12,4,0.92)] px-3 py-2 font-mono text-xs text-[#ffaa55] shadow-lg">
+            <div className="mb-1.5 text-[11px] tracking-[0.8px] text-[#ff9933]">
+              STATION @ ({s.x.toFixed(1)}, {s.z.toFixed(1)})
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleRemoveSelected}
+                className="rounded border border-[#ff5544] bg-[rgba(80,20,10,0.7)] px-2 py-1 text-[#ff8877] hover:bg-[rgba(120,30,15,0.85)]"
+              >
+                REMOVE
+              </button>
+              <button
+                onClick={() => setSelectedStationId(null)}
+                className="rounded border border-[rgba(100,120,140,0.35)] bg-[rgba(15,20,30,0.75)] px-2 py-1 text-[#9aabbc] hover:bg-[rgba(25,30,45,0.9)]"
+              >
+                CANCEL
+              </button>
+            </div>
+          </div>
+        )
+      })()}
       {showContextMenu && selection && (
         <AreaContextMenu
           selection={selection}

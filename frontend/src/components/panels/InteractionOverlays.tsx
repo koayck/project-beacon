@@ -25,9 +25,10 @@ function selectionFromPoints(a: THREE.Vector3, b: THREE.Vector3, spacing: number
   }
 }
 
-export function GroundProbe({ onMove, onDoubleClick, worldSpan }: {
+export function GroundProbe({ onMove, onDoubleClick, onClick, worldSpan }: {
   onMove: (v: THREE.Vector3 | null) => void
   onDoubleClick: (v: THREE.Vector3) => void
+  onClick?: (v: THREE.Vector3) => void
   worldSpan: number
 }) {
   return (
@@ -37,6 +38,7 @@ export function GroundProbe({ onMove, onDoubleClick, worldSpan }: {
       onPointerMove={e => { e.stopPropagation(); onMove(e.point) }}
       onPointerLeave={() => onMove(null)}
       onDoubleClick={e => { e.stopPropagation(); onDoubleClick(e.point) }}
+      onClick={onClick ? (e => { e.stopPropagation(); onClick(e.point) }) : undefined}
     >
       <planeGeometry args={[worldSpan, worldSpan]} />
       <meshBasicMaterial transparent opacity={0} depthWrite={false} />
