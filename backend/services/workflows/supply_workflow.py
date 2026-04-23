@@ -308,17 +308,15 @@ async def parallel_fleet_supply(
 
     all_results: list[dict] = []
     for i, result in enumerate(batch):
-        try:
-            raise result
-        except Exception as exc:
+        if isinstance(result, BaseException):
             all_results.append(
                 {
                     "asset_id": assignments[i]["asset_id"],
                     "target": rows[i]["target"],
-                    "supply_result": {"error": str(exc)},
+                    "supply_result": {"error": str(result)},
                 }
             )
-        except TypeError:
+        else:
             all_results.append(result)
 
     pending_targets = (
