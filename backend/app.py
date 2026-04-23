@@ -207,6 +207,72 @@ def _extract_survivor_coords(payload: object) -> list[dict[str, float]]:
     return survivors
 
 
+def _extract_scanned_building_rows(payload: object) -> list[dict[str, object]]:
+    """Extract scanned-building survivor rows from nested sweep tool responses.
+
+    Args:
+        payload: Arbitrary tool response payload that may contain sweep results.
+
+    Returns:
+        A list of rows matching the simulation schema shape:
+        [{"building_id": int, "detected_survivors": [{"x": float, "y": float, "z": float}, ...]}, ...].
+    """
+    by_building_id: dict[int, dict[str, object]] = {}
+
+    def _collect(node: object) -> None:
+        node_dict = _as_dict(node)
+        if node_dict is not None:
+            building = _as_dict(node_dict.get("building"))
+            building_id_value = building.get("id") if building is not None else node_dict.get("building_id")
+            building_id_float = _to_float(building_id_value)
+            if building_id_float is not None and building_id_float.is_integer():
+                building_id = int(building_id_float)
+                survivors = _extract_survivor_coords(
+                    [
+                        node_dict.get("unique_survivors_detected", []),
+                        node_dict.get("detected_survivors", []),
+                        node_dict.get("detected_survivors_within_scan_radius", []),
+                        node_dict.get("scan_reports", []),
+                    ]
+                )
+                if not survivors:
+                    survivors = _extract_survivor_coords(node_dict)
+                existing_row = by_building_id.get(building_id)
+                if existing_row is None:
+                    by_building_id[building_id] = {
+                        "building_id": building_id,
+                        "detected_survivors": survivors,
+                    }
+                else:
+                    combined_map: dict[tuple[float, float, float], dict[str, float]] = {}
+                    existing_detected = _as_list(existing_row.get("detected_survivors")) or []
+                    for item in [*existing_detected, *survivors]:
+                        item_dict = _as_dict(item)
+                        if item_dict is None:
+                            continue
+                        x = _to_float(item_dict.get("x"))
+                        y = _to_float(item_dict.get("y"))
+                        z = _to_float(item_dict.get("z"))
+                        if x is None or y is None or z is None:
+                            continue
+                        key = (round(x, 3), round(y, 3), round(z, 3))
+                        combined_map[key] = {"x": key[0], "y": key[1], "z": key[2]}
+                    combined = list(combined_map.values())
+                    existing_row["detected_survivors"] = combined
+
+            for value in node_dict.values():
+                _collect(value)
+            return
+
+        node_list = _as_list(node)
+        if node_list is not None:
+            for item in node_list:
+                _collect(item)
+
+    _collect(payload)
+    return list(by_building_id.values())
+
+
 def _extract_supply_dispatches(tool_name: str, payload: object) -> list[dict[str, object]]:
     """Extract structured supply-dispatch rows from tool responses."""
     if tool_name == "build_aggregated_supply_report":
@@ -304,7 +370,7 @@ async def app_lifespan(app: FastAPI):
             asset.asset_id, asset.grpc_host, asset.grpc_port,
         )
 
-    from backend.agents.commander import enhanced_commander
+    from backend.agents.commander import commander
 
     try:
         _simulation_store = SimulationStore(_ADK_SESSION_DB_URL)
@@ -317,7 +383,7 @@ async def app_lifespan(app: FastAPI):
         _simulation_store = None
 
     _adk_runner = Runner(
-        agent=enhanced_commander,
+        agent=commander,
         session_service=_create_adk_session_service(),
         app_name=_ADK_APP_NAME,
     )
@@ -512,7 +578,15 @@ def _known_building_rows() -> list[dict[str, float | int]]:
 
     world = service_context.get_world()
     return [
-        {"id": b.id, "cx": b.cx, "cz": b.cz}
+        {
+            "id": b.id,
+            "cx": b.cx,
+            "cz": b.cz,
+            "min_x": b.min_x,
+            "max_x": b.max_x,
+            "min_z": b.min_z,
+            "max_z": b.max_z,
+        }
         for b in world.buildings
     ]
 
@@ -521,7 +595,7 @@ async def _scan_confirmation_conflict(
     prompt: str,
     simulation_id: str | None,
     confirm_rescan: bool,
-) -> tuple[list[int], ParsedScanTargets]:
+) -> tuple[list[int], ParsedScanTargets, list[dict[str, Any]], list[dict[str, Any]]]:
     """Evaluate whether a scan command should require confirmation.
 
     Args:
@@ -533,15 +607,72 @@ async def _scan_confirmation_conflict(
         Tuple of already-scanned building IDs and parsed scan target info.
     """
     if simulation_id is None or confirm_rescan:
-        return [], ParsedScanTargets(building_ids=[], has_scan_intent=False)
+        return [], ParsedScanTargets(building_ids=[], has_scan_intent=False), [], []
     simulation_store = _simulation_store
     if simulation_store is None:
-        return [], ParsedScanTargets(building_ids=[], has_scan_intent=False)
-    parsed = SimulationStore.parse_scan_targets(prompt, _known_building_rows())
+        return [], ParsedScanTargets(building_ids=[], has_scan_intent=False), [], []
+    known_rows = _known_building_rows()
+    parsed = SimulationStore.parse_scan_targets(prompt, known_rows)
     if not parsed.has_scan_intent or not parsed.building_ids:
-        return [], parsed
+        return [], parsed, [], []
     already = await simulation_store.get_already_scanned_buildings(simulation_id, parsed.building_ids)
-    return already, parsed
+
+    by_id = {
+        int(row["id"]): row
+        for row in known_rows
+        if isinstance(row, dict) and isinstance(row.get("id"), int)
+    }
+
+    already_set = {int(item) for item in already}
+    unscanned_ids = [building_id for building_id in parsed.building_ids if building_id not in already_set]
+
+    simulation_snapshot = await simulation_store.get(simulation_id)
+    scanned_rows = simulation_snapshot.get("scanned_buildings", []) if isinstance(simulation_snapshot, dict) else []
+    scanned_by_id: dict[int, dict[str, Any]] = {}
+    for row in scanned_rows:
+        if not isinstance(row, dict):
+            continue
+        building_id = row.get("building_id")
+        if isinstance(building_id, int):
+            scanned_by_id[building_id] = row
+
+    def _refs(ids: list[int], include_survivors: bool) -> list[dict[str, Any]]:
+        refs: list[dict[str, Any]] = []
+        for building_id in ids:
+            row = by_id.get(int(building_id))
+            if row is None:
+                continue
+            ref: dict[str, Any] = {
+                "id": int(building_id),
+                "x": float(row.get("cx", 0.0)),
+                "z": float(row.get("cz", 0.0)),
+            }
+            if include_survivors:
+                scanned_row = scanned_by_id.get(int(building_id), {})
+                raw_survivors = scanned_row.get("detected_survivors", []) if isinstance(scanned_row, dict) else []
+                survivors: list[dict[str, Any]] = []
+                for survivor in raw_survivors:
+                    if not isinstance(survivor, dict):
+                        continue
+                    x = survivor.get("x")
+                    y = survivor.get("y")
+                    z = survivor.get("z")
+                    if not isinstance(x, (int, float)) or not isinstance(y, (int, float)) or not isinstance(z, (int, float)):
+                        continue
+                    survivors.append(
+                        {
+                            "x": float(x),
+                            "y": float(y),
+                            "z": float(z),
+                            "supplied": bool(survivor.get("supplied", False)),
+                        }
+                    )
+                ref["detected_survivor_count"] = len(survivors)
+                ref["detected_survivors"] = survivors
+            refs.append(ref)
+        return refs
+
+    return already, parsed, _refs(list(already), include_survivors=True), _refs(unscanned_ids, include_survivors=False)
 
 
 def _read_starlink_mock_status() -> dict[str, object]:
@@ -769,22 +900,31 @@ async def send_command(req: CommandRequest) -> dict:
     simulation_store = _simulation_store
     if req.simulation_id and simulation_store is not None:
         await simulation_store.create(req.simulation_id)
-        already_scanned, _ = await _scan_confirmation_conflict(
+        already_scanned, _, already_scanned_refs, unscanned_refs = await _scan_confirmation_conflict(
             req.prompt,
             req.simulation_id,
             req.confirm_rescan,
         )
         if already_scanned:
+            if unscanned_refs:
+                options_text = "Choose: halt, rescan all, or rescan only new buildings."
+            elif len(already_scanned) == 1:
+                options_text = "Choose: halt or rescan."
+            else:
+                options_text = "Choose: halt or rescan all."
             return {
                 "asset_id": req.asset_id or "FLEET",
                 "response": (
                     "Scan already completed for building(s): "
                     + ", ".join(str(item) for item in already_scanned)
-                    + ". Confirm to run another scan."
+                    + ". "
+                    + options_text
                 ),
                 "prompt": req.prompt,
                 "requires_confirmation": True,
                 "already_scanned_buildings": already_scanned,
+                "already_scanned_building_refs": already_scanned_refs,
+                "unscanned_buildings": unscanned_refs,
             }
 
     prompt = "Mission: " + req.prompt
@@ -796,6 +936,7 @@ async def send_command(req: CommandRequest) -> dict:
 
     response_text = ""
     text_candidates: list[str] = []
+    scanned_building_rows: list[dict[str, object]] = []
     sweep_prompt = is_sweep_scan_prompt(req.prompt)
     runner = _adk_runner
     if runner is None:
@@ -818,6 +959,7 @@ async def send_command(req: CommandRequest) -> dict:
                 message_text = str(message).strip() if message is not None else ""
                 if message_text:
                     text_candidates.append(message_text)
+                scanned_building_rows.extend(_extract_scanned_building_rows(resp))
 
         if event.is_final_response():
             for part in event.content.parts:
@@ -846,6 +988,8 @@ async def send_command(req: CommandRequest) -> dict:
         parsed = SimulationStore.parse_scan_targets(req.prompt, _known_building_rows())
         if parsed.has_scan_intent and parsed.building_ids:
             await simulation_store.mark_buildings_scanned(req.simulation_id, parsed.building_ids)
+        if scanned_building_rows:
+            await simulation_store.merge_survivor_state(req.simulation_id, scanned_building_rows)
 
     return {
         "asset_id": req.asset_id or "FLEET",
@@ -868,20 +1012,27 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
     parsed_targets = ParsedScanTargets(building_ids=[], has_scan_intent=False)
     if req.simulation_id and simulation_store is not None:
         await simulation_store.create(req.simulation_id)
-        already_scanned, parsed_targets = await _scan_confirmation_conflict(
+        already_scanned, parsed_targets, already_scanned_refs, unscanned_refs = await _scan_confirmation_conflict(
             req.prompt,
             req.simulation_id,
             req.confirm_rescan,
         )
         if already_scanned:
             async def blocked_stream() -> AsyncGenerator[str, None]:
+                if unscanned_refs:
+                    options_text = "Choose: halt, rescan all, or rescan only new buildings."
+                elif len(already_scanned) == 1:
+                    options_text = "Choose: halt or rescan."
+                else:
+                    options_text = "Choose: halt or rescan all."
                 message = (
                     "RESCAN_CONFIRM_REQUIRED|"
                     "Building(s) already scanned in this simulation: "
                     + ", ".join(str(item) for item in already_scanned)
-                    + ". Press confirm to rescan."
+                    + ". "
+                    + options_text
                 )
-                yield f"data: {json.dumps({'type': 'error', 'text': message})}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'text': message, 'already_scanned_buildings': already_scanned, 'already_scanned_building_refs': already_scanned_refs, 'unscanned_buildings': unscanned_refs})}\n\n"
                 yield f"data: {json.dumps({'type': 'done', 'ttft_ms': None, 'tps': None})}\n\n"
 
             return StreamingResponse(
@@ -907,6 +1058,7 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
         stream_start = time.perf_counter()
         first_token_time: float | None = None
         total_chars = 0
+        scanned_building_rows: list[dict[str, object]] = []
         sweep_prompt = is_sweep_scan_prompt(req.prompt)
         preferred_sweep_report: str | None = None
 
@@ -970,6 +1122,7 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                         yield f"data: {json.dumps(payload)}\n\n"
                     elif part.function_response:
                         resp = dict(part.function_response.response or {})
+                        scanned_building_rows.extend(_extract_scanned_building_rows(resp))
                         message = resp.get("message")
                         survivors_payload = _extract_survivor_coords(resp)
                         supply_dispatches = _extract_supply_dispatches(part.function_response.name, resp)
@@ -1049,6 +1202,8 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                     parsed_targets_local = parsed_targets
                 if parsed_targets_local.building_ids:
                     await simulation_store.mark_buildings_scanned(req.simulation_id, parsed_targets_local.building_ids)
+                if scanned_building_rows:
+                    await simulation_store.merge_survivor_state(req.simulation_id, scanned_building_rows)
             yield f"data: {json.dumps({'type': 'done', 'ttft_ms': ttft_ms, 'tps': tps})}\n\n"
 
     return StreamingResponse(

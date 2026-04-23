@@ -11,6 +11,18 @@ interface AgentMessage {
   ts: number
 }
 
+export interface CommandDecisionOption {
+  id: string
+  label: string
+}
+
+export interface CommandDecisionPrompt {
+  title: string
+  message: string
+  details?: string[]
+  options: CommandDecisionOption[]
+}
+
 export interface AgentMetrics {
   ttft: number | null
   tps: number | null
@@ -30,6 +42,9 @@ interface Props {
   externalAssetId?: string | null
   onMetricsChange?: (metrics: AgentMetrics) => void
   scoutAvailable?: boolean
+  decisionPrompt?: CommandDecisionPrompt | null
+  onDecisionOptionSelect?: (optionId: string) => void
+  onDecisionDismiss?: () => void
 }
 
 const SCOUT_DEPLOY_PROMPT = 'Deploy the scout drone to survey the disaster zone and map every sector.'
@@ -62,7 +77,22 @@ function messagesToText(messages: AgentMessage[]): string {
     .join('\n\n')
 }
 
-export default function CommandPanel({ assetId, connected, uplinked, battery, onCommand, onStop, externalPrompt, onExternalPromptConsumed, externalAssetId, onMetricsChange, scoutAvailable }: Props) {
+export default function CommandPanel({
+  assetId,
+  connected,
+  uplinked,
+  battery,
+  onCommand,
+  onStop,
+  externalPrompt,
+  onExternalPromptConsumed,
+  externalAssetId,
+  onMetricsChange,
+  scoutAvailable,
+  decisionPrompt,
+  onDecisionOptionSelect,
+  onDecisionDismiss,
+}: Props) {
   const [input, setInput]       = useState('')
   const [busy, setBusy]         = useState(false)
   const [elapsed, setElapsed]   = useState(0)
@@ -339,6 +369,79 @@ export default function CommandPanel({ assetId, connected, uplinked, battery, on
             ))}
             <div ref={bottomRef} />
           </div>
+
+          {decisionPrompt && (
+            <div style={{
+              margin: '0 10px 8px',
+              padding: '8px 10px',
+              borderRadius: 6,
+              border: '1px solid rgba(255,185,90,0.45)',
+              background: 'linear-gradient(135deg, rgba(36,20,6,0.86), rgba(18,10,3,0.86))',
+              color: '#ffe8c7',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ fontSize: 12, letterSpacing: 1, color: '#ffcf8a', fontWeight: 'bold' }}>
+                  {decisionPrompt.title}
+                </div>
+                <button
+                  onClick={() => onDecisionDismiss?.()}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#ffcf8a',
+                    cursor: 'pointer',
+                    fontFamily: 'Courier New, monospace',
+                    fontSize: 12,
+                    padding: '0 4px',
+                  }}
+                  title="Dismiss decision prompt"
+                >
+                  ✕
+                </button>
+              </div>
+              <div style={{ fontSize: 12, lineHeight: 1.5, color: '#ffe0b2', whiteSpace: 'pre-wrap' }}>
+                {decisionPrompt.message}
+              </div>
+              {(decisionPrompt.details ?? []).length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {(decisionPrompt.details ?? []).map((detail, index) => (
+                    <div key={`${detail}-${index}`} style={{ fontSize: 11, color: '#ffbf66', lineHeight: 1.45 }}>
+                      {detail}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {decisionPrompt.options.map(option => (
+                  <button
+                    key={option.id}
+                    onClick={() => onDecisionOptionSelect?.(option.id)}
+                    style={{
+                      background: option.id === 'halt' ? 'rgba(40,22,6,0.45)' : 'rgba(255,165,60,0.18)',
+                      border: option.id === 'halt'
+                        ? '1px solid rgba(255,190,120,0.35)'
+                        : '1px solid rgba(255,195,110,0.45)',
+                      borderRadius: 4,
+                      color: '#fff4e1',
+                      padding: '2px 8px',
+                      cursor: 'pointer',
+                      fontFamily: 'Courier New, monospace',
+                      fontSize: 12,
+                      letterSpacing: 0.4,
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: '#c7ab84' }}>
+                Or type a custom command below.
+              </div>
+            </div>
+          )}
 
           {/* Quick-action bar (agent commands) */}
           <div style={{

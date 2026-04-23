@@ -6,6 +6,7 @@ import { useRef, useState, useEffect, useMemo, useCallback } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import CommandPanel from './panels/CommandPanel'
+import type { CommandDecisionOption, CommandDecisionPrompt } from './panels/CommandPanel'
 import { useTelemetry } from '@/lib/ws'
 import {
   createSimulation,
@@ -20,6 +21,7 @@ import {
   resetDroneToBase,
   type AgentStreamEvent,
   type NetworkMockStatus,
+  type ScanBuildingRef,
   type SimulationBuilding,
   type SupplyDispatchEvent,
 } from '@/lib/api'
@@ -148,6 +150,13 @@ export default function SARScene() {
   const autoRecallDismissedRef = useRef<Set<string>>(new Set())
   const autoRecallTriggeredRef = useRef<Set<string>>(new Set())
   const autoRecallInFlightRef = useRef<Set<string>>(new Set())
+  const pendingRescanRequestRef = useRef<{
+    prompt: string
+    assetIdOverride?: string
+    onEvent: (e: AgentStreamEvent) => void
+    unscannedBuildings: ScanBuildingRef[]
+  } | null>(null)
+  const [rescanCommandPrompt, setRescanCommandPrompt] = useState<CommandDecisionPrompt | null>(null)
   // ── Performance metrics state ──────────────────────────────────────────────
   const [missionStartTs, setMissionStartTs] = useState<number | null>(null)
   const [lastTtftMs, setLastTtftMs] = useState<number | null>(null)
@@ -801,10 +810,51 @@ export default function SARScene() {
             const message = event.text.split('|').slice(1).join('|').trim()
             onEvent({ type: 'error', text: message || 'Building already scanned. Confirm to rescan.' })
             if (!confirmRescan) {
-              const confirmed = window.confirm((message || 'This building was already scanned.') + '\n\nProceed with rescan?')
-              if (confirmed) {
-                await handleCommand(prompt, onEvent, assetIdOverride, true)
-              }
+                const alreadyScannedBuildings = event.already_scanned_building_refs ?? []
+                const unscannedBuildings = event.unscanned_buildings ?? []
+
+                const options: CommandDecisionOption[] = []
+                if (unscannedBuildings.length > 0) {
+                  options.push({
+                    id: 'rescan_new',
+                    label: `RESCAN NEW BUILDING${unscannedBuildings.length > 1 ? 'S' : ''}`,
+                  })
+                }
+                options.push({
+                  id: 'rescan_all',
+                  label: alreadyScannedBuildings.length === 1 ? 'RESCAN' : 'RESCAN ALL',
+                })
+                options.push({ id: 'halt', label: 'HALT' })
+
+                const details: string[] = []
+                for (const building of alreadyScannedBuildings) {
+                  const survivors = building.detected_survivors ?? []
+                  details.push(
+                    `building-${building.id} at (${building.x.toFixed(1)}, 0, ${building.z.toFixed(1)}): ${survivors.length} detected survivor${survivors.length === 1 ? '' : 's'}`,
+                  )
+                  if (survivors.length === 0) {
+                    details.push('  no survivor coordinates recorded yet')
+                    continue
+                  }
+                  for (const survivor of survivors) {
+                    details.push(
+                      `  - (${survivor.x.toFixed(1)}, ${survivor.y.toFixed(1)}, ${survivor.z.toFixed(1)})${survivor.supplied ? ' supplied' : ''}`,
+                    )
+                  }
+                }
+
+                pendingRescanRequestRef.current = {
+                  prompt,
+                  assetIdOverride,
+                  onEvent,
+                  unscannedBuildings,
+                }
+                setRescanCommandPrompt({
+                  title: 'RESCAN DECISION REQUIRED',
+                  message: message || 'This building was already scanned. Choose how to proceed.',
+                  details,
+                  options,
+                })
             }
             return
           }
@@ -927,6 +977,57 @@ export default function SARScene() {
     if (!active) return
     active.abort()
   }, [])
+
+  const handleCancelRescanConfirm = useCallback(() => {
+    pendingRescanRequestRef.current = null
+    setRescanCommandPrompt(null)
+  }, [])
+
+  const handleConfirmRescan = useCallback(() => {
+    const pending = pendingRescanRequestRef.current
+    if (!pending) return
+    pendingRescanRequestRef.current = null
+    setRescanCommandPrompt(null)
+    void handleCommand(pending.prompt, pending.onEvent, pending.assetIdOverride, true)
+  }, [handleCommand])
+
+  const handleConfirmRescanNewOnly = useCallback(() => {
+    const pending = pendingRescanRequestRef.current
+    if (!pending) return
+    const targets = pending.unscannedBuildings
+    if (targets.length === 0) {
+      addLog('ℹ No unscanned buildings remain in this request.')
+      pendingRescanRequestRef.current = null
+      setRescanCommandPrompt(null)
+      return
+    }
+
+    const prompt = targets.length === 1
+      ? `scan building at (${targets[0].x.toFixed(1)}, 0, ${targets[0].z.toFixed(1)}) for survivors`
+      : (
+        'scan for survivors in each of the following buildings: '
+        + targets
+          .map((building) => `building-${building.id} at (${building.x.toFixed(1)}, 0, ${building.z.toFixed(1)})`)
+          .join('; ')
+        + '. Do not ask for coordinates — they are provided above. Scan each building in sequence.'
+      )
+
+    pendingRescanRequestRef.current = null
+    setRescanCommandPrompt(null)
+    void handleCommand(prompt, pending.onEvent, pending.assetIdOverride, false)
+  }, [addLog, handleCommand])
+
+  const handleRescanDecisionSelect = useCallback((optionId: string) => {
+    if (optionId === 'rescan_all') {
+      handleConfirmRescan()
+      return
+    }
+    if (optionId === 'rescan_new') {
+      handleConfirmRescanNewOnly()
+      return
+    }
+    handleCancelRescanConfirm()
+  }, [handleCancelRescanConfirm, handleConfirmRescan, handleConfirmRescanNewOnly])
 
   // ── Area scan injection ────────────────────────────────────────────────────
   // We store a pending prompt and pass it to CommandPanel via the externalPrompt
@@ -1480,6 +1581,9 @@ export default function SARScene() {
           setPendingScanAssetId(null)
         }}
         scoutAvailable={activeWorld === 2}
+        decisionPrompt={rescanCommandPrompt}
+        onDecisionOptionSelect={handleRescanDecisionSelect}
+        onDecisionDismiss={handleCancelRescanConfirm}
       />
     </div>
   )

@@ -24,3 +24,23 @@ def test_parse_scan_targets_non_scan_prompt() -> None:
 
     assert parsed.has_scan_intent is False
     assert parsed.building_ids == []
+
+
+def test_parse_scan_targets_inline_coordinates_without_parentheses() -> None:
+    known_buildings = [
+        {
+            "id": 5,
+            "cx": -15.0,
+            "cz": -10.0,
+            "min_x": -20.0,
+            "max_x": -10.0,
+            "min_z": -14.0,
+            "max_z": -6.0,
+        }
+    ]
+    prompt = "scan building at -13.1, 0.0, -9.8"
+
+    parsed = SimulationStore.parse_scan_targets(prompt, known_buildings)
+
+    assert parsed.has_scan_intent is True
+    assert parsed.building_ids == [5]

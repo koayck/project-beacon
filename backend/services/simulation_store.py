@@ -35,6 +35,10 @@ class SimulationStore:
         r"\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)",
         re.IGNORECASE,
     )
+    _COORD_TRIPLE_INLINE_PATTERN = re.compile(
+        r"(?:^|[^\d.-])(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)(?:$|[^\d.-])",
+        re.IGNORECASE,
+    )
 
     def __init__(self, db_url: str) -> None:
         """Initialize the simulation store.
@@ -216,11 +220,7 @@ class SimulationStore:
         if not has_scan_intent:
             return ParsedScanTargets(building_ids=[], has_scan_intent=False)
 
-        coords: list[tuple[float, float]] = []
-        for match in SimulationStore._COORD_TRIPLE_PATTERN.finditer(prompt):
-            x = float(match.group(1))
-            z = float(match.group(3))
-            coords.append((x, z))
+        coords = SimulationStore._extract_prompt_coords(prompt)
 
         if not coords:
             return ParsedScanTargets(building_ids=[], has_scan_intent=True)
@@ -232,6 +232,40 @@ class SimulationStore:
                 resolved.add(building_id)
 
         return ParsedScanTargets(building_ids=sorted(resolved), has_scan_intent=True)
+
+    @staticmethod
+    def _extract_prompt_coords(prompt: str) -> list[tuple[float, float]]:
+        """Extract candidate X/Z scan coordinates from free-form prompt text.
+
+        Args:
+            prompt: Raw user prompt text.
+
+        Returns:
+            Ordered list of unique ``(x, z)`` coordinate pairs inferred from 3D
+            coordinate triples, supporting both parenthesized and inline forms.
+        """
+        coords: list[tuple[float, float]] = []
+        seen: set[tuple[float, float]] = set()
+
+        for match in SimulationStore._COORD_TRIPLE_PATTERN.finditer(prompt):
+            x = float(match.group(1))
+            z = float(match.group(3))
+            key = (round(x, 3), round(z, 3))
+            if key in seen:
+                continue
+            seen.add(key)
+            coords.append((x, z))
+
+        for match in SimulationStore._COORD_TRIPLE_INLINE_PATTERN.finditer(prompt):
+            x = float(match.group(1))
+            z = float(match.group(3))
+            key = (round(x, 3), round(z, 3))
+            if key in seen:
+                continue
+            seen.add(key)
+            coords.append((x, z))
+
+        return coords
 
     async def _write_scanned_buildings(self, simulation_id: str, scanned_buildings: list[dict[str, Any]]) -> None:
         """Persist scanned building JSON payload for one simulation.
@@ -427,6 +461,26 @@ class SimulationStore:
         Returns:
             Building ID when a nearby building is found, otherwise None.
         """
+        # Exact footprint match takes precedence when bounds are available.
+        for row in known_buildings:
+            if not isinstance(row, dict):
+                continue
+            building_id = SimulationStore._safe_int(row.get("id"))
+            min_x = SimulationStore._safe_float(row.get("min_x"))
+            max_x = SimulationStore._safe_float(row.get("max_x"))
+            min_z = SimulationStore._safe_float(row.get("min_z"))
+            max_z = SimulationStore._safe_float(row.get("max_z"))
+            if (
+                building_id is None
+                or min_x is None
+                or max_x is None
+                or min_z is None
+                or max_z is None
+            ):
+                continue
+            if min_x <= x <= max_x and min_z <= z <= max_z:
+                return building_id
+
         best_id: int | None = None
         best_dist = float("inf")
         for row in known_buildings:
@@ -443,5 +497,5 @@ class SimulationStore:
                 best_id = building_id
         if best_id is None:
             return None
-        # Prompt coordinates are center points in this app; allow a loose tolerance.
+        # For free-form coordinates, allow a loose nearest-center fallback.
         return best_id if best_dist <= 12.0 else None

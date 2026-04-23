@@ -1,11 +1,26 @@
 const BASE = 'http://localhost:8000'
 
+export interface ScanBuildingRef {
+  id: number
+  x: number
+  z: number
+  detected_survivor_count?: number
+  detected_survivors?: Array<{
+    x: number
+    y: number
+    z: number
+    supplied?: boolean
+  }>
+}
+
 export interface CommandResponse {
   asset_id: string
   response: string
   prompt: string
   requires_confirmation?: boolean
   already_scanned_buildings?: number[]
+  already_scanned_building_refs?: ScanBuildingRef[]
+  unscanned_buildings?: ScanBuildingRef[]
 }
 
 export interface SimulationSurvivor {
@@ -47,7 +62,13 @@ export type AgentStreamEvent =
   | { type: 'text'; text: string; agent: string; survivors?: DetectedSurvivor[] }
   | { type: 'final'; text: string; agent: string }
   | { type: 'heartbeat'; elapsed: number }
-  | { type: 'error'; text: string }
+  | {
+      type: 'error'
+      text: string
+      already_scanned_buildings?: number[]
+      already_scanned_building_refs?: ScanBuildingRef[]
+      unscanned_buildings?: ScanBuildingRef[]
+    }
   | { type: 'done'; ttft_ms: number | null; tps: number | null }
   
 export interface UplinkResponse {
