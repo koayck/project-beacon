@@ -5,17 +5,21 @@
   "scripts": {
     "dev": "next dev",
     "build": "node scripts/generate-world-env.mjs --world ../shared/world2.json --out src/generated/world2Environment.generated.ts --const WORLD2_ENV && next build",
-    "start": "next start"
+    "start": "next start",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@react-three/drei": "^9.113.0",
     "@react-three/fiber": "^8.17.10",
+    "@tauri-apps/api": "^2.10.1",
     "next": "14.2.16",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "three": "^0.184.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.10.1",
     "@types/node": "25.3.5",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

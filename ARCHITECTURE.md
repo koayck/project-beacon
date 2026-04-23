@@ -285,7 +285,7 @@ Local Setup:
 1. Install dependencies with uv sync.
 2. Start simulated drones with docker compose up -d.
 3. Start backend with uv run python -m backend.app.
-4. Start frontend in frontend with npm install and npm run dev.
+4. Start frontend in frontend with bun install and bun run dev.
 
 Testing Frameworks: pytest, pytest-asyncio, httpx test client support.
 

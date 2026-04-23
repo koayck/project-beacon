@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Project Beacon",
+  "version": "0.1.0",
+  "identifier": "com.projectbeacon.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev -- --hostname 0.0.0.0",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:3000",
+    "frontendDist": "../out"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Project Beacon",
+        "width": 1600,
+        "height": 1000,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all"
+  }
+}

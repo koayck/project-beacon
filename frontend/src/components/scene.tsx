@@ -8,6 +8,8 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import CommandPanel from './panels/CommandPanel'
 import type { CommandDecisionOption, CommandDecisionPrompt } from './panels/CommandPanel'
 import { useTelemetry } from '@/lib/ws'
+import { TELEMETRY_WS_URL } from '@/lib/backend'
+import { invokeTauriCommand, isTauriRuntime } from '@/lib/tauri'
 import {
   createSimulation,
   getSimulation,
@@ -97,7 +99,6 @@ import { SCOUT_ASSET_ID } from '@/lib/fogOfWar'
 // ── Main scene ────────────────────────────────────────────────────────────────
 
 const ASSET_ID = 'BEACON-01'
-const WS_URL   = 'ws://localhost:8000/ws/telemetry'
 const AUTO_RECALL_UI_DELAY_MS = 5000
 const SIMULATION_ID_STORAGE_KEY = 'beacon.simulationId'
 
@@ -247,7 +248,7 @@ export default function SARScene() {
       ])
     }
   }, [])
-  const { drones, exploredSectors, latestReveals } = useTelemetry(WS_URL, handleSystemEvent)
+  const { drones, exploredSectors, latestReveals } = useTelemetry(TELEMETRY_WS_URL, handleSystemEvent)
 
   // ── Fog-of-war exploration state ──────────────────────────────────────────
   const exploration = useExploration(exploredSectors, latestReveals, worldBuildings, survivorPositions)
@@ -599,8 +600,29 @@ export default function SARScene() {
   // Auto-uplink all active drones on mount
   useEffect(() => {
     let mounted = true
+
+    const waitForBackend = async (attempts: number, delayMs: number): Promise<boolean> => {
+      for (let index = 0; index < attempts; index += 1) {
+        const ok = await healthCheck()
+        if (ok) {
+          return true
+        }
+        await new Promise(resolve => setTimeout(resolve, delayMs))
+      }
+      return false
+    }
+
     const init = async () => {
-      const ok = await healthCheck()
+      if (isTauriRuntime()) {
+        try {
+          const message = await invokeTauriCommand<string>('start_backend_sidecar')
+          if (mounted) addLog(`⚙ ${message}`)
+        } catch (error) {
+          if (mounted) addLog(`⚠ Failed to start backend sidecar: ${String(error)}`)
+        }
+      }
+
+      const ok = await waitForBackend(15, 1000)
       if (!ok || !mounted) {
         addLog('⚠ Backend offline — start FastAPI sidecar')
         return

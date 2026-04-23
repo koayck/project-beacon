@@ -1,4 +1,6 @@
-const BASE = 'http://localhost:8000'
+import { BACKEND_HTTP_BASE } from './backend'
+
+const BASE = BACKEND_HTTP_BASE
 
 export interface ScanBuildingRef {
   id: number
