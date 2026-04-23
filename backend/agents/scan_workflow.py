@@ -366,14 +366,19 @@ def _trigger_mission_complete_recall(tool_context: ToolContext) -> None:
         )
         return
 
-    schedule_mission_complete_recall(
-        asset_ids,
-        get_status=runtime_grpc_client.get_status,
-        return_to_base_fn=return_to_base,
-        publish_event=ws_broadcaster.broadcast,
-        trigger_reason="scan_mission_complete",
-    )
-    tool_context.state["mission_recall_scheduled"] = True
+    # DISABLED: automatic post-mission recall after the 10-second grace window.
+    # Operator preference — drones should stay on-station after scan completes,
+    # not auto-return. Re-enable by uncommenting both blocks below.
+    #
+    # schedule_mission_complete_recall(
+    #     asset_ids,
+    #     get_status=runtime_grpc_client.get_status,
+    #     return_to_base_fn=return_to_base,
+    #     publish_event=ws_broadcaster.broadcast,
+    #     trigger_reason="scan_mission_complete",
+    # )
+    # tool_context.state["mission_recall_scheduled"] = True
+    return
 
 
 _build_report_tool = FunctionTool(func=build_aggregated_scan_report)

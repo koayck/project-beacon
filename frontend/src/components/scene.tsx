@@ -19,12 +19,20 @@ import {
   getAutoRecallConfig,
   getNetworkMockStatus,
   resetDroneToBase,
+  fetchSupplyStations,
+  placeSupplyStation,
+  removeSupplyStation,
   type AgentStreamEvent,
   type NetworkMockStatus,
   type ScanBuildingRef,
   type SimulationBuilding,
   type SupplyDispatchEvent,
+  type SupplyStation,
 } from '@/lib/api'
+import type { SupplyStationEvent } from '@/lib/ws'
+import { STATION_PLATFORM_TOP_Y, SupplyStations } from './scene-props/SupplyStations'
+import { StationGhost } from './scene-props/StationGhost'
+import { StationParachuteDrop } from './scene-props/StationParachuteDrop'
 import { BasePad, GridOverlay, Ground, MissionBuildings, Survivors } from './scene-props/SceneStructures'
 import { World2Environment } from './scene-props/World2Environment'
 import {
@@ -47,7 +55,6 @@ import { CameraTracker, FollowBeaconCamera } from './animation/CameraTracker'
 import { SupplyThrow } from './animation/ThrowAnimation'
 import {
   BASE_PICKUP_RANGE,
-  BASE_Y,
   DRONE_START,
   FLOOR_H,
   FLOOR_T,
@@ -177,6 +184,15 @@ export default function SARScene() {
   const [dragEnd, setDragEnd]             = useState<THREE.Vector3 | null>(null)
   const [selection, setSelection]         = useState<AreaSelection | null>(null)
   const [showContextMenu, setShowContextMenu] = useState(false)
+  // ── Supply station placement state ───────────────────────────────────────────
+  const [stations, setStations] = useState<SupplyStation[]>([])
+  const [placingStation, setPlacingStation] = useState(false)
+  const [selectedStationId, setSelectedStationId] = useState<string | null>(null)
+  const [ghostPos, setGhostPos] = useState<THREE.Vector3 | null>(null)
+  // Stations currently mid-parachute-drop. Keyed by station id so each drop
+  // has a stable render instance. The static SupplyStations renderer hides
+  // ids in this set so the drop animation and the static mesh don't overlap.
+  const [droppingStationIds, setDroppingStationIds] = useState<Set<string>>(() => new Set())
   // ─────────────────────────────────────────────────────────────────────────────
   const copiedTimer               = useRef<ReturnType<typeof setTimeout> | null>(null)
   const orbitRef                  = useRef<OrbitControlsImpl | null>(null)
@@ -201,6 +217,64 @@ export default function SARScene() {
     if (copiedTimer.current) clearTimeout(copiedTimer.current)
     copiedTimer.current = setTimeout(() => setCopied(false), 1500)
   }, [])
+
+  // ── Supply station placement helpers ─────────────────────────────────────────
+  // worldSpan = gridCells * gridSpacing, so the half-side of the play area is
+  // worldSpan / 2. This mirrors the backend's WorldModel.half_span check so
+  // valid/invalid placement previews agree with what the REST endpoint accepts.
+  const worldHalfSpan = worldSpan / 2
+
+  const isValidStationPosition = useCallback(
+    (pt: THREE.Vector3) => {
+      if (Math.abs(pt.x) > worldHalfSpan || Math.abs(pt.z) > worldHalfSpan) return false
+      for (const b of simBuildings) {
+        const halfW = b.w / 2
+        const halfD = b.d / 2
+        if (
+          pt.x >= b.cx - halfW && pt.x <= b.cx + halfW &&
+          pt.z >= b.cz - halfD && pt.z <= b.cz + halfD
+        ) return false
+      }
+      return true
+    },
+    [simBuildings, worldHalfSpan],
+  )
+
+  const handleGroundHover = useCallback(
+    (pt: THREE.Vector3 | null) => {
+      setHoverPt(pt)
+      if (placingStation) setGhostPos(pt)
+    },
+    [placingStation],
+  )
+
+  const handlePlacementClick = useCallback(
+    async (pt: THREE.Vector3) => {
+      if (!placingStation) return
+      if (!isValidStationPosition(pt)) return
+      try {
+        await placeSupplyStation(pt.x, pt.z)
+        // WS event will update state; no local append needed.
+      } catch (err) {
+        console.warn('place station failed', err)
+      }
+    },
+    [placingStation, isValidStationPosition],
+  )
+
+  const handleRemoveSelected = useCallback(
+    async () => {
+      if (!selectedStationId) return
+      try {
+        await removeSupplyStation(selectedStationId)
+      } catch (err) {
+        console.warn('remove station failed', err)
+      }
+    },
+    [selectedStationId],
+  )
+  // ─────────────────────────────────────────────────────────────────────────────
+
   const handleSystemEvent = useCallback((event: { event: string; asset_id?: string; battery?: number; message?: string; error?: string }) => {
     if (event.event === 'auto_recall_started') {
       const batteryText = typeof event.battery === 'number' ? ` · ${event.battery.toFixed(1)}%` : ''
@@ -248,7 +322,57 @@ export default function SARScene() {
       ])
     }
   }, [])
-  const { drones, exploredSectors, latestReveals } = useTelemetry(WS_URL, handleSystemEvent)
+
+  const onSupplyStationEvent = useCallback((e: SupplyStationEvent) => {
+    if (e.type === 'supply_station_added') {
+      setStations(prev => (prev.some(s => s.id === e.station.id) ? prev : [...prev, e.station]))
+      // New station from the operator — play the parachute drop. Skip if we
+      // somehow already have it in-flight (idempotent on duplicate events).
+      setDroppingStationIds(prev => {
+        if (prev.has(e.station.id)) return prev
+        const next = new Set(prev)
+        next.add(e.station.id)
+        return next
+      })
+    } else if (e.type === 'supply_station_removed') {
+      setStations(prev => prev.filter(s => s.id !== e.id))
+      setSelectedStationId(sel => (sel === e.id ? null : sel))
+      // If a drop was mid-flight for this id, cancel it.
+      setDroppingStationIds(prev => {
+        if (!prev.has(e.id)) return prev
+        const next = new Set(prev)
+        next.delete(e.id)
+        return next
+      })
+    } else {
+      // supply_stations_reset — backend wiped the registry (e.g., world switch).
+      // Re-hydrate from REST so we pick up the fresh list (home-only post-reset).
+      fetchSupplyStations()
+        .then(setStations)
+        .catch(err => console.warn('supply stations re-hydrate failed', err))
+      setSelectedStationId(null)
+      setPlacingStation(false)
+      setGhostPos(null)
+      setDroppingStationIds(new Set())
+    }
+  }, [])
+
+  const handleDropComplete = useCallback((id: string) => {
+    setDroppingStationIds(prev => {
+      if (!prev.has(id)) return prev
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }, [])
+
+  const { drones, exploredSectors, latestReveals } = useTelemetry(WS_URL, handleSystemEvent, onSupplyStationEvent)
+
+  useEffect(() => {
+    fetchSupplyStations()
+      .then(setStations)
+      .catch(err => console.warn('supply stations hydrate failed', err))
+  }, [])
 
   // ── Fog-of-war exploration state ──────────────────────────────────────────
   const exploration = useExploration(exploredSectors, latestReveals, worldBuildings, survivorPositions)
@@ -834,9 +958,12 @@ export default function SARScene() {
         return
       }
 
-      // Escape — exit select mode
-      if (event.key === 'Escape' && selectMode) {
-        clearAreaSelectionState()
+      // Escape — exit select mode and/or cancel placement mode
+      if (event.key === 'Escape') {
+        if (selectMode) clearAreaSelectionState()
+        setPlacingStation(false)
+        setGhostPos(null)
+        setSelectedStationId(null)
       }
     }
 
@@ -848,41 +975,59 @@ export default function SARScene() {
   const pendingDeliveryKey = useRef<string | null>(null)
   const deliveryDroneId = useRef<string | null>(null)
 
-  // ── Cargo pickup at base ──────────────────────────────────────────────────
+  // ── Cargo pickup at supply station ────────────────────────────────────────
+  // A drone counts as "picked up" when it arrives within BASE_PICKUP_RANGE of
+  // any placed supply station's platform top. We don't know exactly which
+  // station the backend routed it to, but physically it only reaches one, so
+  // a match against the nearest station is sufficient.
+  const nearestStationDistance = useCallback(
+    (x: number, y: number, z: number): number => {
+      let best = Infinity
+      for (const s of stations) {
+        const d = distance3D(x, y, z, s.x, STATION_PLATFORM_TOP_Y, s.z)
+        if (d < best) best = d
+      }
+      return best
+    },
+    [stations],
+  )
+
   const cargoPickedUp = useRef(false)
   useEffect(() => {
     if (pendingSupplyPickupRef.current.size === 0) return
-    const reachedBase: string[] = []
+    if (stations.length === 0) return
+    const reachedStation: string[] = []
     for (const assetId of pendingSupplyPickupRef.current) {
       const telemetryEntry = drones[assetId]
       if (!telemetryEntry) continue
-      const distToBase = distance3D(telemetryEntry.x, telemetryEntry.y, telemetryEntry.z, 0, 0, 0)
-      if (distToBase < BASE_PICKUP_RANGE) reachedBase.push(assetId)
+      const dist = nearestStationDistance(telemetryEntry.x, telemetryEntry.y, telemetryEntry.z)
+      if (dist < BASE_PICKUP_RANGE) reachedStation.push(assetId)
     }
-    if (reachedBase.length === 0) return
+    if (reachedStation.length === 0) return
 
     setCargoByDrone(prev => {
       const next = new Set(prev)
-      for (const assetId of reachedBase) next.add(assetId)
+      for (const assetId of reachedStation) next.add(assetId)
       return next
     })
-  }, [drones])
+  }, [drones, stations, nearestStationDistance])
 
   useEffect(() => {
     if (backendSupplyDispatchSeenRef.current) return
     if (!deliveryTarget.current || cargoPickedUp.current) return
     if (!pendingDeliveryKey.current || !deliveryDroneId.current) return
+    if (stations.length === 0) return
 
     const t = drones[deliveryDroneId.current]
     if (!t) return
 
-    const distToBase = distance3D(t.x, t.y, t.z, 0, BASE_Y, 0)
-    if (distToBase < BASE_PICKUP_RANGE) {
+    const dist = nearestStationDistance(t.x, t.y, t.z)
+    if (dist < BASE_PICKUP_RANGE) {
       cargoPickedUp.current = true
       setHasCargo(true)
-      addLog(`📦 Supplies collected from base (${deliveryDroneId.current})`)
+      addLog(`📦 Supplies collected from station (${deliveryDroneId.current})`)
     }
-  }, [drones, addLog])
+  }, [drones, stations, nearestStationDistance, addLog])
 
   // ── Cargo throw trigger ───────────────────────────────────────────────────
 
@@ -1563,7 +1708,12 @@ export default function SARScene() {
           />
         ) : (
           <>
-            <GroundProbe worldSpan={worldSpan} onMove={setHoverPt} onDoubleClick={handleGroundClick} />
+            <GroundProbe
+              worldSpan={worldSpan}
+              onMove={handleGroundHover}
+              onDoubleClick={handleGroundClick}
+              onClick={placingStation ? handlePlacementClick : undefined}
+            />
             <GroundCursor point={hoverPt} />
           </>
         )}
@@ -1590,6 +1740,28 @@ export default function SARScene() {
             from={activeThrow.from}
             to={activeThrow.to}
             onComplete={handleThrowComplete}
+          />
+        )}
+        <SupplyStations
+          stations={stations}
+          selectedId={selectedStationId}
+          onSelect={setSelectedStationId}
+          droppingIds={droppingStationIds}
+        />
+        {stations
+          .filter(s => droppingStationIds.has(s.id))
+          .map(s => (
+            <StationParachuteDrop
+              key={`drop-${s.id}`}
+              x={s.x}
+              z={s.z}
+              onComplete={() => handleDropComplete(s.id)}
+            />
+          ))}
+        {placingStation && (
+          <StationGhost
+            position={ghostPos}
+            valid={ghostPos ? isValidStationPosition(ghostPos) : false}
           />
         )}
         <SupplyCrates deliveredTo={deliveredTo} survivors={survivorPositions} />
@@ -1637,6 +1809,11 @@ export default function SARScene() {
           onFollowPrevious={followPreviousBeacon}
           onFollowNext={followNextBeacon}
           selectMode={selectMode}
+          placingStation={placingStation}
+          onTogglePlaceStation={() => {
+            setPlacingStation(v => !v)
+            setGhostPos(null)
+          }}
         />
         <DroneStatusPanel
           drones={drones}
@@ -1664,6 +1841,31 @@ export default function SARScene() {
           onRetryDelivery={handleRetryDelivery}
         />
       </div>
+      {selectedStationId && (() => {
+        const s = stations.find(st => st.id === selectedStationId)
+        if (!s) return null
+        return (
+          <div className="pointer-events-auto absolute bottom-28 left-1/2 z-30 -translate-x-1/2 rounded border border-[rgba(255,136,0,0.4)] bg-[rgba(18,12,4,0.92)] px-3 py-2 font-mono text-xs text-[#ffaa55] shadow-lg">
+            <div className="mb-1.5 text-[11px] tracking-[0.8px] text-[#ff9933]">
+              STATION @ ({s.x.toFixed(1)}, {s.z.toFixed(1)})
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleRemoveSelected}
+                className="rounded border border-[#ff5544] bg-[rgba(80,20,10,0.7)] px-2 py-1 text-[#ff8877] hover:bg-[rgba(120,30,15,0.85)]"
+              >
+                REMOVE
+              </button>
+              <button
+                onClick={() => setSelectedStationId(null)}
+                className="rounded border border-[rgba(100,120,140,0.35)] bg-[rgba(15,20,30,0.75)] px-2 py-1 text-[#9aabbc] hover:bg-[rgba(25,30,45,0.9)]"
+              >
+                CANCEL
+              </button>
+            </div>
+          </div>
+        )
+      })()}
       {showContextMenu && selection && (
         <AreaContextMenu
           selection={selection}

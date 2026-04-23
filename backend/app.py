@@ -37,15 +37,19 @@ from backend.licensing.routes import router as license_router
 from backend.mcp.server import beacon_mcp
 from backend.runtime import grpc_client, udp_listener, ws_broadcaster
 from backend.services.api import (
+    add_supply_station,
     discover_fleet,
     ensure_uplink,
     list_all_drones,
+    list_supply_stations,
     recall_swarm,
+    remove_supply_station,
     return_to_base as rtb_service,
     restore_registered_connections,
     scan_frequencies as scan_unlinked_frequencies,
     set_drone_speed,
 )
+from backend.services import supply_stations as _supply_stations_registry
 from backend.services.auto_recall import AutoRecallMonitor
 from backend.services.mission_runs import MissionRunAccumulator
 from backend.services.simulation_store import ParsedScanTargets, SimulationStore
@@ -57,7 +61,7 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
 
-load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env")
 
 _adk_runner: Runner | None = None
 _auto_recall_monitor: AutoRecallMonitor | None = None
@@ -362,6 +366,7 @@ async def app_lifespan(app: FastAPI):
 
     await udp_listener.start(on_update=_on_telemetry_update)
     await restore_registered_connections()
+    _supply_stations_registry.reset()
 
     # from backend.tools.drone_commands import set_client as _set_drone_cmd_client
     # _set_drone_cmd_client(grpc_client)
@@ -469,6 +474,11 @@ class SimulationBuilding(BaseModel):
 
 class SimulationStateSyncRequest(BaseModel):
     scanned_buildings: list[SimulationBuilding]
+
+
+class SupplyStationCreateRequest(BaseModel):
+    x: float
+    z: float
 
 
 def _extract_asset_index(asset_id: str) -> int | None:
@@ -753,6 +763,10 @@ async def switch_world(world_id: int) -> dict:
     # so re-entering a world starts fresh.
     cancel_scout_sweep()
     exploration_tracker.reset()
+    # User-placed stations are world-specific (their coords may be inside
+    # buildings in a different world). Reset the registry and notify clients.
+    _supply_stations_registry.reset()
+    ws_broadcaster.broadcast({"type": "supply_stations_reset"})
     # Tell each connected drone container to reload its world data
     results = {}
     for aid in grpc_client.registered_asset_ids():
@@ -900,6 +914,38 @@ async def cancel_scout_sweep_endpoint() -> dict:
 async def scan_frequencies() -> dict:
     """Return drones currently broadcasting heartbeats and not yet uplinked."""
     return {"discovered": await scan_unlinked_frequencies()}
+
+
+@app.get("/supply-stations")
+async def get_supply_stations() -> dict:
+    """Return all known supply stations (home + user-placed)."""
+    return list_supply_stations()
+
+
+@app.post("/supply-stations")
+async def create_supply_station(req: SupplyStationCreateRequest) -> dict:
+    """Place a new user station. 400 on invalid placement, 429 at station cap."""
+    try:
+        result = add_supply_station(x=req.x, z=req.z)
+    except _supply_stations_registry.StationLimitReached as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ws_broadcaster.broadcast({"type": "supply_station_added", "station": result["station"]})
+    return result
+
+
+@app.delete("/supply-stations/{station_id}")
+async def delete_supply_station(station_id: str) -> dict:
+    """Remove a user station. 400 for 'home', 404 if unknown."""
+    try:
+        result = remove_supply_station(station_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not result["ok"]:
+        raise HTTPException(status_code=404, detail=f"Station {station_id} not found")
+    ws_broadcaster.broadcast({"type": "supply_station_removed", "id": station_id})
+    return {"ok": True}
 
 
 @app.post("/command")

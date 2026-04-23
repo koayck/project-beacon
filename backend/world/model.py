@@ -24,6 +24,9 @@ BUILDING_PROXIMITY_MARGIN_M: float = _S["building_proximity_margin_m"]
 FLOOR_HEIGHT_M: float              = _S["floor_height_m"]
 FLOOR_SLAB_THICKNESS_M: float      = _S["floor_slab_thickness_m"]
 WINDOW_SCAN_STANDOFF_M: float      = _S["window_scan_standoff_m"]
+# Half-side of the square play area (centered at origin). Used for placement
+# validity checks — e.g., supply-station REST handler rejects out-of-bounds.
+_DEFAULT_WORLD_HALF_SPAN_M: float  = 50.0
 CURRENT_WORLD_ID: int              = 2
 
 
@@ -291,6 +294,7 @@ class WorldModel:
     survivors: list[Survivor] = field(default_factory=list)
     trees: list[Tree] = field(default_factory=list)
     decor_buildings: list[DecorBuilding] = field(default_factory=list)
+    half_span: float = _DEFAULT_WORLD_HALF_SPAN_M
 
     def buildings_near(self, x: float, z: float, radius: float) -> list[Building]:
         """All buildings whose edge is within `radius` metres (XZ plane)."""
@@ -405,11 +409,14 @@ def _build_world(world_json: dict) -> WorldModel:
         )
         for b in environment.get("decor_buildings", [])
     ]
+    scene_cfg = world_json.get("scene", {})
+    half_span = float(scene_cfg.get("world_half_span_m", _DEFAULT_WORLD_HALF_SPAN_M))
     return WorldModel(
         buildings=buildings,
         survivors=survivors,
         trees=trees,
         decor_buildings=decor_buildings,
+        half_span=half_span,
     )
 def load_world(world_id: int = 2) -> WorldModel:
     """Load a world model from shared JSON.
@@ -429,6 +436,7 @@ def load_world(world_id: int = 2) -> WorldModel:
     WORLD.survivors[:] = fresh.survivors
     WORLD.trees[:] = fresh.trees
     WORLD.decor_buildings[:] = fresh.decor_buildings
+    WORLD.half_span = fresh.half_span
     CURRENT_WORLD_ID = world_id
     return WORLD
 
