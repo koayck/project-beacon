@@ -176,7 +176,54 @@ export default function SARScene() {
     if (copiedTimer.current) clearTimeout(copiedTimer.current)
     copiedTimer.current = setTimeout(() => setCopied(false), 1500)
   }, [])
-  const { drones, exploredSectors, latestReveals } = useTelemetry(WS_URL)
+  const handleSystemEvent = useCallback((event: { event: string; asset_id?: string; battery?: number; message?: string; error?: string }) => {
+    if (event.event === 'auto_recall_started') {
+      const batteryText = typeof event.battery === 'number' ? ` · ${event.battery.toFixed(1)}%` : ''
+      setActivities(prev => [
+        ...prev,
+        {
+          id: nextActivityId(),
+          icon: '⚡',
+          label: 'Auto-recall for charging',
+          detail: `${event.asset_id ?? 'drone'}${batteryText}`,
+          ts: Date.now(),
+          status: 'active',
+          category: 'system' as ActivityCategory,
+        },
+      ])
+      return
+    }
+    if (event.event === 'auto_recall_completed') {
+      setActivities(prev => [
+        ...prev,
+        {
+          id: nextActivityId(),
+          icon: '⌂',
+          label: 'Returning for charge',
+          detail: event.asset_id ?? undefined,
+          ts: Date.now(),
+          status: 'done',
+          category: 'complete' as ActivityCategory,
+        },
+      ])
+      return
+    }
+    if (event.event === 'auto_recall_failed') {
+      setActivities(prev => [
+        ...prev,
+        {
+          id: nextActivityId(),
+          icon: '✗',
+          label: 'Auto-recall failed',
+          detail: `${event.asset_id ?? 'drone'}${event.error ? ' · ' + event.error.slice(0, 40) : ''}`,
+          ts: Date.now(),
+          status: 'error',
+          category: 'error' as ActivityCategory,
+        },
+      ])
+    }
+  }, [])
+  const { drones, exploredSectors, latestReveals } = useTelemetry(WS_URL, handleSystemEvent)
 
   // ── Fog-of-war exploration state ──────────────────────────────────────────
   const exploration = useExploration(exploredSectors, latestReveals, worldBuildings, survivorPositions)
