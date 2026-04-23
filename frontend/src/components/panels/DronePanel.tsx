@@ -62,7 +62,7 @@ export function DroneStatusPanel({
   if (entries.length === 0) return null
 
   return (
-    <div className="pointer-events-auto min-w-[240px] overflow-hidden rounded-lg border border-[rgba(40,140,180,0.2)] bg-[linear-gradient(135deg,rgba(6,8,16,0.88),rgba(4,6,14,0.82))] p-[8px_10px] font-mono shadow-[0_4px_30px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(80,140,180,0.08)] backdrop-blur-[12px]">
+    <div className="pointer-events-auto min-w-[240px] shrink-0 overflow-hidden rounded-lg border border-[rgba(40,140,180,0.2)] bg-[linear-gradient(135deg,rgba(6,8,16,0.88),rgba(4,6,14,0.82))] p-[8px_10px] font-mono shadow-[0_4px_30px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(80,140,180,0.08)] backdrop-blur-[12px]">
       <div className="mb-2 flex items-center justify-between tracking-[1.2px] text-[#99b]">
         <span className="text-[12px] font-bold">DRONE FLEET</span>
         <button
@@ -81,7 +81,7 @@ export function DroneStatusPanel({
       )}
 
       {dronesVisible && (
-        <div className="space-y-2">
+        <div className="max-h-[360px] space-y-2 overflow-y-auto pb-2 pr-2 [scrollbar-color:rgba(80,140,180,0.4)_transparent] [scrollbar-width:thin]">
           {entries.map(d => {
             const cardClass = droneCardClass(d.status)
             const statusClass = statusTextColorClass(d.status)
