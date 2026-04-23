@@ -23,8 +23,8 @@ from google.genai import types
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
-from backend.db.repository import init_db, asset_repo, mission_log_repo
-from backend.db.models import Asset, MissionLog
+from backend.db.repository import init_db, asset_repo, mission_log_repo, mission_run_repo
+from backend.db.models import Asset, MissionLog, MissionRun
 from backend.grpc.client import DroneGrpcClient
 from backend.output_format import (
     is_structured_sweep_report,
@@ -47,6 +47,7 @@ from backend.services.api import (
     set_drone_speed,
 )
 from backend.services.auto_recall import AutoRecallMonitor
+from backend.services.mission_runs import MissionRunAccumulator
 from backend.services.simulation_store import ParsedScanTargets, SimulationStore
 
 import logging
@@ -1057,6 +1058,14 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
         final_text = ""
         queue: asyncio.Queue = asyncio.Queue()
         stream_start = time.perf_counter()
+        accumulator = MissionRunAccumulator(
+            asset_id=req.asset_id or "FLEET",
+            prompt=req.prompt,
+            simulation_id=req.simulation_id,
+        )
+        status = "success"
+        error_text: str | None = None
+        aborted = False
         first_token_time: float | None = None
         total_chars = 0
         scanned_building_rows: list[dict[str, object]] = []
@@ -1091,6 +1100,7 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
         try:
             while True:
                 if await request.is_disconnected():
+                    aborted = True
                     break
                 kind, data = await queue.get()
 
@@ -1099,6 +1109,8 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                     continue
 
                 if kind == "error":
+                    status = "failed"
+                    error_text = str(data)
                     yield f"data: {json.dumps({'type': 'error', 'text': str(data)})}\n\n"
                     break
 
@@ -1114,6 +1126,7 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                         yield f"data: {json.dumps(payload)}\n\n"
                         continue
                     if part.function_call:
+                        accumulator.record_tool_call()
                         payload = {
                             "type": "tool_call",
                             "name": part.function_call.name,
@@ -1127,6 +1140,10 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                         message = resp.get("message")
                         survivors_payload = _extract_survivor_coords(resp)
                         supply_dispatches = _extract_supply_dispatches(part.function_response.name, resp)
+                        if survivors_payload:
+                            accumulator.record_detections(survivors_payload)
+                        if supply_dispatches:
+                            accumulator.record_deliveries(supply_dispatches)
                         if (
                             sweep_prompt
                             and isinstance(message, str)
@@ -1186,16 +1203,37 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
             hb_task.cancel()
             adk_task.cancel()
             await asyncio.gather(adk_task, hb_task, return_exceptions=True)
+
+            # Compute both int and float variants of ttft_ms:
+            # - int for the DB INTEGER column
+            # - float (1 decimal) for the SSE `done` event (existing behaviour)
+            ttft_ms_int = round((first_token_time - stream_start) * 1000) if first_token_time else None
+            ttft_ms = round((first_token_time - stream_start) * 1000, 1) if first_token_time else None
+
+            final_status = "aborted" if aborted else status
+            try:
+                run = accumulator.build(
+                    status=final_status,
+                    ttft_ms=ttft_ms_int,
+                    final_text=final_text,
+                    error=error_text,
+                )
+                await mission_run_repo.create(run)
+            except Exception as exc:
+                logging.getLogger(__name__).exception("Failed to persist mission_run: %s", exc)
+
             await mission_log_repo.create(MissionLog(
                 asset_id=req.asset_id or "FLEET",
                 command="natural_language",
                 params=req.prompt,
                 result=final_text,
             ))
+
             now = time.perf_counter()
-            ttft_ms = round((first_token_time - stream_start) * 1000, 1) if first_token_time else None
             gen_secs = (now - first_token_time) if first_token_time else None
             tps = round((total_chars / 4) / gen_secs, 1) if gen_secs and gen_secs > 0 else None
+
+            # Existing simulation-store persistence logic (unchanged):
             if req.simulation_id and simulation_store is not None:
                 if not parsed_targets.has_scan_intent:
                     parsed_targets_local = SimulationStore.parse_scan_targets(req.prompt, _known_building_rows())
@@ -1205,6 +1243,7 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                     await simulation_store.mark_buildings_scanned(req.simulation_id, parsed_targets_local.building_ids)
                 if scanned_building_rows:
                     await simulation_store.merge_survivor_state(req.simulation_id, scanned_building_rows)
+
             yield f"data: {json.dumps({'type': 'done', 'ttft_ms': ttft_ms, 'tps': tps})}\n\n"
 
     return StreamingResponse(
