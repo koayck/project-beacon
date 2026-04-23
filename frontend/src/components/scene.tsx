@@ -145,11 +145,16 @@ export default function SARScene() {
   const [routeArrived, setRouteArrived] = useState(false)
   const [autoRecallThreshold, setAutoRecallThreshold] = useState<number | null>(null)
   const [networkMockStatus, setNetworkMockStatus] = useState<NetworkMockStatus | null>(null)
+  const [networkReconnectPopupPhase, setNetworkReconnectPopupPhase] = useState<'lost' | 'attempting' | 'success' | null>(null)
   const [autoRecallPrompt, setAutoRecallPrompt] = useState<{ assetId: string; battery: number } | null>(null)
   const [autoRecallCountdown, setAutoRecallCountdown] = useState(5)
   const autoRecallDismissedRef = useRef<Set<string>>(new Set())
   const autoRecallTriggeredRef = useRef<Set<string>>(new Set())
   const autoRecallInFlightRef = useRef<Set<string>>(new Set())
+  const previousWifiConnectedRef = useRef<boolean | null>(null)
+  const previousNetworkModeRef = useRef<string | null>(null)
+  const reconnectPhaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const successMessageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingRescanRequestRef = useRef<{
     prompt: string
     assetIdOverride?: string
@@ -613,6 +618,74 @@ export default function SARScene() {
     return () => {
       mounted = false
       clearInterval(interval)
+    }
+  }, [])
+
+  useEffect(() => {
+    const hasStatusSignal = Boolean(networkMockStatus?.source || networkMockStatus?.updated_at)
+    if (!hasStatusSignal) {
+      return
+    }
+
+    const currentMode = networkMockStatus?.mode ?? 'unknown'
+    const previousMode = previousNetworkModeRef.current
+    const isStarlinkConnected = currentMode === 'starlink' || currentMode === 'degraded'
+    const wasNotStarlinkConnected = previousMode !== 'starlink' && previousMode !== 'degraded'
+
+    // ── Detect successful Starlink connection (mode transition to starlink/degraded)
+    if (isStarlinkConnected && wasNotStarlinkConnected && previousMode !== null) {
+      // Successful connection after being disconnected
+      setNetworkReconnectPopupPhase('success')
+      if (reconnectPhaseTimerRef.current) {
+        clearTimeout(reconnectPhaseTimerRef.current)
+        reconnectPhaseTimerRef.current = null
+      }
+      if (successMessageTimerRef.current) {
+        clearTimeout(successMessageTimerRef.current)
+      }
+      successMessageTimerRef.current = setTimeout(() => {
+        setNetworkReconnectPopupPhase(null)
+        successMessageTimerRef.current = null
+      }, 2500)
+    }
+
+    previousNetworkModeRef.current = currentMode
+
+    const hasWifiConnection = (networkMockStatus?.active_ssids?.length ?? 0) > 0
+    const previouslyConnected = previousWifiConnectedRef.current
+
+    if (hasWifiConnection) {
+      previousWifiConnectedRef.current = true
+      if (reconnectPhaseTimerRef.current) {
+        clearTimeout(reconnectPhaseTimerRef.current)
+        reconnectPhaseTimerRef.current = null
+      }
+      if (networkReconnectPopupPhase === 'lost' || networkReconnectPopupPhase === 'attempting') {
+        setNetworkReconnectPopupPhase(null)
+      }
+      return
+    }
+
+    previousWifiConnectedRef.current = false
+    if (previouslyConnected !== true) {
+      return
+    }
+
+    setNetworkReconnectPopupPhase('lost')
+    if (reconnectPhaseTimerRef.current) {
+      clearTimeout(reconnectPhaseTimerRef.current)
+    }
+    reconnectPhaseTimerRef.current = setTimeout(() => {
+      setNetworkReconnectPopupPhase('attempting')
+      reconnectPhaseTimerRef.current = null
+    }, 1400)
+  }, [networkMockStatus, networkReconnectPopupPhase])
+
+  useEffect(() => {
+    return () => {
+      if (reconnectPhaseTimerRef.current) {
+        clearTimeout(reconnectPhaseTimerRef.current)
+      }
     }
   }, [])
 
@@ -1543,6 +1616,32 @@ export default function SARScene() {
           onSendSupply={handleAreaSupplyDispatch}
           onClose={handleSelectionClose}
         />
+      )}
+      {networkReconnectPopupPhase && (
+        <div className="pointer-events-none absolute inset-0 z-40 flex items-start justify-center pt-20">
+          <div className="w-[460px] rounded-lg border border-l-[3px] border-[rgba(255,160,90,0.55)] border-l-[#ffa04b] bg-[linear-gradient(135deg,rgba(26,12,4,0.96),rgba(15,6,2,0.95))] p-[12px_14px] font-mono text-[#ffd9b3] shadow-[0_14px_48px_rgba(0,0,0,0.55)]">
+            <div className="mb-1.5 font-bold tracking-[1.1px] text-[#ffb36b]">
+              {networkReconnectPopupPhase === 'success' ? 'STARLINK UPLINK CONNECTED' : 'STARLINK UPLINK ALERT'}
+            </div>
+            <div className="text-[13px] leading-[1.5] text-[#ffd5a7]">
+              {networkReconnectPopupPhase === 'lost'
+                ? 'Connection is lost.'
+                : networkReconnectPopupPhase === 'success'
+                ? 'Connected successfully.'
+                : 'Attempting to connect to Starlink...'}
+            </div>
+            {networkReconnectPopupPhase === 'attempting' && (
+              <div className="mt-2 flex items-center gap-2">
+                <div className="flex gap-1">
+                  <div className="h-1.5 w-1.5 animate-[bounce_0.6s_ease-in-out_0s_infinite] rounded-full bg-[#ffa04b]" />
+                  <div className="h-1.5 w-1.5 animate-[bounce_0.6s_ease-in-out_0.15s_infinite] rounded-full bg-[#ffa04b]" />
+                  <div className="h-1.5 w-1.5 animate-[bounce_0.6s_ease-in-out_0.3s_infinite] rounded-full bg-[#ffa04b]" />
+                </div>
+                <span className="text-xs text-[#ffb36b]">connecting...</span>
+              </div>
+            )}
+          </div>
+        </div>
       )}
       {autoRecallPrompt && (
         <div className="pointer-events-auto absolute inset-0 z-40 flex items-center justify-center bg-[rgba(2,4,10,0.55)]">

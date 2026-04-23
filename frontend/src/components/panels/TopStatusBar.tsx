@@ -7,6 +7,7 @@ interface SurvivorPoint {
 interface NetworkMockStatus {
   mode: string
   target_ssid: string | null
+  active_ssids: string[]
 }
 
 export function TopStatusBar({
@@ -26,10 +27,17 @@ export function TopStatusBar({
 }) {
   const submerged = survivors.filter(p => p.y < floodLevel - 0.2).length
   const networkMode = networkMockStatus?.mode ?? 'unknown'
-  const starlinkActive = networkMode === 'starlink' || networkMode === 'degraded'
-  const networkLabel = starlinkActive
-    ? `STARLINK MOCK ${networkMode === 'degraded' ? 'DEGRADED' : 'ACTIVE'}`
-    : 'DIRECT LINK'
+  const hasWifiConnection = (networkMockStatus?.active_ssids?.length ?? 0) > 0
+  const activeSsid = networkMockStatus?.active_ssids?.[0] ?? null
+  const starlinkConnected = networkMode === 'starlink' || networkMode === 'degraded'
+  const isConnected = hasWifiConnection || starlinkConnected
+  
+  // Show actual SSID if available, otherwise show mode-based label
+  const networkLabel = activeSsid
+    ? `CONNECTED TO ${activeSsid.toUpperCase()}`
+    : starlinkConnected
+    ? 'CONNECTED TO STARLINK'
+    : 'DISCONNECTING ... ATTEMPTING TO CONNECT'
   const worldButtonClass = (active: boolean) =>
     active
       ? 'rounded border border-[rgba(0,180,255,0.35)] bg-[rgba(0,180,255,0.15)] px-[10px] py-[3px] font-mono text-[11px] font-bold tracking-[1.2px] text-[#00ccff] transition-all duration-200'
@@ -65,12 +73,12 @@ export function TopStatusBar({
       </div>
 
       <div className="flex items-center gap-2.5 text-xs">
-        <span className={starlinkActive
-          ? 'rounded-[3px] border border-[rgba(0,170,255,0.35)] bg-[rgba(0,110,255,0.15)] px-2 py-0.5 tracking-[0.8px] text-[#7dcfff]'
-          : 'rounded-[3px] border border-[rgba(80,100,120,0.25)] bg-[rgba(70,85,100,0.12)] px-2 py-0.5 tracking-[0.8px] text-[#9cb0c4]'
+        <span className={isConnected
+          ? 'rounded-[3px] border border-[rgba(0,190,255,0.45)] bg-[rgba(0,120,255,0.18)] px-2 py-0.5 tracking-[0.8px] text-[#8ed8ff]'
+          : 'rounded-[3px] border border-[rgba(255,170,70,0.32)] bg-[rgba(255,120,20,0.12)] px-2 py-0.5 tracking-[0.8px] text-[#ffc488]'
         }>
           {networkLabel}
-          {networkMockStatus?.target_ssid ? ` • SSID ${networkMockStatus.target_ssid}` : ''}
+          {/* {networkMockStatus?.target_ssid ? ` • TARGET SSID ${networkMockStatus.target_ssid}` : ''} */}
         </span>
         {/* {selectMode && (
           <span className="rounded-[3px] border border-[rgba(255,140,0,0.3)] bg-[rgba(255,100,0,0.1)] px-2 py-0.5 font-bold tracking-[1px] text-[#ff9933]">
