@@ -126,11 +126,17 @@ class TestApproachAwareSweep:
         # Building has 3 windows above flood (floors 2,3,4 on N, E, S faces).
         assert len(window_wps) >= 3
 
-    def test_rooftop_scan_still_last_with_approach(self):
+    def test_sweep_ends_at_floor_not_rooftop_with_approach(self):
+        """Rooftop scan was removed — sweep ends at the last floor's perimeter even with approach."""
         result = plan_building_vertical_sweep(
             -15.0, -20.0, standoff=2.0, approach_x=0.0, approach_z=0.0
         )
-        assert result["waypoints"][-1]["reason"] == "rooftop scan"
+        last_wp = result["waypoints"][-1]
+        assert last_wp["reason"] != "rooftop scan", (
+            f"expected sweep to end on a floor waypoint, not 'rooftop scan'; got: {last_wp}"
+        )
+        rooftop_y = result["rooftop_position"]["y"]
+        assert last_wp["y"] < rooftop_y
 
     def test_no_approach_defaults_to_window_first(self):
         """Without approach params the first waypoint still starts with window-first entry."""

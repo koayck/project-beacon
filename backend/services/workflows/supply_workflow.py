@@ -308,17 +308,15 @@ async def parallel_fleet_supply(
 
     all_results: list[dict] = []
     for i, result in enumerate(batch):
-        try:
-            raise result
-        except Exception as exc:
+        if isinstance(result, BaseException):
             all_results.append(
                 {
                     "asset_id": assignments[i]["asset_id"],
                     "target": rows[i]["target"],
-                    "supply_result": {"error": str(exc)},
+                    "supply_result": {"error": str(result)},
                 }
             )
-        except TypeError:
+        else:
             all_results.append(result)
 
     pending_targets = (
@@ -371,6 +369,8 @@ async def parallel_fleet_supply(
         + f"\n{thin_divider}\n{total_line}\n{divider}"
     )
 
+    _schedule_supply_mission_recall(assignments, all_results)
+
     return {
         "success": True,
         "results": all_results,
@@ -378,3 +378,49 @@ async def parallel_fleet_supply(
         "total_supplied": total_supplied,
         "summary": summary,
     }
+
+
+def _schedule_supply_mission_recall(
+    assignments: list[dict],
+    all_results: list[dict],
+) -> None:
+    """Schedule return-to-base for every drone that executed a supply dispatch.
+
+    Runs after the area-supply summary is built so the response time is not
+    affected; the grace-then-recall coroutine inside mission_recall handles
+    operator-chained follow-up commands.
+    """
+    seen: set[str] = set()
+    asset_ids: list[str] = []
+    for row in assignments:
+        aid = row.get("asset_id")
+        if isinstance(aid, str) and aid and aid not in seen:
+            seen.add(aid)
+            asset_ids.append(aid)
+    for row in all_results:
+        aid = row.get("asset_id")
+        if isinstance(aid, str) and aid and aid not in seen:
+            seen.add(aid)
+            asset_ids.append(aid)
+    if not asset_ids:
+        return
+
+    try:
+        from backend.runtime import grpc_client as runtime_grpc_client
+        from backend.runtime import ws_broadcaster
+        from backend.services.api import return_to_base
+        from backend.services.mission_recall import schedule_mission_complete_recall
+    except Exception:  # noqa: BLE001
+        import logging as _logging
+        _logging.getLogger(__name__).exception(
+            "Failed to import mission_recall dependencies; skipping post-supply recall",
+        )
+        return
+
+    schedule_mission_complete_recall(
+        asset_ids,
+        get_status=runtime_grpc_client.get_status,
+        return_to_base_fn=return_to_base,
+        publish_event=ws_broadcaster.broadcast,
+        trigger_reason="supply_mission_complete",
+    )

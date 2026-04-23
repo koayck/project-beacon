@@ -349,6 +349,7 @@ async def app_lifespan(app: FastAPI):
         enabled=_AUTO_RECALL_ENABLED,
         battery_threshold=_AUTO_RECALL_BATTERY_THRESHOLD,
         cooldown_seconds=_AUTO_RECALL_COOLDOWN_SECONDS,
+        publish_event=ws_broadcaster.broadcast,
     )
     _auto_recall_monitor.start()
 

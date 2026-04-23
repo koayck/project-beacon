@@ -25,19 +25,17 @@ async def test_rooftop_recovery_replan_excludes_target_building() -> None:
         "levels": [5.0],
         "level_count": 1,
         "rooftop_position": {"x": 30.0, "y": 29.0, "z": -25.0},
-        "waypoints": [{"x": 22.5, "y": 5.0, "z": -31.0, "reason": "perimeter NW"}],
+        "waypoints": [
+            {"x": 22.5, "y": 5.0, "z": -31.0, "level_y": 5.0, "reason": "perimeter NW"},
+        ],
         "waypoint_count": 1,
     }
 
-    def _plan_building_vertical_sweep(*, approach_x: float | None = None, **_kwargs: object) -> dict:
-        if approach_x is None:
-            return preplan
-        # Keep the second planning stage minimal so the test isolates rooftop recovery wiring.
-        return {
-            **preplan,
-            "waypoints": [],
-            "waypoint_count": 0,
-        }
+    def _plan_building_vertical_sweep(**_kwargs: object) -> dict:
+        # Current sweep_workflow makes a single plan call with approach_x/approach_z.
+        # Return the full preplan (one sweep waypoint) so the transition + sweep
+        # loops exercise wait_until_waypoint_reached with exclude_building_id.
+        return preplan
 
     async def _plan_route_fn(**kwargs: object) -> dict:
         return {
@@ -106,8 +104,10 @@ async def test_sweep_error_text_uses_scan_route_context() -> None:
         "levels": [5.0],
         "level_count": 1,
         "rooftop_position": {"x": 30.0, "y": 29.0, "z": -25.0},
-        "waypoints": [],
-        "waypoint_count": 0,
+        "waypoints": [
+            {"x": 22.5, "y": 5.0, "z": -31.0, "level_y": 5.0, "reason": "perimeter NW"},
+        ],
+        "waypoint_count": 1,
     }
 
     async def _plan_route_fn(**kwargs: object) -> dict:

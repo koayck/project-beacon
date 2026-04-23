@@ -36,14 +36,14 @@ class TestReturnToBaseRouting:
                 "summary": "1 waypoint home approach",
             }
 
-        monkeypatch.setattr(drone_commands, "plan_route", _route_ok)
+        monkeypatch.setattr("backend.services.api.control.plan_route", _route_ok)
         wait_mock = AsyncMock(
             side_effect=[
                 {"ok": True, "status": {"status": "IDLE"}},
                 {"ok": True, "status": {"status": "IDLE"}},
             ]
         )
-        monkeypatch.setattr(drone_commands, "_wait_until_waypoint_reached", wait_mock)
+        monkeypatch.setattr("backend.services.api.control._wait_until_waypoint_reached", wait_mock)
         _mock_client.get_status.return_value = {
             "asset_id": "BEACON-01",
             "x": 0.0,
@@ -61,7 +61,8 @@ class TestReturnToBaseRouting:
         first_move = _mock_client.move_to.await_args_list[0].args
         second_move = _mock_client.move_to.await_args_list[1].args
         assert first_move == ("BEACON-01", 0.0, 5.0, 0.0, 5.0)
-        assert second_move == ("BEACON-01", 0.0, 0.0, 0.0, 5.0)
+        # Home pad sits at y=2 (see CLAUDE.md); the final landing leg targets that.
+        assert second_move == ("BEACON-01", 0.0, 2.0, 0.0, 5.0)
         _mock_client.return_to_base.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -69,7 +70,7 @@ class TestReturnToBaseRouting:
         async def _route_error(*_args, **_kwargs):
             return {"asset_id": "BEACON-01", "error": "No clear route found", "obstacles": [{"id": 1}]}
 
-        monkeypatch.setattr(drone_commands, "plan_route", _route_error)
+        monkeypatch.setattr("backend.services.api.control.plan_route", _route_error)
 
         result = await drone_commands.return_to_base("BEACON-01")
         assert result["error"] == "Return route blocked"
@@ -85,7 +86,7 @@ class TestReturnToBaseRouting:
                 "summary": "1 waypoint home approach",
             }
 
-        monkeypatch.setattr(drone_commands, "plan_route", _route_ok)
+        monkeypatch.setattr("backend.services.api.control.plan_route", _route_ok)
         _mock_client.move_to.return_value = {"success": False, "message": "blocked"}
 
         result = await drone_commands.return_to_base("BEACON-01")
@@ -101,7 +102,7 @@ class TestReturnToBaseRouting:
                 "summary": "1 waypoint home approach",
             }
 
-        monkeypatch.setattr(drone_commands, "plan_route", _route_ok)
+        monkeypatch.setattr("backend.services.api.control.plan_route", _route_ok)
         _mock_client.get_status.return_value = {
             "asset_id": "BEACON-01",
             "x": -5.0,
@@ -124,14 +125,14 @@ class TestReturnToBaseRouting:
                 "summary": "1 waypoint home approach",
             }
 
-        monkeypatch.setattr(drone_commands, "plan_route", _route_ok)
+        monkeypatch.setattr("backend.services.api.control.plan_route", _route_ok)
         wait_mock = AsyncMock(
             side_effect=[
                 {"ok": True, "status": {"status": "IDLE"}},
                 {"ok": False, "error": "Drone blocked while descending at home", "status": {"status": "BLOCKED"}},
             ]
         )
-        monkeypatch.setattr(drone_commands, "_wait_until_waypoint_reached", wait_mock)
+        monkeypatch.setattr("backend.services.api.control._wait_until_waypoint_reached", wait_mock)
 
         result = await drone_commands.return_to_base("BEACON-01")
         assert result["error"] == "Drone blocked while descending at home"

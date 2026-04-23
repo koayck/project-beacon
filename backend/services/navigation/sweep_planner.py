@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
 
 from backend.services.navigation.internal.corner_ops import (
     _build_ring,
@@ -28,16 +27,21 @@ def plan_building_vertical_sweep(
     flood_clearance: float = 0.5,
     approach_x: float | None = None,
     approach_z: float | None = None,
-    entry_floor: Literal["lowest", "highest"] = "lowest",
+    entry_window: dict | None = None,
 ) -> dict:
     """Plan a perimeter sweep around a building across all heights above water level.
 
-    ``entry_floor`` controls the direction of floor-by-floor iteration:
-      - ``"lowest"`` (default): sweep bottom-up, matching legacy behavior.
-      - ``"highest"``: sweep top-down. The entry window is chosen from the
-        top-floor windows closest to the approach coordinates, and floors
-        are processed in descending order. Final rooftop scan still closes
-        the mission.
+    The sweep always enters at a lowest-floor window and iterates floors ascending,
+    ending at the last floor's perimeter. No rooftop scan waypoint is emitted.
+
+    Entry window selection:
+      - When ``entry_window`` is provided (typically the window chosen by
+        ``plan_route(entry_mode="ground_entry")``), it is used verbatim. This
+        guarantees agreement with the caller's approach route so the drone does
+        not have to traverse between two different windows.
+      - Otherwise, falls back to picking the lowest-floor window whose XZ is
+        closest to ``(approach_x, approach_z)`` — or the start corner if no
+        approach coordinates are given.
     """
     building = WORLD.building_near_xz(target_x, target_z, margin=BUILDING_PROXIMITY_MARGIN_M)
     if building is None:
@@ -94,8 +98,6 @@ def plan_building_vertical_sweep(
     above_flood = [w for w in all_window_wps if w["y"] >= start_y]
 
     floor_levels = sorted({round(w["y"], 2) for w in above_flood})
-    if entry_floor == "highest":
-        floor_levels = list(reversed(floor_levels))
 
     perimeter_margin = 1.0
     p_min_x = building.min_x - perimeter_margin
@@ -130,7 +132,21 @@ def plan_building_vertical_sweep(
     waypoints: list[dict] = []
     levels: list[float] = []
 
-    entry_window: dict | None = None
+    # Use the externally supplied entry window verbatim when provided — this
+    # keeps the sweep's first waypoint identical to the route planner's ground
+    # entry target, preventing the drone from being commanded to fly between
+    # two windows on opposite faces (which would cross the footprint and get
+    # BLOCKED).
+    chosen_entry: dict | None = None
+    if entry_window is not None:
+        chosen_entry = {
+            "x": float(entry_window["x"]),
+            "y": float(entry_window["y"]),
+            "z": float(entry_window["z"]),
+            "face": str(entry_window.get("face", "")),
+            "floor": int(entry_window.get("floor", 1)),
+        }
+
     if floor_levels:
         first_level_y = floor_levels[0]
         first_level_windows = [w for w in above_flood if round(w["y"], 2) == first_level_y]
@@ -139,18 +155,20 @@ def plan_building_vertical_sweep(
         else:
             ref_x, ref_z = corners[_start_corner]
 
-        if first_level_windows:
-            entry_window = min(
+        if chosen_entry is None and first_level_windows:
+            chosen_entry = min(
                 first_level_windows,
                 key=lambda w: math.sqrt((float(w["x"]) - ref_x) ** 2 + (float(w["z"]) - ref_z) ** 2),
             )
+
+        if chosen_entry is not None:
             waypoints.append(
                 {
-                    "x": float(entry_window["x"]),
-                    "y": float(entry_window["y"]),
-                    "z": float(entry_window["z"]),
-                    "level_y": float(entry_window["y"]),
-                    "reason": f"window scan {entry_window['face']} floor {entry_window['floor']}",
+                    "x": float(chosen_entry["x"]),
+                    "y": float(chosen_entry["y"]),
+                    "z": float(chosen_entry["z"]),
+                    "level_y": float(chosen_entry["y"]),
+                    "reason": f"window scan {chosen_entry['face']} floor {chosen_entry['floor']}",
                 }
             )
         else:
@@ -163,6 +181,40 @@ def plan_building_vertical_sweep(
                     "level_y": first_level_y,
                     "reason": f"approach to {_start_corner} corner",
                 }
+            )
+
+    # Derive the ring start corner from the entry window's face so the
+    # traversal from entry window to ring-start stays on the same face at
+    # standoff distance.  Without this, picking the ring start by drone
+    # approach direction independently of the entry window's face forces the
+    # drone to cross the building footprint to reach the start corner.
+    if chosen_entry is not None and _serpentine:
+        face = chosen_entry["face"]
+        ex = float(chosen_entry["x"])
+        ez = float(chosen_entry["z"])
+        if face == "south":
+            _start_corner = (
+                "SE"
+                if abs(ex - corners["SE"][0]) < abs(ex - corners["SW"][0])
+                else "SW"
+            )
+        elif face == "north":
+            _start_corner = (
+                "NE"
+                if abs(ex - corners["NE"][0]) < abs(ex - corners["NW"][0])
+                else "NW"
+            )
+        elif face == "east":
+            _start_corner = (
+                "NE"
+                if abs(ez - corners["NE"][1]) < abs(ez - corners["SE"][1])
+                else "SE"
+            )
+        elif face == "west":
+            _start_corner = (
+                "NW"
+                if abs(ez - corners["NW"][1]) < abs(ez - corners["SW"][1])
+                else "SW"
             )
 
     _current_corner = _start_corner
@@ -187,14 +239,14 @@ def plan_building_vertical_sweep(
                 west_stop_z=west_stop_z if _nw_pushed_east else None,
                 p_min_x=p_min_x,
             )
-            if entry_window is not None and abs(level_y - float(entry_window["y"])) < 1e-3:
+            if chosen_entry is not None and abs(level_y - float(chosen_entry["y"])) < 1e-3:
                 ring_items = [
                     item
                     for item in ring_items
                     if not (
-                        item[2] == f"window scan {entry_window['face']} floor {entry_window['floor']}"
-                        and abs(item[0] - float(entry_window["x"])) < 1e-3
-                        and abs(item[1] - float(entry_window["z"])) < 1e-3
+                        item[2] == f"window scan {chosen_entry['face']} floor {chosen_entry['floor']}"
+                        and abs(item[0] - float(chosen_entry["x"])) < 1e-3
+                        and abs(item[1] - float(chosen_entry["z"])) < 1e-3
                     )
                 ]
             if level_y == floor_levels[0] and waypoints:
@@ -204,25 +256,34 @@ def plan_building_vertical_sweep(
 
             if ring_items:
                 first_rx, first_rz, _ = ring_items[0]
-                inter_blockers = WORLD.obstacles_in_path(
-                    _last_rx,
-                    level_y,
-                    _last_rz,
-                    first_rx,
-                    level_y,
-                    first_rz,
-                    samples=30,
-                    margin=0.0,
-                )
+                # Exclude the building under sweep: the inter-floor diagonal
+                # from the last window waypoint to the first corner of the next
+                # ring often crosses the building's own AABB, causing a false
+                # obstacle detection that triggered a rooftop-altitude climb.
+                # Real external blockers still trigger a clearance climb, but
+                # we drop the `max(..., rooftop_y)` floor so the drone only
+                # climbs as high as actually needed.
+                inter_blockers = [
+                    b for b in WORLD.obstacles_in_path(
+                        _last_rx,
+                        level_y,
+                        _last_rz,
+                        first_rx,
+                        level_y,
+                        first_rz,
+                        samples=30,
+                        margin=0.0,
+                    )
+                    if b.id != building.id
+                ]
                 if inter_blockers:
                     over_y = round(max(b.max_y for b in inter_blockers) + 3.0, 2)
-                    over_y = max(over_y, round(rooftop_y, 2))
                     waypoints.append(
                         {
                             "x": round(_last_rx, 2),
                             "y": over_y,
                             "z": round(_last_rz, 2),
-                            "level_y": rooftop_y,
+                            "level_y": over_y,
                             "reason": "inter-floor climb",
                             "transit": True,
                         }
@@ -232,7 +293,7 @@ def plan_building_vertical_sweep(
                             "x": round(first_rx, 2),
                             "y": over_y,
                             "z": round(first_rz, 2),
-                            "level_y": rooftop_y,
+                            "level_y": over_y,
                             "reason": "inter-floor cruise",
                             "transit": True,
                         }
@@ -272,14 +333,14 @@ def plan_building_vertical_sweep(
                 ring.append((p_min_x, west_stop_z, "west face stop (adjacent building)"))
             ring.append((nw_x, nw_z, "close perimeter"))
 
-            if entry_window is not None and abs(level_y - float(entry_window["y"])) < 1e-3:
+            if chosen_entry is not None and abs(level_y - float(chosen_entry["y"])) < 1e-3:
                 ring = [
                     item
                     for item in ring
                     if not (
-                        item[2] == f"window scan {entry_window['face']} floor {entry_window['floor']}"
-                        and abs(item[0] - float(entry_window["x"])) < 1e-3
-                        and abs(item[1] - float(entry_window["z"])) < 1e-3
+                        item[2] == f"window scan {chosen_entry['face']} floor {chosen_entry['floor']}"
+                        and abs(item[0] - float(chosen_entry["x"])) < 1e-3
+                        and abs(item[1] - float(chosen_entry["z"])) < 1e-3
                     )
                 ]
 
@@ -301,51 +362,6 @@ def plan_building_vertical_sweep(
                 )
                 prev_rx, prev_rz = rx, rz
 
-    if not floor_levels and top_y > start_y:
-        levels.append(rooftop_y)
-        prev_rx, prev_rz = nw_x, nw_z
-        for rx, rz, label in [
-            (nw_x, nw_z, "rooftop NW scan"),
-            (ne_x, ne_z, "rooftop NE scan"),
-            (se_x, se_z, "rooftop SE scan"),
-            (sw_x, sw_z, "rooftop SW scan"),
-        ]:
-            for extra in _route_sweep_segment(prev_rx, rooftop_y, prev_rz, rx, rooftop_y, rz, building.id, rooftop_y):
-                waypoints.append({**extra, "level_y": rooftop_y})
-            waypoints.append(
-                {
-                    "x": round(rx, 2),
-                    "y": rooftop_y,
-                    "z": round(rz, 2),
-                    "level_y": rooftop_y,
-                    "reason": label,
-                }
-            )
-            prev_rx, prev_rz = rx, rz
-
-    if floor_levels:
-        ac_x, ac_z = corners[_current_corner]
-        waypoints.append(
-            {
-                "x": ac_x,
-                "y": rooftop_y,
-                "z": ac_z,
-                "level_y": rooftop_y,
-                "reason": "ascent to rooftop altitude",
-            }
-        )
-
-    if rooftop_y not in levels:
-        levels.append(rooftop_y)
-    waypoints.append(
-        {
-            "x": building.cx,
-            "y": rooftop_y,
-            "z": building.cz,
-            "level_y": rooftop_y,
-            "reason": "rooftop scan",
-        }
-    )
 
     return {
         "matched_building": True,
@@ -368,7 +384,10 @@ def plan_building_vertical_sweep(
         "rooftop_position": {"x": building.cx, "y": rooftop_y, "z": building.cz},
         "summary": (
             f"Vertical perimeter sweep for building {building.id}: "
-            f"{len(levels)} level(s), {len(waypoints)} waypoint(s), "
-            f"covering y={levels[0]:.1f}..{levels[-1]:.1f} above flood={FLOOD_LEVEL:.1f}."
+            f"{len(levels)} level(s), {len(waypoints)} waypoint(s)."
+            if not levels
+            else f"Vertical perimeter sweep for building {building.id}: "
+                 f"{len(levels)} level(s), {len(waypoints)} waypoint(s), "
+                 f"covering y={levels[0]:.1f}..{levels[-1]:.1f} above flood={FLOOD_LEVEL:.1f}."
         ),
     }

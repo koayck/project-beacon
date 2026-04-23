@@ -51,7 +51,18 @@ def _route_sweep_segment(
     clear_y: float,
     margin: float = 1.0,
 ) -> list[dict]:
-    """Return intermediate transit waypoints needed to route around blocked sweep legs."""
+    """Return intermediate transit waypoints needed to route around blocked sweep legs.
+
+    Only *external* buildings (id != exclude_id) trigger a climb-over.  The
+    building-under-sweep is intentionally excluded: with the ring start corner
+    now derived from the entry window face (sweep_planner.py), intra-floor ring
+    segments stay on the same face at standoff distance and never cross the
+    target building's footprint.  Re-including the target building here is
+    therefore unnecessary and caused false-positive rooftop-altitude climbs.
+
+    The detour altitude is ``blocker.max_y + 3`` — NOT forced up to the full
+    rooftop sweep altitude.
+    """
     blockers = [
         b for b in WORLD.obstacles_in_path(
             from_x,
@@ -65,24 +76,10 @@ def _route_sweep_segment(
         )
         if b.id != exclude_id
     ]
-    blockers.extend(
-        b for b in WORLD.obstacles_in_path(
-            from_x,
-            from_y,
-            from_z,
-            to_x,
-            to_y,
-            to_z,
-            samples=30,
-            margin=0.0,
-        )
-        if b.id == exclude_id
-    )
     if not blockers:
         return []
 
     over_y = round(max(b.max_y for b in blockers) + 3.0, 2)
-    over_y = max(over_y, round(clear_y, 2))
     return [
         {
             "x": round(from_x, 2),

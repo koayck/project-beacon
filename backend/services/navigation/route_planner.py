@@ -49,7 +49,7 @@ async def plan_route(
     target_y: float | None = None,
     snap_to_building_center: bool = False,
     exclude_building_id: int | None = None,
-    entry_mode: Literal["nearest_floor", "extreme_floor"] = "nearest_floor",
+    entry_mode: Literal["nearest_floor", "ground_entry"] = "nearest_floor",
 ) -> dict:
     """
     Pre-compute a collision-free route from the drone's current position.
@@ -62,10 +62,13 @@ async def plan_route(
       - ``"nearest_floor"`` (default): pick the window closest in Y to ``target_y``
         (building center by default), with XZ distance as tiebreaker. Preserves
         historical behavior.
-      - ``"extreme_floor"``: restrict candidates to the lowest- and highest-floor
-        windows only, and pick the one minimizing 3D Euclidean distance from the
-        drone's current position. When the restricted set is empty, fall back to
-        ``nearest_floor`` behavior with ``entry_mode_fallback=True`` recorded.
+      - ``"ground_entry"``: restrict candidates to the lowest-floor windows only,
+        and pick the one minimizing horizontal (XZ) distance from the drone's
+        current position. This mimics a human pilot entering a building at the
+        ground floor nearest their approach, rather than climbing to the roof
+        first. When the restricted set is empty (e.g. building has no windows),
+        fall back to ``nearest_floor`` behavior with ``entry_mode_fallback=True``
+        recorded.
 
     Args:
         asset_id: Drone identifier.
@@ -91,50 +94,129 @@ async def plan_route(
     if nearby is not None and nearby.windows:
         available_window_waypoints = nearby.window_scan_waypoints(standoff=WINDOW_SCAN_STANDOFF_M)
 
-    entry_floor_kind: str | None = None
     entry_mode_fallback = False
     if snap_to_building_center and nearby is not None:
         target_x = nearby.cx
         target_z = nearby.cz
 
-        if entry_mode == "extreme_floor" and available_window_waypoints:
-            floors = {int(wp["floor"]) for wp in available_window_waypoints}
-            lowest_floor = min(floors)
-            highest_floor = max(floors)
-            # Iterate lowest-floor candidates first so ties resolve to "lowest"
-            # (Python's min() is stable on equal keys). The lowest-floor list is
-            # non-empty whenever available_window_waypoints is non-empty, since
-            # lowest_floor = min(floors) is guaranteed to exist in the set.
-            ordered_candidates: list[dict] = [
+        if entry_mode == "ground_entry" and available_window_waypoints:
+            # Exclude windows whose y sits below the flood surface (or within
+            # the flood clearance band used by the sweep planner). Otherwise the
+            # drone would dive briefly underwater to reach a submerged first-
+            # floor window before starting the above-water sweep.
+            flood_level = context.get_flood_level()
+            _GROUND_ENTRY_FLOOD_CLEARANCE_M = 0.5  # matches sweep_planner default
+            min_entry_y = max(flood_level + _GROUND_ENTRY_FLOOD_CLEARANCE_M, 0.5)
+            above_flood_waypoints = [
                 wp for wp in available_window_waypoints
-                if int(wp["floor"]) == lowest_floor
-            ] + [
-                wp for wp in available_window_waypoints
-                if int(wp["floor"]) == highest_floor and highest_floor != lowest_floor
+                if float(wp["y"]) >= min_entry_y
             ]
-            assert ordered_candidates, (
-                "extreme_floor candidate set is empty despite non-empty "
-                "available_window_waypoints — this is a logic error"
-            )
 
-            def _drone_dist_3d(wp: dict) -> float:
+            if above_flood_waypoints:
+                floors = {int(wp["floor"]) for wp in above_flood_waypoints}
+                lowest_floor = min(floors)
+                ground_candidates: list[dict] = [
+                    wp for wp in above_flood_waypoints
+                    if int(wp["floor"]) == lowest_floor
+                ]
+            else:
+                # Every window is submerged — no valid ground entry exists.
+                # Fall through to the nearest_floor fallback below so the caller
+                # can still produce a route (which will snap to an unreachable
+                # window and likely return an error, which is the right signal).
+                ground_candidates = []
+
+            if not ground_candidates:
+                entry_mode_fallback = True
+
+            def _drone_dist_xz(wp: dict) -> float:
                 dx = float(wp["x"]) - cx
-                dy = float(wp["y"]) - cy
                 dz = float(wp["z"]) - cz
-                return math.sqrt(dx * dx + dy * dy + dz * dz)
+                return math.sqrt(dx * dx + dz * dz)
 
-            selected_window_waypoint = min(ordered_candidates, key=_drone_dist_3d)
-            entry_floor_kind = (
-                "lowest"
-                if int(selected_window_waypoint["floor"]) == lowest_floor
-                else "highest"
-            )
+            def _is_on_approach_side(wp: dict, bld: object) -> bool:
+                """Return True when the drone is on the outward side of the window's face.
+
+                Filters out windows on faces where the building body sits between the
+                drone and the window (i.e., the drone would need to fly over or around
+                the building to reach that face).  Only outward-side faces are useful
+                as entry candidates.
+
+                Face outward-normal convention:
+                  north face (outward normal = −Z): drone must be at z < building.min_z
+                  south face (outward normal = +Z): drone must be at z > building.max_z
+                  east  face (outward normal = +X): drone must be at x > building.max_x
+                  west  face (outward normal = −X): drone must be at x < building.min_x
+                """
+                face = wp.get("face", "")
+                if face == "north":
+                    return float(cz) < float(bld.min_z)  # type: ignore[attr-defined]
+                if face == "south":
+                    return float(cz) > float(bld.max_z)  # type: ignore[attr-defined]
+                if face == "east":
+                    return float(cx) > float(bld.max_x)  # type: ignore[attr-defined]
+                if face == "west":
+                    return float(cx) < float(bld.min_x)  # type: ignore[attr-defined]
+                return True
+
+            def _is_los_clear(wp: dict, target_building_id: int) -> bool:
+                """LOS check: return True if no *external* building blocks the line.
+
+                The target building is excluded — its own facade is not a blocker for
+                a window-approach path; the window sits on the surface of the facade.
+                """
+                wp_x = float(wp["x"])
+                wp_y = float(wp["y"])
+                wp_z = float(wp["z"])
+                # Use drone altitude or window altitude, whichever is higher
+                approach_y = max(float(cy), wp_y)
+                los_samples = _segment_sample_count(
+                    float(cx), approach_y, float(cz),
+                    wp_x, wp_y, wp_z,
+                    base_samples=30,
+                )
+                los_blockers = world.obstacles_in_path(
+                    float(cx), approach_y, float(cz),
+                    wp_x, wp_y, wp_z,
+                    samples=los_samples,
+                    margin=0.0,
+                )
+                external_blockers = [
+                    b for b in los_blockers
+                    if getattr(b, "id", None) != target_building_id
+                ]
+                return len(external_blockers) == 0
+
+            target_building_id = nearby.id
+
+            # Apply approach-side filter: only consider windows on faces where
+            # the drone is on the outward side.  This eliminates far-side windows
+            # that would require crossing the building.  If the filter removes all
+            # candidates (edge case: drone is inside the building XZ footprint),
+            # fall back to the unfiltered set so we don't deadlock selection.
+            approach_side_candidates = [
+                wp for wp in ground_candidates
+                if _is_on_approach_side(wp, nearby)
+            ]
+            if not approach_side_candidates:
+                approach_side_candidates = ground_candidates
+
+            ranked = sorted(approach_side_candidates, key=_drone_dist_xz)
+
+            # LOS-only Stage 1: pick the XZ-nearest approach-side candidate whose
+            # straight line to the drone is not blocked by external buildings.
+            # Cap at 4 checks to bound worst-case cost.
+            for candidate in ranked[:4]:
+                if _is_los_clear(candidate, target_building_id):
+                    selected_window_waypoint = candidate
+                    break
+
+            # If no reachable candidate found, fall through to nearest_floor fallback.
+            if selected_window_waypoint is None:
+                entry_mode_fallback = True
 
         if selected_window_waypoint is None:
-            # Either entry_mode == "nearest_floor", or extreme_floor had no
-            # candidates (e.g. building has no windows). In the latter case,
-            # record the fallback so callers can detect it.
-            if entry_mode == "extreme_floor":
+            if entry_mode == "ground_entry":
                 entry_mode_fallback = True
             selected_window_waypoint = select_window_waypoint(
                 available_window_waypoints,
@@ -184,10 +266,8 @@ async def plan_route(
             target_resolution["selected_window_waypoint"] = selected_window_waypoint
 
     if target_resolution is not None:
-        if entry_mode == "extreme_floor":
-            target_resolution["entry_mode"] = "extreme_floor"
-            if entry_floor_kind is not None:
-                target_resolution["entry_floor_kind"] = entry_floor_kind
+        if entry_mode == "ground_entry":
+            target_resolution["entry_mode"] = "ground_entry"
             if entry_mode_fallback:
                 target_resolution["entry_mode_fallback"] = True
 

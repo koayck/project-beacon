@@ -55,4 +55,5 @@ async def test_discover_fleet_auto_uplinks_new_assets(monkeypatch: pytest.Monkey
     assert result["fleet"][0]["uplinked"] is True
     upsert.assert_awaited_once()
     assert register_calls == [("BEACON-01", "localhost", 50051)]
-    switch_world.assert_awaited_once_with("BEACON-01", 1)
+    # Hat Yai world (index 2) is the default (commit 40f71f0).
+    switch_world.assert_awaited_once_with("BEACON-01", 2)

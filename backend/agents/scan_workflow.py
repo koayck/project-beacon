@@ -323,6 +323,8 @@ def build_aggregated_scan_report(tool_context: ToolContext) -> dict:
         + f"\n{thin}\n{total_line}\n{div}"
     )
 
+    _trigger_mission_complete_recall(tool_context)
+
     return {
         "success": True,
         "summary": summary,
@@ -330,6 +332,48 @@ def build_aggregated_scan_report(tool_context: ToolContext) -> dict:
         "total_survivors": total_survivors,
         "results": results,
     }
+
+
+def _trigger_mission_complete_recall(tool_context: ToolContext) -> None:
+    """Schedule post-mission recall for every drone that participated.
+
+    Idempotent via the ``mission_recall_scheduled`` state flag — build_aggregated
+    _scan_report may be reached through multiple paths (loop-exit + reporter
+    agent), but the recall tasks must only spawn once per mission.
+    """
+    if tool_context.state.get("mission_recall_scheduled"):
+        return
+
+    raw_assets = tool_context.state.get("active_fleet_assets", "[]")
+    try:
+        asset_ids = (
+            json.loads(raw_assets) if isinstance(raw_assets, str) else raw_assets
+        )
+    except (json.JSONDecodeError, TypeError):
+        asset_ids = []
+    if not isinstance(asset_ids, list) or not asset_ids:
+        return
+
+    try:
+        from backend.runtime import grpc_client as runtime_grpc_client
+        from backend.runtime import ws_broadcaster
+        from backend.services.api import return_to_base
+        from backend.services.mission_recall import schedule_mission_complete_recall
+    except Exception:  # noqa: BLE001
+        import logging as _logging
+        _logging.getLogger(__name__).exception(
+            "Failed to import mission_recall dependencies; skipping post-mission recall",
+        )
+        return
+
+    schedule_mission_complete_recall(
+        asset_ids,
+        get_status=runtime_grpc_client.get_status,
+        return_to_base_fn=return_to_base,
+        publish_event=ws_broadcaster.broadcast,
+        trigger_reason="scan_mission_complete",
+    )
+    tool_context.state["mission_recall_scheduled"] = True
 
 
 _build_report_tool = FunctionTool(func=build_aggregated_scan_report)

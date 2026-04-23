@@ -39,9 +39,10 @@ class TestDirectPath:
     @pytest.mark.asyncio
     async def test_direct_with_explicit_altitude(self):
         result = await plan_route("BEACON-01", 10.0, -5.0, 20.0)
-        assert result["strategy"] == "direct"
-        assert len(result["waypoints"]) == 1
-        wp = result["waypoints"][0]
+        # 3D A* is the primary strategy (commit a79a5f6); either is acceptable
+        # as long as the final waypoint hits the requested target.
+        assert result["strategy"] in {"direct", "a_star_3d"}
+        wp = result["waypoints"][-1]
         assert wp["x"] == 10.0
         assert wp["y"] == 20.0
         assert wp["z"] == -5.0
@@ -49,13 +50,13 @@ class TestDirectPath:
     @pytest.mark.asyncio
     async def test_direct_no_building_nearby_defaults_10m(self):
         result = await plan_route("BEACON-01", 50.0, 50.0)
-        assert result["strategy"] == "direct"
-        assert result["waypoints"][0]["y"] == 10.0
+        assert result["strategy"] in {"direct", "a_star_3d"}
+        assert result["to"]["y"] == 10.0
 
     @pytest.mark.asyncio
     async def test_clamp_altitude_minimum_5m(self):
         result = await plan_route("BEACON-01", 50.0, 50.0, 2.0)
-        assert result["waypoints"][0]["y"] == 5.0
+        assert result["to"]["y"] == 5.0
 
 
 class TestAutoAltitude:

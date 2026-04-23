@@ -31,10 +31,28 @@ export interface SectorReveal {
 
 export type DroneMap = Record<string, TelemetryPayload>
 
+export interface SystemEvent {
+  type: 'system_event'
+  event:
+    | 'auto_recall_started'
+    | 'auto_recall_completed'
+    | 'auto_recall_failed'
+    | string
+  asset_id?: string
+  battery?: number
+  threshold?: number
+  reason?: string
+  error?: string
+  message?: string
+}
+
 /** If no heartbeat arrives for this long, mark the drone OFFLINE. */
 const STALE_TIMEOUT_MS = 3000
 
-export function useTelemetry(url: string): {
+export function useTelemetry(
+  url: string,
+  onSystemEvent?: (event: SystemEvent) => void,
+): {
   drones: DroneMap
   exploredSectors: Set<string>
   latestReveals: SectorReveal[]
@@ -44,6 +62,11 @@ export function useTelemetry(url: string): {
   const [latestReveals, setLatestReveals] = useState<SectorReveal[]>([])
   const wsRef = useRef<WebSocket | null>(null)
   const lastSeenRef = useRef<Record<string, number>>({})
+  // Keep a ref so the onmessage handler (bound once) always calls the latest callback.
+  const onSystemEventRef = useRef<typeof onSystemEvent>(onSystemEvent)
+  useEffect(() => {
+    onSystemEventRef.current = onSystemEvent
+  }, [onSystemEvent])
 
   useEffect(() => {
     let cancelled = false
@@ -62,6 +85,11 @@ export function useTelemetry(url: string): {
             if (Array.isArray(raw.explored_sectors)) {
               setExploredSectors(new Set(raw.explored_sectors))
             }
+            return
+          }
+
+          if (raw.type === 'system_event') {
+            onSystemEventRef.current?.(raw as SystemEvent)
             return
           }
 

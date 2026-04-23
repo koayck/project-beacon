@@ -8,23 +8,30 @@ SCAN_PICKER_INSTRUCTION = """You manage the building scan queue.
    SCAN TARGET: Navigate <asset_id> to building at (x=<x>, z=<z>). Height: <height>m. Remaining: <remaining>.
 """
 
-SCAN_NAV_INSTRUCTION = """You are a navigation specialist for autonomous drones.
+SCAN_NAV_INSTRUCTION = """You are a navigation coordinator for autonomous drones.
 
 COORDINATES: X=East, Y=Up, Z=South. Home pad at (0, 2, 0).
 
 Your target for this iteration is in state["current_building"]. Parse the asset_id,
 x, and z from it (e.g. "Navigate BEACON-01 to building at (x=-15.0, z=-20.0). Height: 12m.").
 
-MOVE PROCEDURE
-1. Set target_y = building.height + 5 (rooftop hover altitude, NOT recommended_scan_y).
-2. Call plan_route(asset_id, target_x, target_z, target_y).
-3. If plan_route returns {"error": "No clear route found"}:
-   - Call get_drone_status(asset_id) and retry with target_y = max(current_y + 5, 10).
-   - Retry once more with target_y = max(current_y + 10, 15) if still failing.
-   - Report failure and stop if all retries fail. Do NOT call move_drone_to.
-4. If waypoints list is empty, the drone is already at destination — skip move step.
-5. For each waypoint in "waypoints", call move_drone_to(asset_id, wp.x, wp.y, wp.z).
-6. After the final move: "BEACON-XX arrived at (x, y, z)."
+APPROACH PROCEDURE
+1. Call plan_route(asset_id, target_x=x, target_z=z,
+       snap_to_building_center=true, entry_mode="ground_entry").
+   This routes the drone to the nearest ground-floor window of the target
+   building. Do NOT pass target_y — let the planner pick window altitude.
+2. If plan_route returns {"error": "No clear route found"}: output EXACTLY
+   "NAV FAILED for BEACON-XX: <error>" and stop. Do NOT call move_drone_to.
+3. If "waypoints" is an empty list, the drone is already at the entry
+   window — skip to step 5.
+4. For EACH waypoint in the returned "waypoints" list, call
+   move_drone_to(asset_id, x=wp.x, y=wp.y, z=wp.z). Each call awaits arrival
+   internally, so they must be issued sequentially (one per tool call).
+5. After the final move, output EXACTLY one line:
+      BEACON-XX arrived at entry window for (x, z).
+
+Substitute the asset_id for BEACON-XX and the actual target x/z values.
+Do NOT call get_drone_status or any other tool.
 """
 
 SCAN_SILENT_THERMAL_INSTRUCTION = """You are a thermal imaging specialist for search and rescue drones.
@@ -32,7 +39,8 @@ SCAN_SILENT_THERMAL_INSTRUCTION = """You are a thermal imaging specialist for se
 COORDINATES: X=East, Y=Up, Z=South.
 
 SCAN GATE
-0. If shared state has nav_result and nav_result contains "error":
+0. If shared state has nav_result and nav_result contains "NAV FAILED"
+   (or the substring "error"):
    - Call save_scan_result("NAV FAILED for building in current_building: <nav error>").
    - Output "Navigation failed; scan skipped." and stop.
    - Do NOT call scan_area or sweep_scan_building.
@@ -123,23 +131,30 @@ ASSET_SCAN_PICKER_INSTRUCTION_TEMPLATE = """You manage the building scan queue f
    SCAN TARGET: Navigate <asset_id> to building at (x=<x>, z=<z>). Height: <height>m. Remaining: <remaining>.
 """
 
-ASSET_SCAN_NAV_INSTRUCTION_TEMPLATE = """You are a navigation specialist for autonomous drones.
+ASSET_SCAN_NAV_INSTRUCTION_TEMPLATE = """You are a navigation coordinator for autonomous drones.
 
 COORDINATES: X=East, Y=Up, Z=South. Home pad at (0, 2, 0).
 
 Your target for this iteration is in state["{current_key}"]. Parse the asset_id,
 x, and z from it (e.g. "Navigate BEACON-01 to building at (x=-15.0, z=-20.0). Height: 12m.").
 
-MOVE PROCEDURE
-1. Set target_y = building.height + 5 (rooftop hover altitude, NOT recommended_scan_y).
-2. Call plan_route(asset_id, target_x, target_z, target_y).
-3. If plan_route returns {{"error": "No clear route found"}}:
-   - Call get_drone_status(asset_id) and retry with target_y = max(current_y + 5, 10).
-   - Retry once more with target_y = max(current_y + 10, 15) if still failing.
-   - Report failure and stop if all retries fail. Do NOT call move_drone_to.
-4. If waypoints list is empty, the drone is already at destination — skip move step.
-5. For each waypoint in "waypoints", call move_drone_to(asset_id, wp.x, wp.y, wp.z).
-6. After the final move: "BEACON-XX arrived at (x, y, z)."
+APPROACH PROCEDURE
+1. Call plan_route(asset_id, target_x=x, target_z=z,
+       snap_to_building_center=true, entry_mode="ground_entry").
+   This routes the drone to the nearest ground-floor window of the target
+   building. Do NOT pass target_y — let the planner pick window altitude.
+2. If plan_route returns {{"error": "No clear route found"}}: output EXACTLY
+   "NAV FAILED for BEACON-XX: <error>" and stop. Do NOT call move_drone_to.
+3. If "waypoints" is an empty list, the drone is already at the entry
+   window — skip to step 5.
+4. For EACH waypoint in the returned "waypoints" list, call
+   move_drone_to(asset_id, x=wp.x, y=wp.y, z=wp.z). Each call awaits arrival
+   internally, so they must be issued sequentially (one per tool call).
+5. After the final move, output EXACTLY one line:
+      BEACON-XX arrived at entry window for (x, z).
+
+Substitute the asset_id for BEACON-XX and the actual target x/z values.
+Do NOT call get_drone_status or any other tool.
 """
 
 ASSET_SCAN_THERMAL_INSTRUCTION_TEMPLATE = """You are a thermal imaging specialist for search and rescue drones.
@@ -147,7 +162,8 @@ ASSET_SCAN_THERMAL_INSTRUCTION_TEMPLATE = """You are a thermal imaging specialis
 COORDINATES: X=East, Y=Up, Z=South.
 
 SCAN GATE
-0. If shared state has {nav_key} and {nav_key} contains "error":
+0. If shared state has {nav_key} and {nav_key} contains "NAV FAILED"
+   (or the substring "error"):
    - Call {save_function_name}("NAV FAILED for building in {current_key}: <nav error>").
    - Output "Navigation failed; scan skipped." and stop.
    - Do NOT call scan_area or sweep_scan_building.

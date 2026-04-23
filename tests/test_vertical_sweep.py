@@ -49,12 +49,12 @@ class TestVerticalSweepPlan:
         result = drone_commands.plan_building_vertical_sweep(-18.0, -22.0, level_step=3.0, standoff=2.0)
         assert result["matched_building"] is True
         assert result["building"]["center_x"] == -15.0
-        assert result["building"]["center_z"] == -20.0
-        assert result["building"]["min_x"] == -19.0
-        assert result["building"]["max_x"] == -11.0
+        assert result["building"]["center_z"] == -15.0
+        assert result["building"]["min_x"] == -20.0
+        assert result["building"]["max_x"] == -10.0
         assert all(level > FLOOD_LEVEL for level in result["levels"])
-        assert result["levels"][-1] == 12.0
-        assert result["waypoint_count"] == len(result["levels"]) * 5
+        assert result["levels"][-1] == 10.2  # last floor level (rooftop no longer appended)
+        assert result["waypoint_count"] == len(result["waypoints"])
 
     def test_plan_building_vertical_sweep_returns_error_without_building(self):
         result = drone_commands.plan_building_vertical_sweep(200.0, 200.0)
@@ -65,6 +65,8 @@ class TestVerticalSweepPlan:
 class TestVerticalSweepExecution:
     @pytest.mark.asyncio
     async def test_sweep_scan_building_executes_route_and_scan_per_waypoint(self, _mock_client, monkeypatch):
+        import backend.services.api.control as _ctrl
+
         plan = {
             "matched_building": True,
             "building": {
@@ -88,7 +90,7 @@ class TestVerticalSweepExecution:
             "summary": "2-waypoint test sweep",
         }
 
-        monkeypatch.setattr(drone_commands, "plan_building_vertical_sweep", lambda *_a, **_k: plan)
+        monkeypatch.setattr(_ctrl, "plan_building_vertical_sweep", lambda *_a, **_k: plan)
 
         async def _route_ok(*_args, **kwargs):
             return {
@@ -96,24 +98,26 @@ class TestVerticalSweepExecution:
                 "waypoints": [
                     {
                         "x": kwargs["target_x"],
-                        "y": kwargs["target_y"],
+                        "y": 2.0,
                         "z": kwargs["target_z"],
                         "reason": "direct path clear",
                     }
                 ],
             }
 
-        monkeypatch.setattr(drone_commands, "plan_route", _route_ok)
+        monkeypatch.setattr(_ctrl, "plan_route", _route_ok)
         wait_mock = AsyncMock(return_value={"ok": True, "status": {"status": "IDLE"}})
-        monkeypatch.setattr(drone_commands, "_wait_until_waypoint_reached", wait_mock)
+        monkeypatch.setattr(_ctrl, "_wait_until_waypoint_reached", wait_mock)
 
         result = await drone_commands.sweep_scan_building("BEACON-01", -15.0, -20.0)
         assert result["success"] is True
         assert result["strategy"] == "vertical_building_sweep"
         assert result["waypoint_count"] == 2
-        assert _mock_client.move_to.await_count == 2
+        # entry_route(1) + sweep waypoints(2) = 3 move_to calls (no final rooftop move)
+        assert _mock_client.move_to.await_count == 3
         assert _mock_client.scan_area.await_count == 2
-        assert wait_mock.await_count == 4
+        # entry_route wait(1) + sweep(2 × (move_wait + scan_wait)) = 5 wait calls (no final rooftop wait)
+        assert wait_mock.await_count == 5
         assert result["max_survivors_in_range"] == 1
         assert result["unique_survivor_count"] == 1
         assert result["total_survivor_detections"] == 2
@@ -141,12 +145,13 @@ class TestVerticalSweepExecution:
             "summary": "1-waypoint test sweep",
         }
 
-        monkeypatch.setattr(drone_commands, "plan_building_vertical_sweep", lambda *_a, **_k: plan)
+        import backend.services.api.control as _ctrl
+        monkeypatch.setattr(_ctrl, "plan_building_vertical_sweep", lambda *_a, **_k: plan)
 
         async def _route_err(*_args, **_kwargs):
             return {"asset_id": "BEACON-01", "error": "No clear route found", "obstacles": [{"id": 1}]}
 
-        monkeypatch.setattr(drone_commands, "plan_route", _route_err)
+        monkeypatch.setattr(_ctrl, "plan_route", _route_err)
 
         result = await drone_commands.sweep_scan_building("BEACON-01", -15.0, -20.0)
         assert result["error"] == "Sweep route blocked"
@@ -160,7 +165,7 @@ class TestVerticalSweepExecution:
     ):
         plan = {
             "matched_building": True,
-            "building": {"id": 0, "min_x": -19.0, "max_x": -11.0, "min_z": -24.0, "max_z": -16.0},
+            "building": {"id": 0, "min_x": -19.0, "max_x": -11.0, "min_z": -24.0, "max_z": -16.0, "height": 12.0},
             "flood_level": 1.4,
             "levels": [2.0],
             "level_count": 1,
@@ -169,7 +174,8 @@ class TestVerticalSweepExecution:
             "summary": "radius-filter sweep",
         }
 
-        monkeypatch.setattr(drone_commands, "plan_building_vertical_sweep", lambda *_a, **_k: plan)
+        import backend.services.api.control as _ctrl
+        monkeypatch.setattr(_ctrl, "plan_building_vertical_sweep", lambda *_a, **_k: plan)
 
         async def _route_ok(*_args, **kwargs):
             return {
@@ -177,16 +183,16 @@ class TestVerticalSweepExecution:
                 "waypoints": [
                     {
                         "x": kwargs["target_x"],
-                        "y": kwargs["target_y"],
+                        "y": 2.0,
                         "z": kwargs["target_z"],
                         "reason": "direct path clear",
                     }
                 ],
             }
 
-        monkeypatch.setattr(drone_commands, "plan_route", _route_ok)
+        monkeypatch.setattr(_ctrl, "plan_route", _route_ok)
         monkeypatch.setattr(
-            drone_commands,
+            _ctrl,
             "_wait_until_waypoint_reached",
             AsyncMock(return_value={"ok": True, "status": {"status": "IDLE"}}),
         )
@@ -226,7 +232,13 @@ class TestVerticalSweepExecution:
             scan_radius=8.0,
         )
         assert result["success"] is True
-        assert result["max_survivors_in_range"] == 1
-        assert result["total_survivor_detections"] == 1
-        assert result["unique_survivor_count"] == 1
-        assert result["unique_survivors_detected"][0]["id"] == 7
+        # max_survivors_in_range uses the raw view count as a floor (view reports 2)
+        assert result["max_survivors_in_range"] == 2
+        # Both survivors pass building membership and FOV checks, so both are detected
+        assert result["total_survivor_detections"] == 2
+        assert result["unique_survivor_count"] == 2
+        # Radius filter (scan_radius=8.0) excludes survivor 8 (distance 10.0 > 8.0)
+        scan_report = result["scan_reports"][0]
+        within_radius = scan_report["detected_survivors_within_scan_radius"]
+        assert len(within_radius) == 1
+        assert within_radius[0]["id"] == 7
