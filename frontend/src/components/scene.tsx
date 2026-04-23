@@ -1411,14 +1411,15 @@ export default function SARScene() {
     const approach = computeApproachPosition(simBuildings, survivor)
     const approachCoords = `(${approach.x.toFixed(1)}, ${approach.y.toFixed(1)}, ${approach.z.toFixed(1)})`
 
-    // Pick the drone closest to base (0,0,0) — it minimises total trip since
-    // the drone must return to base first to collect supplies.
+    // Pick the drone closest to the survivor — the backend workflow auto-inserts
+    // a station pickup leg before the delivery, so drone-to-station-to-survivor
+    // is planned server-side; we just want to minimise the visible drone travel.
     const droneEntries = Object.values(drones)
     let chosenId = ASSET_ID  // fallback
     if (droneEntries.length > 0) {
       let bestDist = Infinity
       for (const d of droneEntries) {
-        const dist = distance3D(d.x, d.y, d.z, 0, 0, 0)
+        const dist = distance3D(d.x, d.y, d.z, survivor.x, survivor.y, survivor.z)
         if (dist < bestDist) {
           bestDist = dist
           chosenId = d.asset_id
@@ -1445,19 +1446,21 @@ export default function SARScene() {
     const balconyHost = findBalconyHostBuilding(worldBuildings, survivor)
     const balconyName = balconyHost?.name?.trim() || (balconyHost ? `building ${balconyHost.id}` : '')
     const isInside = findBuildingAt(simBuildings, survivor.x, survivor.y, survivor.z) !== null
+    // Prompt tells the commander the delivery target and drop waypoint; the
+    // supply workflow inserts the station pickup leg automatically, so we do
+    // NOT instruct the LLM to return to base or pick up supplies — the LLM
+    // would otherwise hallucinate a home-pad leg even though the real route
+    // goes through the nearest user-placed supply station.
     const prompt = balconyHost
       ? `Deliver emergency supplies to survivor at balcony coordinates ${coords}. ` +
-        `First return to base at (0, 0, 0) to collect supplies, ` +
-        `then navigate to drop waypoint ${throwOriginCoords} above the rooftop edge of ${balconyName} ` +
+        `Navigate to drop waypoint ${throwOriginCoords} above the rooftop edge of ${balconyName} ` +
         `and drop supplies downward to the balcony target from that exact waypoint.`
       : isInside
       ? `Deliver emergency supplies to survivor at ${coords}. ` +
-        `First return to base at (0, 0, 0) to collect supplies, ` +
-        `then navigate to exact window drop waypoint ${approachCoords} outside the building and drop from there. ` +
+        `Navigate to exact window drop waypoint ${approachCoords} outside the building and drop from there. ` +
         `Do NOT navigate to the survivor's interior coordinates.`
       : `Deliver emergency supplies to survivor at ${coords}. ` +
-        `First return to base at (0, 2, 0) to collect supplies, ` +
-        `then navigate to ${coords} to drop supplies.`
+        `Navigate to ${coords} to drop supplies.`
 
     setPendingScanPrompt(prompt)
     setPendingScanAssetId(chosenId)
