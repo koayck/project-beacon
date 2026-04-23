@@ -976,20 +976,28 @@ export default function SARScene() {
   const deliveryDroneId = useRef<string | null>(null)
 
   // ── Cargo pickup at supply station ────────────────────────────────────────
-  // A drone counts as "picked up" when it arrives within BASE_PICKUP_RANGE of
-  // any placed supply station's platform top. We don't know exactly which
-  // station the backend routed it to, but physically it only reaches one, so
-  // a match against the nearest station is sufficient.
-  const nearestStationDistance = useCallback(
-    (x: number, y: number, z: number): number => {
+  // A drone counts as "picked up" when it is horizontally near a station AND
+  // has descended near the platform. Splitting the checks (instead of one 3D
+  // sphere) avoids the cruise-altitude false-positive while still being
+  // forgiving of the few-tenths-of-a-metre jitter that the old 3D test kept
+  // missing at the arrival waypoint.
+  const nearestStationHorizontal = useCallback(
+    (x: number, z: number): number => {
       let best = Infinity
       for (const s of stations) {
-        const d = distance3D(x, y, z, s.x, STATION_PLATFORM_TOP_Y, s.z)
+        const d = distance2D(x, z, s.x, s.z)
         if (d < best) best = d
       }
       return best
     },
     [stations],
+  )
+
+  // Platform top is ~1.8; backend routes pickups to y=2.0. Allow a few metres
+  // above the platform so late descent / small sim jitter still counts.
+  const isAtPickupAltitude = useCallback(
+    (y: number): boolean => y <= STATION_PLATFORM_TOP_Y + 2.5,
+    [],
   )
 
   const cargoPickedUp = useRef(false)
@@ -1000,8 +1008,10 @@ export default function SARScene() {
     for (const assetId of pendingSupplyPickupRef.current) {
       const telemetryEntry = drones[assetId]
       if (!telemetryEntry) continue
-      const dist = nearestStationDistance(telemetryEntry.x, telemetryEntry.y, telemetryEntry.z)
-      if (dist < BASE_PICKUP_RANGE) reachedStation.push(assetId)
+      const dist = nearestStationHorizontal(telemetryEntry.x, telemetryEntry.z)
+      if (dist < BASE_PICKUP_RANGE && isAtPickupAltitude(telemetryEntry.y)) {
+        reachedStation.push(assetId)
+      }
     }
     if (reachedStation.length === 0) return
 
@@ -1010,7 +1020,7 @@ export default function SARScene() {
       for (const assetId of reachedStation) next.add(assetId)
       return next
     })
-  }, [drones, stations, nearestStationDistance])
+  }, [drones, stations, nearestStationHorizontal, isAtPickupAltitude])
 
   useEffect(() => {
     if (backendSupplyDispatchSeenRef.current) return
@@ -1021,13 +1031,13 @@ export default function SARScene() {
     const t = drones[deliveryDroneId.current]
     if (!t) return
 
-    const dist = nearestStationDistance(t.x, t.y, t.z)
-    if (dist < BASE_PICKUP_RANGE) {
+    const dist = nearestStationHorizontal(t.x, t.z)
+    if (dist < BASE_PICKUP_RANGE && isAtPickupAltitude(t.y)) {
       cargoPickedUp.current = true
       setHasCargo(true)
       addLog(`📦 Supplies collected from station (${deliveryDroneId.current})`)
     }
-  }, [drones, stations, nearestStationDistance, addLog])
+  }, [drones, stations, nearestStationHorizontal, isAtPickupAltitude, addLog])
 
   // ── Cargo throw trigger ───────────────────────────────────────────────────
 
