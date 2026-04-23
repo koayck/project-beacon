@@ -8,7 +8,7 @@ from typing import Any
 
 import asyncpg
 
-from backend.db.models import Asset, MissionLog, LicenseRecord
+from backend.db.models import Asset, MissionLog, LicenseRecord, MissionRun
 
 _SUPABASE_DB_URL = os.environ.get("SUPABASE_DB_URL", "").strip()
 
@@ -184,8 +184,87 @@ class _LicenseRepository:
             )
 
 
+# ── Mission Runs ──────────────────────────────────────────────────────────────
+
+class _MissionRunRepository:
+    async def create(self, run: MissionRun) -> int:
+        """Insert one mission run row and return its ID."""
+        query = """
+            INSERT INTO mission_runs (
+                simulation_id, asset_id, prompt, status,
+                started_at, ended_at, duration_ms, ttft_ms,
+                tool_call_count, survivors_detected, survivors_rescued,
+                result_summary, error_message
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            RETURNING id
+        """
+        async with _connect() as conn:
+            row = await conn.fetchrow(
+                query,
+                run.simulation_id,
+                run.asset_id,
+                run.prompt,
+                run.status,
+                run.started_at,
+                run.ended_at,
+                run.duration_ms,
+                run.ttft_ms,
+                run.tool_call_count,
+                run.survivors_detected,
+                run.survivors_rescued,
+                run.result_summary,
+                run.error_message,
+            )
+        return int(row["id"])
+
+    async def list_recent(self, limit: int = 50) -> list[MissionRun]:
+        """Return the most recent mission runs, newest first."""
+        query = """
+            SELECT id, simulation_id, asset_id, prompt, status,
+                   started_at, ended_at, duration_ms, ttft_ms,
+                   tool_call_count, survivors_detected, survivors_rescued,
+                   result_summary, error_message, created_at
+            FROM mission_runs
+            ORDER BY id DESC
+            LIMIT $1
+        """
+        async with _connect() as conn:
+            rows = await conn.fetch(query, limit)
+        return [MissionRun(**_row_to_dict(row)) for row in rows]
+
+    async def overview(self) -> dict[str, Any]:
+        """Return dashboard overview aggregates in a single query."""
+        query = """
+            SELECT
+              COUNT(*)                                                        AS total_missions,
+              AVG(ttft_ms) FILTER (WHERE ttft_ms IS NOT NULL)                 AS avg_ttft_ms,
+              AVG(duration_ms) FILTER (WHERE duration_ms IS NOT NULL)         AS avg_duration_ms,
+              COALESCE(SUM(survivors_rescued), 0)                             AS total_survivors_rescued,
+              COALESCE(SUM(survivors_detected), 0)                            AS total_survivors_detected,
+              CASE WHEN COALESCE(SUM(survivors_detected), 0) > 0
+                   THEN 100.0 * SUM(survivors_rescued) / SUM(survivors_detected)
+                   ELSE 0 END                                                 AS rescue_success_rate,
+              AVG(EXTRACT(EPOCH FROM (ended_at - started_at)))
+                  FILTER (WHERE status='success' AND survivors_rescued > 0)   AS avg_rescue_time_s
+            FROM mission_runs
+        """
+        async with _connect() as conn:
+            row = await conn.fetchrow(query)
+        result = _row_to_dict(row) if row is not None else {}
+        # Cast Decimal/numeric types to float for JSON serialisation.
+        for key in ("avg_ttft_ms", "avg_duration_ms", "rescue_success_rate", "avg_rescue_time_s"):
+            if result.get(key) is not None:
+                result[key] = float(result[key])
+        for key in ("total_missions", "total_survivors_rescued", "total_survivors_detected"):
+            if result.get(key) is not None:
+                result[key] = int(result[key])
+        return result
+
+
 # ── Singletons ────────────────────────────────────────────────────────────────
 
 asset_repo = _AssetRepository()
 mission_log_repo = _MissionLogRepository()
 license_repo = _LicenseRepository()
+mission_run_repo = _MissionRunRepository()
