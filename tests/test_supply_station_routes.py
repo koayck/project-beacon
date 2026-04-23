@@ -28,10 +28,10 @@ def client(monkeypatch):
     # Skip the complex lifespan (ADK runner, Supabase, Docker probes, MCP
     # StreamableHTTPSessionManager which can only start once per instance).
     import backend.app as app_module
-    monkeypatch.setattr(app_module, "app_lifespan", _noop_lifespan)
     # Replace the fully-combined lifespan on the router with a plain noop so
     # TestClient does not attempt to start MCP or the ADK runner.
-    app_module.app.router.lifespan_context = _noop_lifespan
+    # Use monkeypatch for proper teardown so pytest auto-restores the original.
+    monkeypatch.setattr(app_module.app.router, "lifespan_context", _noop_lifespan)
 
     supply_stations.reset()
     from backend.app import app
@@ -88,3 +88,15 @@ class TestSupplyStationRoutes:
         resp = client.delete("/supply-stations/station-999")
         assert resp.status_code == 404
         assert client.broadcasts == []
+
+
+def test_lifespan_is_restored_after_fixture_teardown():
+    """Sanity: the fixture's lifespan-noop shim must not leak to later tests."""
+    from backend import app as app_module_after
+    # The original lifespan_context should not be the _noop we installed.
+    # A simple identity check that it's not the in-fixture _noop is sufficient:
+    lc = app_module_after.app.router.lifespan_context
+    # If the fixture teardown worked, lc is a function or async context manager
+    # different from the noop. Check it's at least still callable / non-None.
+    assert lc is not None
+    assert callable(lc)

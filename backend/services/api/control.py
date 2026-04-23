@@ -510,6 +510,14 @@ def add_supply_station(x: float, z: float) -> dict:
 
 
 def remove_supply_station(station_id: str) -> dict:
-    """Remove a user-placed station. Raises ValueError for 'home'. Returns {'ok': False} if unknown."""
+    """Remove a user-placed station.
+
+    Returns {"ok": True} on success. Returns {"ok": False} when the id is
+    unknown — callers that want to surface this as "not found" must handle
+    that case themselves (the HTTP route converts it to 404).
+
+    Raises:
+        ValueError: If caller attempts to remove the built-in home station.
+    """
     removed = _supply_stations_registry.remove_station(station_id)
     return {"ok": removed}
