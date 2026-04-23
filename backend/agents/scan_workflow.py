@@ -4,14 +4,14 @@ buildings are completed, then emit one consolidated final report.
 
 Workflow:
   1) Commander routes mission command to scan_workflow.
-  2) Fleet assignment stage resolves target buildings and assigns drones.
+    2) Fleet assignment stage assigns drones using pre-resolved scan_buildings.
   3) Parallel fleet scan stage prepares an interleaved mission queue.
   4) LoopAgent runs pick -> navigate -> sweep-scan repeatedly until done.
   5) Final report agent emits one consolidated operator report.
 
 Structure:
     scan_workflow (SequentialAgent)
-    ├── fleet_assignment_stage    # resolver + assignment
+    ├── fleet_assignment_stage    # assignment from pre-resolved targets
     └── fleet_scan_executor_agent # prepare queue + LoopAgent + final reporter
 
 Session state keys:
@@ -41,7 +41,6 @@ from backend.instructions.scan_workflow_text import (
     SCAN_FLEET_ASSIGNER_INSTRUCTION,
     SCAN_FLEET_EXECUTOR_INSTRUCTION,
     SCAN_REPORT_INSTRUCTION,
-    SCAN_RESOLVER_INSTRUCTION,
 )
 
 _SCAN_QUEUE_LOCK = asyncio.Lock()
@@ -951,29 +950,12 @@ _fleet_scan_prep_agent = Agent(
 )
 
 
-# ── Resolver agent ─────────────────────────────────────────────────────────────
-
-_RESOLVER_INSTRUCTION = SCAN_RESOLVER_INSTRUCTION
-
-_scan_resolver_agent = Agent(
-    name="scan_resolver_agent",
-    model=QWEN3_INSTRUCT,
-    description=(
-        "Resolves the scan target — a single building or all buildings in an area — "
-        "and stores the list for the scan loop."
-    ),
-    generate_content_config=QWEN3_GEN_CONFIG,
-    output_key="scan_buildings",
-    instruction=_RESOLVER_INSTRUCTION,
-    tools=[make_toolset(["resolve_scan_target", "find_buildings_in_area"])],
-)
-
 # ── Fleet assignment stage ─────────────────────────────────────────────────────
 
 _fleet_assignment_stage = SequentialAgent(
     name="fleet_assignment_stage",
-    description="Resolve scan targets first, then perform fleet assignment.",
-    sub_agents=[_scan_resolver_agent, _fleet_assigner_agent],
+    description="Perform fleet assignment using pre-resolved scan targets.",
+    sub_agents=[_fleet_assigner_agent],
 )
 
 

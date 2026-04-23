@@ -29,7 +29,7 @@ On startup, the app builds an ADK Runner with the root commander agent and an in
 ## 3) Root Commander and Core Decision Flow
 
 Root commander definition:
-- [backend/agents/enhanced_commander.py](backend/agents/enhanced_commander.py)
+- [backend/agents/commander.py](backend/agents/commander.py)
 
 Root commander sub-agents:
 - [backend/agents/command_parser.py](backend/agents/command_parser.py)
@@ -46,7 +46,7 @@ Commander logic in plain language:
 4. Use recovery logic when execution fails in a non-trivial way.
 
 Complexity gate function:
-- [backend/agents/enhanced_commander.py](backend/agents/enhanced_commander.py#L20)
+- [backend/agents/commander.py](backend/agents/commander.py#L20)
 
 ## 4) Request Lifecycle from Operator to Result
 
@@ -211,7 +211,7 @@ If a mission output looks wrong, verify in this order:
 
 Suggested reading order:
 1. [backend/app.py](backend/app.py)
-2. [backend/agents/enhanced_commander.py](backend/agents/enhanced_commander.py)
+2. [backend/agents/commander.py](backend/agents/commander.py)
 3. [backend/agents/command_parser.py](backend/agents/command_parser.py)
 4. [backend/agents/navigation.py](backend/agents/navigation.py)
 5. [backend/agents/scan_workflow.py](backend/agents/scan_workflow.py)

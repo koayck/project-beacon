@@ -72,8 +72,8 @@ async def test_app_lifespan_closes_adk_runner(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(app_module, "Runner", FakeRunner)
     monkeypatch.setitem(
         sys.modules,
-        "backend.agents.enhanced_commander",
-        SimpleNamespace(enhanced_commander=object()),
+        "backend.agents.commander",
+        SimpleNamespace(commander=object()),
     )
 
     app_module._adk_runner = None
