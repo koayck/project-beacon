@@ -367,7 +367,7 @@ export default function SARScene() {
     })
   }, [])
 
-  const { drones, exploredSectors, latestReveals } = useTelemetry(WS_URL, handleSystemEvent, onSupplyStationEvent)
+  const { drones, exploredSectors, latestReveals } = useTelemetry(TELEMETRY_WS_URL, handleSystemEvent, onSupplyStationEvent)
 
   useEffect(() => {
     fetchSupplyStations()
