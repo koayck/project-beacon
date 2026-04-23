@@ -35,11 +35,16 @@ If execution fails with unrecoverable error:
 
 EXAMPLES:
 
-Simple Command: "Move BEACON-01 to (10, -5)"
+# Note: Avoid labelling examples as "Simple" vs "Complex" — earlier versions
+# of these examples nudged the LLM to hallucinate a non-existent
+# `is_complex_mission` tool call. Keep the examples themselves, drop the
+# complexity framing.
+
+"Move BEACON-01 to (10, -5)"
 -> Parse: CommandIntent(mission_type=move, targets=[{x:10, z:-5}], asset_ids=["BEACON-01"])
 -> Execute: navigation_agent.execute_navigation_sequence("BEACON-01", 10, -5)
 
-Complex Command: "Scan all flooded buildings for survivors"
+"Scan all flooded buildings for survivors"
 -> Parse: CommandIntent(mission_type=scan, targets=[{type:area}], asset_ids=["auto"])
 -> Execute: thermal_agent for each assigned building in parallel
 

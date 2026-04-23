@@ -5,7 +5,8 @@
     "flood_level_m": 1.4,
     "surv_hover_m": 0.55,
     "window_scan_standoff_m": 4.0,
-    "building_proximity_margin_m": 2.0
+    "building_proximity_margin_m": 2.0,
+    "world_half_span_m": 50.0
   },
   "buildings": [
     {

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -32,3 +32,22 @@ class LicenseRecord(BaseModel):
     seat_count: int = 1
     activated_at: Optional[str] = None
     is_active: bool = True
+
+
+class MissionRun(BaseModel):
+    id: Optional[int] = None
+    simulation_id: Optional[str] = None
+    asset_id: str
+    prompt: str
+    status: Literal["success", "failed", "aborted"]
+    started_at: datetime
+    ended_at: Optional[datetime] = None
+    duration_ms: Optional[int] = None
+    ttft_ms: Optional[int] = None
+    tool_call_count: int = 0
+    survivors_detected: int = 0
+    survivors_rescued: int = 0
+    result_summary: Optional[str] = None
+    error_message: Optional[str] = None
+    langfuse_trace_id: Optional[str] = None
+    created_at: Optional[str] = None

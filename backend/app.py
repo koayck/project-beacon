@@ -22,8 +22,8 @@ from google.genai import types
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
-from backend.db.repository import init_db, asset_repo, mission_log_repo
-from backend.db.models import Asset, MissionLog
+from backend.db.repository import init_db, asset_repo, mission_log_repo, mission_run_repo
+from backend.db.models import Asset, MissionLog, MissionRun
 from backend.grpc.client import DroneGrpcClient
 from backend.output_format import (
     is_structured_sweep_report,
@@ -36,16 +36,22 @@ from backend.licensing.routes import router as license_router
 from backend.mcp.server import beacon_mcp
 from backend.runtime import grpc_client, udp_listener, ws_broadcaster
 from backend.services.api import (
+    add_supply_station,
     discover_fleet,
     ensure_uplink,
     list_all_drones,
+    list_supply_stations,
     recall_swarm,
+    remove_supply_station,
     return_to_base as rtb_service,
     restore_registered_connections,
     scan_frequencies as scan_unlinked_frequencies,
     set_drone_speed,
 )
+from backend.services import supply_stations as _supply_stations_registry
 from backend.services.auto_recall import AutoRecallMonitor
+from backend.services.langfuse_enrichment import fetch_trace_metrics
+from backend.services.mission_runs import MissionRunAccumulator
 from backend.services.simulation_store import ParsedScanTargets, SimulationStore
 
 import logging
@@ -97,6 +103,27 @@ _STARLINK_STATUS_FILE = Path(
 
 
 _mcp_http_app = beacon_mcp.http_app(path="/", transport="streamable-http")
+
+
+def _get_langfuse_client():
+    """Return the authenticated Langfuse client, or None if unavailable."""
+    try:
+        from langfuse import get_client
+        client = get_client()
+        if client.auth_check():
+            return client
+    except Exception:
+        pass
+    return None
+
+
+class _nullcontext:
+    """Minimal sync context manager used when Langfuse is unavailable."""
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
 
 def _as_dict(value: object) -> dict | None:
     try:
@@ -371,6 +398,7 @@ async def app_lifespan(app: FastAPI):
 
     await udp_listener.start(on_update=_on_telemetry_update)
     await restore_registered_connections()
+    _supply_stations_registry.reset()
 
     # from backend.tools.drone_commands import set_client as _set_drone_cmd_client
     # _set_drone_cmd_client(grpc_client)
@@ -478,6 +506,11 @@ class SimulationBuilding(BaseModel):
 
 class SimulationStateSyncRequest(BaseModel):
     scanned_buildings: list[SimulationBuilding]
+
+
+class SupplyStationCreateRequest(BaseModel):
+    x: float
+    z: float
 
 
 def _extract_asset_index(asset_id: str) -> int | None:
@@ -762,6 +795,10 @@ async def switch_world(world_id: int) -> dict:
     # so re-entering a world starts fresh.
     cancel_scout_sweep()
     exploration_tracker.reset()
+    # User-placed stations are world-specific (their coords may be inside
+    # buildings in a different world). Reset the registry and notify clients.
+    _supply_stations_registry.reset()
+    ws_broadcaster.broadcast({"type": "supply_stations_reset"})
     # Tell each connected drone container to reload its world data
     results = {}
     for aid in grpc_client.registered_asset_ids():
@@ -791,6 +828,47 @@ async def list_assets() -> list[dict]:
 async def list_fleet() -> dict:
     """Return the active fleet state the MCP agent reasons over."""
     return await discover_fleet(auto_uplink=False, include_registered=True)
+
+
+@app.get("/dashboard")
+async def get_dashboard() -> dict:
+    """Return dashboard payload: overview aggregates + recent runs + current mission.
+
+    Enriches each run with Langfuse cost/token data (best-effort; falls back
+    silently if Langfuse is unreachable or the run has no trace ID).
+    """
+    overview = await mission_run_repo.overview()
+    runs = await mission_run_repo.list_recent(limit=50)
+
+    run_dicts = [run.model_dump(mode="json") for run in runs]
+    trace_ids = [r.get("langfuse_trace_id") for r in run_dicts if r.get("langfuse_trace_id")]
+    trace_metrics = await fetch_trace_metrics(trace_ids)
+
+    total_cost = 0.0
+    total_tokens = 0
+    for run_dict in run_dicts:
+        tid = run_dict.get("langfuse_trace_id")
+        metrics = trace_metrics.get(tid) if tid else None
+        if metrics:
+            run_dict.update(metrics)
+            if metrics.get("cost_usd") is not None:
+                total_cost += metrics["cost_usd"]
+            if metrics.get("total_tokens") is not None:
+                total_tokens += metrics["total_tokens"]
+        else:
+            run_dict.setdefault("input_tokens", None)
+            run_dict.setdefault("output_tokens", None)
+            run_dict.setdefault("total_tokens", None)
+            run_dict.setdefault("cost_usd", None)
+
+    overview["total_cost_usd"] = round(total_cost, 4) if total_cost > 0 else 0.0
+    overview["total_tokens"] = total_tokens
+
+    return {
+        "overview": overview,
+        "runs": run_dicts,
+        "currentMission": None,
+    }
 
 
 @app.post("/fleet/recall")
@@ -899,6 +977,38 @@ async def scan_frequencies() -> dict:
     return {"discovered": await scan_unlinked_frequencies()}
 
 
+@app.get("/supply-stations")
+async def get_supply_stations() -> dict:
+    """Return all known supply stations (home + user-placed)."""
+    return list_supply_stations()
+
+
+@app.post("/supply-stations")
+async def create_supply_station(req: SupplyStationCreateRequest) -> dict:
+    """Place a new user station. 400 on invalid placement, 429 at station cap."""
+    try:
+        result = add_supply_station(x=req.x, z=req.z)
+    except _supply_stations_registry.StationLimitReached as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ws_broadcaster.broadcast({"type": "supply_station_added", "station": result["station"]})
+    return result
+
+
+@app.delete("/supply-stations/{station_id}")
+async def delete_supply_station(station_id: str) -> dict:
+    """Remove a user station. 400 for 'home', 404 if unknown."""
+    try:
+        result = remove_supply_station(station_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not result["ok"]:
+        raise HTTPException(status_code=404, detail=f"Station {station_id} not found")
+    ws_broadcaster.broadcast({"type": "supply_station_removed", "id": station_id})
+    return {"ok": True}
+
+
 @app.post("/command")
 async def send_command(req: CommandRequest) -> dict:
     """
@@ -938,6 +1048,17 @@ async def send_command(req: CommandRequest) -> dict:
                 "unscanned_buildings": unscanned_refs,
             }
 
+    accumulator = MissionRunAccumulator(
+        asset_id=req.asset_id or "FLEET",
+        prompt=req.prompt,
+        simulation_id=req.simulation_id,
+    )
+    stream_start = time.perf_counter()
+    first_token_time: float | None = None
+    status = "success"
+    error_text: str | None = None
+    langfuse_trace_id: str | None = None
+
     prompt = "Mission: " + req.prompt
     content = types.Content(
         role="user", parts=[types.Part(text=prompt)]
@@ -953,30 +1074,72 @@ async def send_command(req: CommandRequest) -> dict:
     if runner is None:
         raise HTTPException(status_code=503, detail="ADK runner not initialised")
 
-    async for event in runner.run_async(
-        user_id=_ADK_USER_ID,
-        session_id=session_id,
-        new_message=content,
-    ):
-        if not event.content or not event.content.parts:
-            continue
+    lf_client = _get_langfuse_client()
+    lf_ctx = (
+        lf_client.start_as_current_observation(name="mission_run", as_type="span")
+        if lf_client is not None
+        else _nullcontext()
+    )
+    try:
+        with lf_ctx:
+            if lf_client is not None:
+                try:
+                    langfuse_trace_id = lf_client.get_current_trace_id()
+                except Exception:
+                    langfuse_trace_id = None
+            async for event in runner.run_async(
+                user_id=_ADK_USER_ID,
+                session_id=session_id,
+                new_message=content,
+            ):
+                if not event.content or not event.content.parts:
+                    continue
 
-        for part in event.content.parts:
-            if part.text and part.text.strip():
-                text_candidates.append(part.text)
-            elif part.function_response:
-                resp = dict(part.function_response.response or {})
-                message = resp.get("message")
-                message_text = str(message).strip() if message is not None else ""
-                if message_text:
-                    text_candidates.append(message_text)
-                scanned_building_rows.extend(_extract_scanned_building_rows(resp))
+                for part in event.content.parts:
+                    if part.function_call:
+                        accumulator.record_tool_call()
+                        if first_token_time is None:
+                            first_token_time = time.perf_counter()
+                    elif part.text and part.text.strip():
+                        if first_token_time is None:
+                            first_token_time = time.perf_counter()
+                        text_candidates.append(part.text)
+                    elif part.function_response:
+                        resp = dict(part.function_response.response or {})
+                        message = resp.get("message")
+                        message_text = str(message).strip() if message is not None else ""
+                        if message_text:
+                            text_candidates.append(message_text)
+                        scanned_building_rows.extend(_extract_scanned_building_rows(resp))
+                        survivors_payload = _extract_survivor_coords(resp)
+                        supply_dispatches = _extract_supply_dispatches(part.function_response.name, resp)
+                        if survivors_payload:
+                            accumulator.record_detections(survivors_payload)
+                        if supply_dispatches:
+                            accumulator.record_deliveries(supply_dispatches)
 
-        if event.is_final_response():
-            for part in event.content.parts:
-                if part.text and part.text.strip():
-                    response_text = part.text
-                    break
+                if event.is_final_response():
+                    for part in event.content.parts:
+                        if part.text and part.text.strip():
+                            response_text = part.text
+                            break
+    except Exception as exc:
+        status = "failed"
+        error_text = _first_exception_message(exc)
+        raise
+    finally:
+        ttft_ms = round((first_token_time - stream_start) * 1000) if first_token_time else None
+        try:
+            run = accumulator.build(
+                status=status,
+                ttft_ms=ttft_ms,
+                final_text=response_text,
+                error=error_text,
+                langfuse_trace_id=langfuse_trace_id,
+            )
+            await mission_run_repo.create(run)
+        except Exception as exc:
+            logging.getLogger(__name__).exception("Failed to persist mission_run: %s", exc)
 
     print(f"ADK final response: {response_text}")
     print(f"ADK text_candidates: {text_candidates}")
@@ -1067,11 +1230,27 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
         final_text = ""
         queue: asyncio.Queue = asyncio.Queue()
         stream_start = time.perf_counter()
+        accumulator = MissionRunAccumulator(
+            asset_id=req.asset_id or "FLEET",
+            prompt=req.prompt,
+            simulation_id=req.simulation_id,
+        )
+        status = "success"
+        error_text: str | None = None
+        aborted = False
         first_token_time: float | None = None
         total_chars = 0
         scanned_building_rows: list[dict[str, object]] = []
         sweep_prompt = is_sweep_scan_prompt(req.prompt)
         preferred_sweep_report: str | None = None
+        langfuse_trace_id: str | None = None
+
+        lf_client = _get_langfuse_client()
+        lf_ctx = (
+            lf_client.start_as_current_observation(name="mission_run", as_type="span")
+            if lf_client is not None
+            else _nullcontext()
+        )
 
         async def adk_loop() -> None:
             try:
@@ -1095,12 +1274,22 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                 elapsed += 3
                 await queue.put(("heartbeat", elapsed))
 
+        # Enter the Langfuse span BEFORE creating adk_task so the OTel context
+        # propagates into the background task. Exit in the outer finally.
+        lf_ctx.__enter__()
+        if lf_client is not None:
+            try:
+                langfuse_trace_id = lf_client.get_current_trace_id()
+            except Exception:
+                langfuse_trace_id = None
+
         adk_task = asyncio.create_task(adk_loop())
         hb_task = asyncio.create_task(heartbeat())
 
         try:
             while True:
                 if await request.is_disconnected():
+                    aborted = True
                     break
                 kind, data = await queue.get()
 
@@ -1109,6 +1298,8 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                     continue
 
                 if kind == "error":
+                    status = "failed"
+                    error_text = str(data)
                     yield f"data: {json.dumps({'type': 'error', 'text': str(data)})}\n\n"
                     break
 
@@ -1124,6 +1315,7 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                         yield f"data: {json.dumps(payload)}\n\n"
                         continue
                     if part.function_call:
+                        accumulator.record_tool_call()
                         payload = {
                             "type": "tool_call",
                             "name": part.function_call.name,
@@ -1137,6 +1329,10 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                         message = resp.get("message")
                         survivors_payload = _extract_survivor_coords(resp)
                         supply_dispatches = _extract_supply_dispatches(part.function_response.name, resp)
+                        if survivors_payload:
+                            accumulator.record_detections(survivors_payload)
+                        if supply_dispatches:
+                            accumulator.record_deliveries(supply_dispatches)
                         if (
                             sweep_prompt
                             and isinstance(message, str)
@@ -1196,16 +1392,44 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
             hb_task.cancel()
             adk_task.cancel()
             await asyncio.gather(adk_task, hb_task, return_exceptions=True)
+
+            # Exit the Langfuse span so the trace is flushed and cost is computed.
+            try:
+                lf_ctx.__exit__(None, None, None)
+            except Exception:
+                pass
+
+            # Compute both int and float variants of ttft_ms:
+            # - int for the DB INTEGER column
+            # - float (1 decimal) for the SSE `done` event (existing behaviour)
+            ttft_ms_int = round((first_token_time - stream_start) * 1000) if first_token_time else None
+            ttft_ms = round((first_token_time - stream_start) * 1000, 1) if first_token_time else None
+
+            final_status = "aborted" if aborted else status
+            try:
+                run = accumulator.build(
+                    status=final_status,
+                    ttft_ms=ttft_ms_int,
+                    final_text=final_text,
+                    error=error_text,
+                    langfuse_trace_id=langfuse_trace_id,
+                )
+                await mission_run_repo.create(run)
+            except Exception as exc:
+                logging.getLogger(__name__).exception("Failed to persist mission_run: %s", exc)
+
             await mission_log_repo.create(MissionLog(
                 asset_id=req.asset_id or "FLEET",
                 command="natural_language",
                 params=req.prompt,
                 result=final_text,
             ))
+
             now = time.perf_counter()
-            ttft_ms = round((first_token_time - stream_start) * 1000, 1) if first_token_time else None
             gen_secs = (now - first_token_time) if first_token_time else None
             tps = round((total_chars / 4) / gen_secs, 1) if gen_secs and gen_secs > 0 else None
+
+            # Existing simulation-store persistence logic (unchanged):
             if req.simulation_id and simulation_store is not None:
                 if not parsed_targets.has_scan_intent:
                     parsed_targets_local = SimulationStore.parse_scan_targets(req.prompt, _known_building_rows())
@@ -1215,6 +1439,7 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                     await simulation_store.mark_buildings_scanned(req.simulation_id, parsed_targets_local.building_ids)
                 if scanned_building_rows:
                     await simulation_store.merge_survivor_state(req.simulation_id, scanned_building_rows)
+
             yield f"data: {json.dumps({'type': 'done', 'ttft_ms': ttft_ms, 'tps': tps})}\n\n"
 
     return StreamingResponse(

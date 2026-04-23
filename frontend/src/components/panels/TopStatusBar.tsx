@@ -1,3 +1,5 @@
+import Link from 'next/link'
+
 interface SurvivorPoint {
   x: number
   y: number
@@ -73,6 +75,12 @@ export function TopStatusBar({
       </div>
 
       <div className="flex items-center gap-2.5 text-xs">
+        <Link
+          href="/dashboard"
+          className="rounded-[3px] border border-[rgba(50,136,204,0.3)] px-2 py-0.5 tracking-[0.8px] text-[#88ccee] hover:bg-[rgba(40,140,180,0.1)]"
+        >
+          PERFORMANCE →
+        </Link>
         <span className={isConnected
           ? 'rounded-[3px] border border-[rgba(0,190,255,0.45)] bg-[rgba(0,120,255,0.18)] px-2 py-0.5 tracking-[0.8px] text-[#8ed8ff]'
           : 'rounded-[3px] border border-[rgba(255,170,70,0.32)] bg-[rgba(255,120,20,0.12)] px-2 py-0.5 tracking-[0.8px] text-[#ffc488]'

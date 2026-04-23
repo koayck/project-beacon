@@ -6,6 +6,7 @@ import type { ActivityItem } from './StatPanel'
 
 interface MetricsPanelProps {
   missionStartTs: number | null
+  missionEndTs: number | null
   activities: ActivityItem[]
   detectedCount: number
   rescuedCount: number
@@ -37,6 +38,7 @@ function MetricRow({ label, value, unit, color }: { label: string; value: string
 
 export function MetricsPanel({
   missionStartTs,
+  missionEndTs,
   activities,
   detectedCount,
   rescuedCount,
@@ -50,19 +52,25 @@ export function MetricsPanel({
   const [elapsed, setElapsed] = useState(0)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Live mission timer
+  // Live mission timer (per-command; freezes on missionEndTs)
   useEffect(() => {
-    if (intervalRef.current) clearInterval(intervalRef.current)
-    if (missionStartTs) {
-      setElapsed(Date.now() - missionStartTs)
-      intervalRef.current = setInterval(() => {
-        setElapsed(Date.now() - missionStartTs)
-      }, 1000)
-    } else {
-      setElapsed(0)
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
     }
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
-  }, [missionStartTs])
+    if (!missionStartTs) {
+      setElapsed(0)
+      return
+    }
+    const computeElapsed = () => (missionEndTs ?? Date.now()) - missionStartTs
+    setElapsed(computeElapsed())
+    if (missionEndTs === null) {
+      intervalRef.current = setInterval(() => setElapsed(computeElapsed()), 1000)
+    }
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current)
+    }
+  }, [missionStartTs, missionEndTs])
 
   // Derived metrics
   const buildingsScanned = useMemo(() => {
@@ -134,8 +142,14 @@ export function MetricsPanel({
         <div className="px-[14px] pb-[10px]">
           {/* Mission timer — prominent */}
           <div className="mb-[6px] flex items-center justify-between border-b border-[rgba(40,140,180,0.1)] pb-[6px]">
-            <span className="text-[10px] tracking-[1px] text-[#556677]">MISSION TIME</span>
-            <span className={`text-[18px] font-bold tabular-nums ${missionStartTs ? 'text-[#44ddff]' : 'text-[#334455]'}`}>
+            <span className="text-[10px] tracking-[1px] text-[#556677]">
+              {missionEndTs !== null && missionStartTs !== null ? 'LAST MISSION' : 'MISSION TIME'}
+            </span>
+            <span className={`text-[18px] font-bold tabular-nums ${
+              missionStartTs === null ? 'text-[#334455]' :
+              missionEndTs === null   ? 'text-[#44ddff]' :
+                                        'text-[#88a]'
+            }`}>
               {formatDuration(elapsed)}
             </span>
           </div>
