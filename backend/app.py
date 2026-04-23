@@ -784,6 +784,18 @@ async def list_fleet() -> dict:
     return await discover_fleet(auto_uplink=False, include_registered=True)
 
 
+@app.get("/dashboard")
+async def get_dashboard() -> dict:
+    """Return dashboard payload: overview aggregates + recent runs + current mission."""
+    overview = await mission_run_repo.overview()
+    runs = await mission_run_repo.list_recent(limit=50)
+    return {
+        "overview": overview,
+        "runs": [run.model_dump(mode="json") for run in runs],
+        "currentMission": None,
+    }
+
+
 @app.post("/fleet/recall")
 async def fleet_recall() -> dict:
     """Command all registered drones to return to base concurrently."""
