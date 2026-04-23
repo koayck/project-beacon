@@ -243,6 +243,10 @@ class _MissionRunRepository:
               COUNT(*)                                                        AS total_missions,
               AVG(ttft_ms) FILTER (WHERE ttft_ms IS NOT NULL)                 AS avg_ttft_ms,
               AVG(duration_ms) FILTER (WHERE duration_ms IS NOT NULL)         AS avg_duration_ms,
+              PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ttft_ms)
+                  FILTER (WHERE ttft_ms IS NOT NULL)                          AS median_ttft_ms,
+              PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_ms)
+                  FILTER (WHERE duration_ms IS NOT NULL)                      AS median_duration_ms,
               COALESCE(SUM(survivors_rescued), 0)                             AS total_survivors_rescued,
               COALESCE(SUM(survivors_detected), 0)                            AS total_survivors_detected,
               COALESCE(SUM(tool_call_count), 0)                               AS total_tool_calls,
@@ -260,6 +264,8 @@ class _MissionRunRepository:
         for key in (
             "avg_ttft_ms",
             "avg_duration_ms",
+            "median_ttft_ms",
+            "median_duration_ms",
             "rescue_success_rate",
             "avg_rescue_time_s",
         ):
