@@ -57,45 +57,58 @@ def _supply_target_key(target: dict) -> str:
     return f"xyz:{x:.2f},{y_value:.2f},{z:.2f}"
 
 
-async def _go_to_station(
+async def _plan_route_with_altitude_retry(
     *,
     asset_id: str,
-    station: dict,
+    target_x: float,
+    target_z: float,
+    target_y: float,
     plan_route_fn: Callable[..., Awaitable[dict]],
-    move_drone_to_fn: Callable[..., Awaitable[dict]],
-    wait_until_waypoint_reached_fn: Callable[..., Awaitable[dict]],
 ) -> dict:
-    """Route the drone to a supply station's (x, z) at pickup altitude.
+    """Plan a route to (target_x, target_y, target_z), retrying once at a
+    higher altitude on initial failure.
 
-    Uses the same move-and-wait pattern as the delivery leg, with a single
-    high-altitude retry on initial route failure.
+    Returns the successful route dict, or the original error route when both
+    attempts fail. Callers check ``"error" in result`` to branch.
     """
-    pickup_y = 2.0  # Matches the home-pad landing altitude used by return_workflow.
-
     route = await plan_route_fn(
         asset_id=asset_id,
-        target_x=float(station["x"]),
-        target_z=float(station["z"]),
-        target_y=pickup_y,
+        target_x=target_x,
+        target_z=target_z,
+        target_y=target_y,
         snap_to_building_center=False,
     )
-    if "error" in route:
-        retry_route = await plan_route_fn(
-            asset_id=asset_id,
-            target_x=float(station["x"]),
-            target_z=float(station["z"]),
-            target_y=max(pickup_y + 5.0, 15.0),
-            snap_to_building_center=False,
-        )
-        if "error" in retry_route:
-            return {
-                "error": route["error"],
-                "pickup_station": station,
-                "route": route,
-            }
-        route = retry_route
+    if "error" not in route:
+        return route
 
-    for index, waypoint in enumerate(route.get("waypoints", []), start=1):
+    retry_route = await plan_route_fn(
+        asset_id=asset_id,
+        target_x=target_x,
+        target_z=target_z,
+        target_y=max(target_y + 5.0, 15.0),
+        snap_to_building_center=False,
+    )
+    return retry_route if "error" not in retry_route else route
+
+
+async def _execute_route_waypoints(
+    *,
+    asset_id: str,
+    waypoints: list[dict],
+    move_drone_to_fn: Callable[..., Awaitable[dict]],
+    wait_until_waypoint_reached_fn: Callable[..., Awaitable[dict]],
+    move_error_msg: str,
+    wait_error_msg: str,
+) -> dict:
+    """Fly every waypoint in order: issue move, then poll until arrival.
+
+    Returns ``{"ok": True}`` on success. On failure, returns a diagnostic dict
+    without an ``"ok"`` key — instead includes ``error``, ``waypoint``, and
+    either ``move_result`` (move-side failure) or ``failed_waypoint_index``
+    plus ``status`` (wait-side failure). Callers wrap with their own
+    leg-specific context (asset_id, building, station, etc.).
+    """
+    for index, waypoint in enumerate(waypoints, start=1):
         move_result = await move_drone_to_fn(
             asset_id=asset_id,
             x=float(waypoint["x"]),
@@ -104,8 +117,7 @@ async def _go_to_station(
         )
         if not move_result.get("success", True):
             return {
-                "error": move_result.get("message", "Failed while moving on pickup route."),
-                "pickup_station": station,
+                "error": move_result.get("message", move_error_msg),
                 "waypoint": waypoint,
                 "move_result": move_result,
             }
@@ -120,12 +132,46 @@ async def _go_to_station(
         )
         if not wait_result.get("ok", False):
             return {
-                "error": wait_result.get("error", "Pickup waypoint not reached."),
-                "pickup_station": station,
+                "error": wait_result.get("error", wait_error_msg),
                 "waypoint": waypoint,
                 "failed_waypoint_index": index,
                 "status": wait_result.get("status"),
             }
+
+    return {"ok": True}
+
+
+async def _go_to_station(
+    *,
+    asset_id: str,
+    station: dict,
+    plan_route_fn: Callable[..., Awaitable[dict]],
+    move_drone_to_fn: Callable[..., Awaitable[dict]],
+    wait_until_waypoint_reached_fn: Callable[..., Awaitable[dict]],
+) -> dict:
+    """Route the drone to a supply station's (x, z) at pickup altitude."""
+    pickup_y = 2.0  # Matches the home-pad landing altitude used by return_workflow.
+
+    route = await _plan_route_with_altitude_retry(
+        asset_id=asset_id,
+        target_x=float(station["x"]),
+        target_z=float(station["z"]),
+        target_y=pickup_y,
+        plan_route_fn=plan_route_fn,
+    )
+    if "error" in route:
+        return {"error": route["error"], "pickup_station": station, "route": route}
+
+    exec_result = await _execute_route_waypoints(
+        asset_id=asset_id,
+        waypoints=route.get("waypoints", []),
+        move_drone_to_fn=move_drone_to_fn,
+        wait_until_waypoint_reached_fn=wait_until_waypoint_reached_fn,
+        move_error_msg="Failed while moving on pickup route.",
+        wait_error_msg="Pickup waypoint not reached.",
+    )
+    if not exec_result.get("ok", False):
+        return {"pickup_station": station, **exec_result}
 
     return {"success": True, "pickup_station": station}
 
@@ -285,67 +331,38 @@ async def dispatch_supply_to_building(
                 "pickup_result": pickup_result,
             }
 
-        route = await plan_route_fn(
+        route = await _plan_route_with_altitude_retry(
             asset_id=asset_id,
             target_x=drop_x,
             target_z=drop_z,
             target_y=drop_y,
-            snap_to_building_center=False,
+            plan_route_fn=plan_route_fn,
         )
         if "error" in route:
-            retry_route = await plan_route_fn(
-                asset_id=asset_id,
-                target_x=drop_x,
-                target_z=drop_z,
-                target_y=max(drop_y + 5.0, 15.0),
-                snap_to_building_center=False,
-            )
-            if "error" in retry_route:
-                return {
-                    "asset_id": asset_id,
-                    "error": route["error"],
-                    "pickup_station": station,
-                    "building": building,
-                    "route": route,
-                }
-            route = retry_route
+            return {
+                "asset_id": asset_id,
+                "error": route["error"],
+                "pickup_station": station,
+                "building": building,
+                "route": route,
+            }
 
         waypoints = route.get("waypoints", [])
-        for index, waypoint in enumerate(waypoints, start=1):
-            move_result = await move_drone_to_fn(
-                asset_id=asset_id,
-                x=float(waypoint["x"]),
-                y=float(waypoint["y"]),
-                z=float(waypoint["z"]),
-            )
-            if not move_result.get("success", True):
-                return {
-                    "asset_id": asset_id,
-                    "error": move_result.get("message", "Failed while moving on supply route."),
-                    "pickup_station": station,
-                    "building": building,
-                    "waypoint": waypoint,
-                    "move_result": move_result,
-                }
-
-            wait_result = await wait_until_waypoint_reached_fn(
-                asset_id,
-                float(waypoint["x"]),
-                float(waypoint["y"]),
-                float(waypoint["z"]),
-                timeout_s=90.0,
-                poll_s=0.2,
-            )
-            if not wait_result.get("ok", False):
-                return {
-                    "asset_id": asset_id,
-                    "error": wait_result.get("error", "Supply route waypoint not reached."),
-                    "pickup_station": station,
-                    "building": building,
-                    "waypoint": waypoint,
-                    "failed_waypoint_index": index,
-                    "status": wait_result.get("status"),
-                }
+        exec_result = await _execute_route_waypoints(
+            asset_id=asset_id,
+            waypoints=waypoints,
+            move_drone_to_fn=move_drone_to_fn,
+            wait_until_waypoint_reached_fn=wait_until_waypoint_reached_fn,
+            move_error_msg="Failed while moving on supply route.",
+            wait_error_msg="Supply route waypoint not reached.",
+        )
+        if not exec_result.get("ok", False):
+            return {
+                "asset_id": asset_id,
+                "pickup_station": station,
+                "building": building,
+                **exec_result,
+            }
 
         final_status = await get_status_fn(asset_id)
         service_context.register_supplied_target(building)
