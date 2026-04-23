@@ -138,7 +138,6 @@ async def dispatch_supply_to_building(
     world: object,
     window_scan_standoff_m: float,
     select_window_waypoint: Callable[..., dict | None],
-    return_to_base_fn: Callable[[str], Awaitable[dict]],
     plan_route_fn: Callable[..., Awaitable[dict]],
     move_drone_to_fn: Callable[..., Awaitable[dict]],
     wait_until_waypoint_reached_fn: Callable[..., Awaitable[dict]],
@@ -146,10 +145,8 @@ async def dispatch_supply_to_building(
 ) -> dict:
     """Dispatch a supply payload to `building` via the nearest supply station.
 
-    NOTE: `return_to_base_fn` is retained in the signature for v1 minimal-diff
-    stability but is NOT invoked. Pickup routing goes through the station
-    registry via `_go_to_station`; there is no longer an unconditional return
-    to (0,0,0) before dispatch.
+    Pickup routing goes through the station registry via `_go_to_station`;
+    there is no longer an unconditional return to (0,0,0) before dispatch.
     """
     target_key = _supply_target_key(building)
     async with _SUPPLY_DISPATCH_GUARD_LOCK:

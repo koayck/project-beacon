@@ -477,7 +477,6 @@ async def dispatch_supply_to_building(asset_id: str, building: dict) -> dict:
         world=WORLD,
         window_scan_standoff_m=WINDOW_SCAN_STANDOFF_M,
         select_window_waypoint=_select_window_waypoint,
-        return_to_base_fn=return_to_base,
         plan_route_fn=plan_route,
         move_drone_to_fn=move_drone_to,
         wait_until_waypoint_reached_fn=_wait_until_waypoint_reached,

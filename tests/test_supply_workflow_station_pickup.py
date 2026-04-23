@@ -1,7 +1,7 @@
 """Tests that dispatch_supply_to_building uses the nearest station for pickup."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -58,7 +58,6 @@ def _make_async_kwargs(routes: list[dict] | None = None):
 @pytest.mark.asyncio
 async def test_pickup_uses_home_when_no_user_stations():
     kwargs = _make_async_kwargs()
-    return_to_base_fn = AsyncMock(return_value={"success": True})
 
     result = await dispatch_supply_to_building(
         asset_id="BEACON-01",
@@ -67,7 +66,6 @@ async def test_pickup_uses_home_when_no_user_stations():
         world=_make_world(),
         window_scan_standoff_m=4.0,
         select_window_waypoint=lambda *a, **k: None,
-        return_to_base_fn=return_to_base_fn,
         plan_route_fn=kwargs["plan_route_fn"],
         move_drone_to_fn=kwargs["move_drone_to_fn"],
         wait_until_waypoint_reached_fn=kwargs["wait_until_waypoint_reached_fn"],
@@ -79,8 +77,6 @@ async def test_pickup_uses_home_when_no_user_stations():
     pickup_call = kwargs["plan_route_calls"][0]
     assert pickup_call["target_x"] == 0.0
     assert pickup_call["target_z"] == 0.0
-    # return_to_base_fn is NOT invoked — pickup now goes through the station planner.
-    return_to_base_fn.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -95,7 +91,6 @@ async def test_pickup_uses_nearest_user_station():
         world=_make_world(),
         window_scan_standoff_m=4.0,
         select_window_waypoint=lambda *a, **k: None,
-        return_to_base_fn=AsyncMock(return_value={"success": True}),
         plan_route_fn=kwargs["plan_route_fn"],
         move_drone_to_fn=kwargs["move_drone_to_fn"],
         wait_until_waypoint_reached_fn=kwargs["wait_until_waypoint_reached_fn"],
@@ -152,7 +147,6 @@ async def test_station_captured_at_dispatch_start_persists_across_waypoints():
         world=_make_world(),
         window_scan_standoff_m=4.0,
         select_window_waypoint=lambda *a, **k: None,
-        return_to_base_fn=AsyncMock(return_value={"success": True}),
         plan_route_fn=_plan_route_fn,
         move_drone_to_fn=_move,
         wait_until_waypoint_reached_fn=_wait,
@@ -181,7 +175,6 @@ async def test_pickup_ignores_far_station_when_home_is_closer():
         world=_make_world(),
         window_scan_standoff_m=4.0,
         select_window_waypoint=lambda *a, **k: None,
-        return_to_base_fn=AsyncMock(return_value={"success": True}),
         plan_route_fn=kwargs["plan_route_fn"],
         move_drone_to_fn=kwargs["move_drone_to_fn"],
         wait_until_waypoint_reached_fn=kwargs["wait_until_waypoint_reached_fn"],
