@@ -146,6 +146,8 @@ export interface DashboardOverview {
   total_missions: number
   avg_ttft_ms: number | null
   avg_duration_ms: number | null
+  median_ttft_ms?: number | null
+  median_duration_ms?: number | null
   total_survivors_rescued: number
   total_survivors_detected: number
   rescue_success_rate: number
