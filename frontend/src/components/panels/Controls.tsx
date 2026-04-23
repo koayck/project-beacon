@@ -100,12 +100,13 @@ export function Controls({
         )}
         <button
           onClick={onTogglePlaceStation}
+          disabled={selectMode}
           className={buttonClass(
             placingStation,
             'border-[#ff8800] bg-[rgba(255,136,0,0.18)] text-[#ffaa55]',
             'border-[rgba(40,60,100,0.25)] bg-[rgba(10,14,24,0.6)] text-[#7a8a9a]',
-          )}
-          title="Click the ground to place a supply station"
+          ) + (selectMode ? ' cursor-not-allowed opacity-40' : '')}
+          title={selectMode ? 'Exit area-select mode to place stations' : 'Click the ground to place a supply station'}
         >
           {placingStation ? 'PLACING…  Esc' : '+ STATION'}
         </button>
