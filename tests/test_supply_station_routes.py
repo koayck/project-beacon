@@ -9,6 +9,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.services import supply_stations
+from backend import app as _app_module_at_import
+
+# Capture the original lifespan at module import time, before any fixture runs.
+_ORIGINAL_LIFESPAN_CONTEXT = _app_module_at_import.app.router.lifespan_context
 
 
 @asynccontextmanager
@@ -90,13 +94,25 @@ class TestSupplyStationRoutes:
         assert client.broadcasts == []
 
 
-def test_lifespan_is_restored_after_fixture_teardown():
-    """Sanity: the fixture's lifespan-noop shim must not leak to later tests."""
-    from backend import app as app_module_after
-    # The original lifespan_context should not be the _noop we installed.
-    # A simple identity check that it's not the in-fixture _noop is sufficient:
-    lc = app_module_after.app.router.lifespan_context
-    # If the fixture teardown worked, lc is a function or async context manager
-    # different from the noop. Check it's at least still callable / non-None.
-    assert lc is not None
-    assert callable(lc)
+def test_lifespan_is_restored_after_fixture_teardown(client):
+    """Sanity: the fixture's lifespan-noop shim must not leak to later tests.
+
+    Uses the client fixture so monkeypatch teardown fires at function end.
+    Inside the test body, the fixture has installed the noop lifespan.
+    We assert that the noop is currently active and different from the original.
+    """
+    from backend import app as app_module_now
+
+    # During the test (fixture active) this should be the noop:
+    assert app_module_now.app.router.lifespan_context is not _ORIGINAL_LIFESPAN_CONTEXT
+
+
+def test_lifespan_identity_after_other_fixture_tests():
+    """Runs AFTER the fixture tests; must see the original lifespan restored.
+
+    This test runs after test_lifespan_is_restored_after_fixture_teardown,
+    confirming that monkeypatch teardown has restored the original lifespan.
+    """
+    from backend import app as app_module_now
+
+    assert app_module_now.app.router.lifespan_context is _ORIGINAL_LIFESPAN_CONTEXT
