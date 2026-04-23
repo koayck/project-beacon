@@ -67,11 +67,27 @@ class TestPlacementValidation:
             supply_stations.add_station(x=-15.0, z=-15.0)
 
     def test_add_out_of_bounds_raises(self):
-        # Default WORLD_HALF_SPAN is 50.0. Anything strictly outside rejects.
+        # Default half_span (from WorldModel) is 50.0. Anything strictly outside rejects.
         with pytest.raises(ValueError, match="out of bounds"):
             supply_stations.add_station(x=100.0, z=0.0)
         with pytest.raises(ValueError, match="out of bounds"):
             supply_stations.add_station(x=0.0, z=-100.0)
+
+    def test_add_bounds_respect_world_half_span(self, monkeypatch):
+        """The registry pulls half_span from the active world, not a constant."""
+
+        class _ShrunkenWorld:
+            half_span = 10.0
+
+            def building_at(self, x, y, z):
+                return None
+
+        monkeypatch.setattr(supply_stations, "_get_world", lambda: _ShrunkenWorld())
+        # Still valid within the shrunken world.
+        supply_stations.add_station(x=9.0, z=9.0)
+        # Rejected because the smaller world bound applies even though 40 < 50.
+        with pytest.raises(ValueError, match="out of bounds"):
+            supply_stations.add_station(x=40.0, z=0.0)
 
 
 class TestSelectBestStation:

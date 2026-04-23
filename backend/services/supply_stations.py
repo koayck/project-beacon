@@ -18,10 +18,11 @@ HOME_STATION: Mapping[str, object] = MappingProxyType(
     {"id": HOME_STATION_ID, "x": 0.0, "z": 0.0}
 )
 
-# Placement validity bounds. World2 is a 100×100 grid centered at origin.
-# A station must sit on walkable ground inside or on the edge of this square
-# (|x| <= WORLD_HALF_SPAN and |z| <= WORLD_HALF_SPAN).
-WORLD_HALF_SPAN = 50.0
+# Fallback placement bound if the active world model is unavailable. The
+# authoritative value comes from WorldModel.half_span (populated from each
+# world's scene.world_half_span_m). All current worlds are 100×100 centered
+# at origin, giving half_span = 50.0.
+_FALLBACK_HALF_SPAN = 50.0
 
 _lock = threading.Lock()
 _id_counter = count(1)
@@ -32,6 +33,14 @@ def _get_world():
     """Lazy import to avoid circular imports during test fixtures."""
     from backend.services.core import context as service_context
     return service_context.get_world()
+
+
+def _world_half_span() -> float:
+    """Return the current world's placement half-span in metres."""
+    try:
+        return float(_get_world().half_span)
+    except (AttributeError, TypeError):
+        return _FALLBACK_HALF_SPAN
 
 
 def reset() -> None:
@@ -54,7 +63,8 @@ def add_station(*, x: float, z: float) -> dict:
     Raises:
         ValueError: If placement is out of bounds or inside a building.
     """
-    if abs(x) > WORLD_HALF_SPAN or abs(z) > WORLD_HALF_SPAN:
+    half_span = _world_half_span()
+    if abs(x) > half_span or abs(z) > half_span:
         raise ValueError(f"Placement out of bounds: ({x}, {z})")
 
     world = _get_world()

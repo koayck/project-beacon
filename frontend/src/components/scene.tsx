@@ -200,11 +200,14 @@ export default function SARScene() {
   }, [])
 
   // ── Supply station placement helpers ─────────────────────────────────────────
-  const WORLD_HALF_SPAN = 50.0
+  // worldSpan = gridCells * gridSpacing, so the half-side of the play area is
+  // worldSpan / 2. This mirrors the backend's WorldModel.half_span check so
+  // valid/invalid placement previews agree with what the REST endpoint accepts.
+  const worldHalfSpan = worldSpan / 2
 
   const isValidStationPosition = useCallback(
     (pt: THREE.Vector3) => {
-      if (Math.abs(pt.x) > WORLD_HALF_SPAN || Math.abs(pt.z) > WORLD_HALF_SPAN) return false
+      if (Math.abs(pt.x) > worldHalfSpan || Math.abs(pt.z) > worldHalfSpan) return false
       for (const b of simBuildings) {
         const halfW = b.w / 2
         const halfD = b.d / 2
@@ -215,7 +218,7 @@ export default function SARScene() {
       }
       return true
     },
-    [simBuildings],
+    [simBuildings, worldHalfSpan],
   )
 
   const handleGroundHover = useCallback(
