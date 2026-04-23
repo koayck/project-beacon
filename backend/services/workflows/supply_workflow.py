@@ -476,7 +476,10 @@ async def parallel_fleet_supply(
         + f"\n{thin_divider}\n{total_line}\n{divider}"
     )
 
-    _schedule_supply_mission_recall(assignments, all_results)
+    # DISABLED: automatic post-mission recall after the 10-second grace window.
+    # Operator preference — drones should stay on-station after supply dispatch
+    # completes, not auto-return. Re-enable by uncommenting the call below.
+    # _schedule_supply_mission_recall(assignments, all_results)
 
     return {
         "success": True,
