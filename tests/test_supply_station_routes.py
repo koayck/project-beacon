@@ -46,11 +46,11 @@ def client(monkeypatch):
 
 
 class TestSupplyStationRoutes:
-    def test_get_returns_only_home_by_default(self, client):
+    def test_get_returns_empty_by_default(self, client):
+        """Home is not a supply station — registry starts empty."""
         resp = client.get("/supply-stations")
         assert resp.status_code == 200
-        stations = resp.json()["stations"]
-        assert [s["id"] for s in stations] == ["home"]
+        assert resp.json()["stations"] == []
 
     def test_post_adds_station_and_broadcasts(self, client):
         resp = client.post("/supply-stations", json={"x": 20.0, "z": 5.0})
@@ -82,10 +82,10 @@ class TestSupplyStationRoutes:
             {"type": "supply_station_removed", "id": added["id"]}
         ]
 
-    def test_delete_home_returns_400(self, client):
+    def test_delete_home_returns_404(self, client):
+        """Home is no longer a station at all — DELETE falls through to not-found."""
         resp = client.delete("/supply-stations/home")
-        assert resp.status_code == 400
-        assert "home" in resp.json()["detail"].lower()
+        assert resp.status_code == 404
         assert client.broadcasts == []
 
     def test_post_over_station_limit_returns_429(self, client, monkeypatch):
@@ -138,9 +138,9 @@ class TestSupplyStationRoutes:
         resp = client.post("/world/1")
         assert resp.status_code == 200
 
-        # Registry now contains only home.
+        # Registry is empty post-reset (home was never a supply station).
         get_resp = client.get("/supply-stations")
-        assert [s["id"] for s in get_resp.json()["stations"]] == ["home"]
+        assert get_resp.json()["stations"] == []
 
         # A reset broadcast fired.
         assert {"type": "supply_stations_reset"} in client.broadcasts

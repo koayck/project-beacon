@@ -56,7 +56,9 @@ def _make_async_kwargs(routes: list[dict] | None = None):
 
 
 @pytest.mark.asyncio
-async def test_pickup_uses_home_when_no_user_stations():
+async def test_dispatch_errors_when_no_user_stations():
+    """With home no longer a fallback, dispatch must refuse until the operator
+    places at least one supply station."""
     kwargs = _make_async_kwargs()
 
     result = await dispatch_supply_to_building(
@@ -72,11 +74,10 @@ async def test_pickup_uses_home_when_no_user_stations():
         get_status_fn=kwargs["get_status_fn"],
     )
 
-    assert result.get("success") is True
-    # First plan_route_fn call is the pickup leg, targeting home (0,0).
-    pickup_call = kwargs["plan_route_calls"][0]
-    assert pickup_call["target_x"] == 0.0
-    assert pickup_call["target_z"] == 0.0
+    assert "error" in result
+    assert "No supply stations placed" in result["error"]
+    # No route was planned because dispatch short-circuited before pickup.
+    assert kwargs["plan_route_calls"] == []
 
 
 @pytest.mark.asyncio
@@ -164,7 +165,8 @@ async def test_station_captured_at_dispatch_start_persists_across_waypoints():
 
 
 @pytest.mark.asyncio
-async def test_pickup_ignores_far_station_when_home_is_closer():
+async def test_single_far_station_is_still_chosen():
+    """With home out of the pool, a lone station wins even if far from target."""
     supply_stations.add_station(x=45.0, z=45.0)
     kwargs = _make_async_kwargs()
 
@@ -182,5 +184,5 @@ async def test_pickup_ignores_far_station_when_home_is_closer():
     )
 
     pickup_call = kwargs["plan_route_calls"][0]
-    assert pickup_call["target_x"] == 0.0
-    assert pickup_call["target_z"] == 0.0
+    assert pickup_call["target_x"] == 45.0
+    assert pickup_call["target_z"] == 45.0

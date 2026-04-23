@@ -315,6 +315,15 @@ async def dispatch_supply_to_building(
             drop_z = target_z_f
 
         station = select_best_station(target_x=drop_x, target_z=drop_z)
+        if station is None:
+            return {
+                "asset_id": asset_id,
+                "error": (
+                    "No supply stations placed. Deploy at least one supply "
+                    "station on the map before dispatching supply."
+                ),
+                "building": building,
+            }
         pickup_result = await _go_to_station(
             asset_id=asset_id,
             station=station,

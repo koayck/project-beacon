@@ -1,22 +1,16 @@
-"""In-memory registry for supply stations and nearest-to-target selection.
+"""In-memory registry for operator-placed supply stations and nearest-to-target
+selection.
 
-Home base at (0,0,0) is a built-in, non-removable station. Additional stations
-are placed at runtime via the REST API. Selection minimizes 2D Euclidean
-distance from target to station. The first station in list order wins ties,
-which means home (always first) wins ties at the origin.
+The home pad at (0,0,0) is NOT a supply pickup point; it is only used for
+drone storage/recall. Supply dispatches must route through an operator-placed
+station — if none exists, dispatch fails with a clear error so the operator
+knows to place one first.
 """
 from __future__ import annotations
 
 import math
 import threading
 from itertools import count
-from types import MappingProxyType
-from typing import Iterable, Mapping
-
-HOME_STATION_ID = "home"
-HOME_STATION: Mapping[str, object] = MappingProxyType(
-    {"id": HOME_STATION_ID, "x": 0.0, "z": 0.0}
-)
 
 # Fallback placement bound if the active world model is unavailable. The
 # authoritative value comes from WorldModel.half_span (populated from each
@@ -49,7 +43,7 @@ def _world_half_span() -> float:
 
 
 def reset() -> None:
-    """Clear all user-placed stations. Home remains. For tests / lifespan restart."""
+    """Clear all user-placed stations. For tests / lifespan restart."""
     global _id_counter
     with _lock:
         _user_stations.clear()
@@ -57,9 +51,9 @@ def reset() -> None:
 
 
 def list_stations() -> list[dict]:
-    """Return home followed by user-placed stations in insertion order."""
+    """Return all operator-placed stations in insertion order (no home)."""
     with _lock:
-        return [dict(HOME_STATION)] + [dict(s) for s in _user_stations]
+        return [dict(s) for s in _user_stations]
 
 
 class StationLimitReached(Exception):
@@ -94,13 +88,7 @@ def add_station(*, x: float, z: float) -> dict:
 
 
 def remove_station(station_id: str) -> bool:
-    """Remove a user-placed station. Returns False if not found.
-
-    Raises:
-        ValueError: If caller attempts to remove the built-in home station.
-    """
-    if station_id == HOME_STATION_ID:
-        raise ValueError("Home station cannot be removed")
+    """Remove a user-placed station. Returns False if not found."""
     with _lock:
         for i, station in enumerate(_user_stations):
             if station["id"] == station_id:
@@ -109,13 +97,17 @@ def remove_station(station_id: str) -> bool:
     return False
 
 
-def select_best_station(*, target_x: float, target_z: float) -> dict:
-    """Return the station minimizing 2D Euclidean distance to (target_x, target_z).
+def select_best_station(*, target_x: float, target_z: float) -> dict | None:
+    """Return the user-placed station nearest to (target_x, target_z).
 
-    Home is always in the candidate pool, so the result is never None. Ties go
-    to the earliest station in list order (home first, then insertion order).
+    Returns None when no stations have been placed. Callers must handle this
+    case — home is no longer a fallback pickup point. Ties go to the earliest
+    station in insertion order.
     """
-    candidates: Iterable[dict] = list_stations()
+    with _lock:
+        candidates = list(_user_stations)
+    if not candidates:
+        return None
     best = min(
         candidates,
         key=lambda s: math.hypot(s["x"] - target_x, s["z"] - target_z),

@@ -14,12 +14,9 @@ def _reset_registry():
 
 
 class TestRegistry:
-    def test_list_defaults_to_home_only(self):
-        stations = supply_stations.list_stations()
-        assert len(stations) == 1
-        assert stations[0]["id"] == "home"
-        assert stations[0]["x"] == 0.0
-        assert stations[0]["z"] == 0.0
+    def test_list_defaults_to_empty(self):
+        # Home is NOT a supply station; the registry starts empty.
+        assert supply_stations.list_stations() == []
 
     def test_add_station_returns_record_with_unique_id(self):
         a = supply_stations.add_station(x=20.0, z=5.0)
@@ -27,29 +24,24 @@ class TestRegistry:
         assert a["x"] == 20.0 and a["z"] == 5.0
         assert b["x"] == -10.0 and b["z"] == -30.0
         assert a["id"] != b["id"]
-        assert a["id"] != "home" and b["id"] != "home"
 
-    def test_list_returns_home_plus_added_in_insertion_order(self):
+    def test_list_returns_user_stations_in_insertion_order(self):
         a = supply_stations.add_station(x=20.0, z=5.0)
         b = supply_stations.add_station(x=-10.0, z=-30.0)
         ids = [s["id"] for s in supply_stations.list_stations()]
-        assert ids == ["home", a["id"], b["id"]]
+        assert ids == [a["id"], b["id"]]
 
     def test_remove_station_returns_true_when_found(self):
         a = supply_stations.add_station(x=20.0, z=5.0)
         assert supply_stations.remove_station(a["id"]) is True
-        assert [s["id"] for s in supply_stations.list_stations()] == ["home"]
+        assert supply_stations.list_stations() == []
 
     def test_remove_station_returns_false_when_unknown(self):
         assert supply_stations.remove_station("does-not-exist") is False
 
-    def test_remove_home_raises(self):
-        with pytest.raises(ValueError):
-            supply_stations.remove_station("home")
-
-    def test_home_station_constant_is_immutable(self):
-        with pytest.raises(TypeError):
-            supply_stations.HOME_STATION["x"] = 999.0  # type: ignore[index]
+    def test_remove_home_id_returns_false(self):
+        # Home is not in the registry at all; DELETE falls through to 'not found'.
+        assert supply_stations.remove_station("home") is False
 
 
 class TestPlacementValidation:
@@ -99,31 +91,31 @@ class TestPlacementValidation:
 
 
 class TestSelectBestStation:
-    def test_returns_home_when_no_user_stations(self):
-        chosen = supply_stations.select_best_station(target_x=10.0, target_z=10.0)
-        assert chosen["id"] == "home"
+    def test_returns_none_when_no_user_stations(self):
+        # Home is no longer a fallback — dispatch must have stations placed.
+        assert supply_stations.select_best_station(target_x=10.0, target_z=10.0) is None
 
     def test_picks_station_closest_to_target(self):
         near = supply_stations.add_station(x=30.0, z=30.0)
         supply_stations.add_station(x=-40.0, z=-40.0)
         chosen = supply_stations.select_best_station(target_x=28.0, target_z=29.0)
+        assert chosen is not None
         assert chosen["id"] == near["id"]
 
-    def test_home_wins_when_target_closer_to_origin(self):
-        supply_stations.add_station(x=40.0, z=40.0)
+    def test_single_station_wins_regardless_of_distance(self):
+        """With home out of the pool, a lone station is always chosen —
+        even if it's far from the target."""
+        lone = supply_stations.add_station(x=40.0, z=40.0)
         chosen = supply_stations.select_best_station(target_x=1.0, target_z=1.0)
-        assert chosen["id"] == "home"
+        assert chosen is not None
+        assert chosen["id"] == lone["id"]
 
     def test_deterministic_tiebreak_on_equal_distance(self):
-        # Two user stations equidistant from target. Whichever tie-breaking
-        # rule we pick must be stable across calls.
+        """Two stations equidistant from the target: insertion order wins."""
         a = supply_stations.add_station(x=10.0, z=0.0)
-        b = supply_stations.add_station(x=-10.0, z=0.0)
+        supply_stations.add_station(x=-10.0, z=0.0)
         first = supply_stations.select_best_station(target_x=0.0, target_z=0.0)
         second = supply_stations.select_best_station(target_x=0.0, target_z=0.0)
-        # Home is also equidistant (0), and comes first in the list, so it wins.
-        assert first["id"] == "home"
-        assert first["id"] == second["id"]
-        # Sanity: user stations are in the pool but not chosen here.
-        ids = {s["id"] for s in supply_stations.list_stations()}
-        assert {a["id"], b["id"]} <= ids
+        assert first is not None and second is not None
+        assert first["id"] == a["id"]  # first-inserted wins
+        assert first["id"] == second["id"]  # stable across calls
