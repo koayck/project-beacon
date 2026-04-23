@@ -73,6 +73,14 @@ class TestPlacementValidation:
         with pytest.raises(ValueError, match="out of bounds"):
             supply_stations.add_station(x=0.0, z=-100.0)
 
+    def test_add_beyond_station_limit_raises(self, monkeypatch):
+        """Registry caps user-placed stations at MAX_USER_STATIONS."""
+        monkeypatch.setattr(supply_stations, "MAX_USER_STATIONS", 2)
+        supply_stations.add_station(x=1.0, z=1.0)
+        supply_stations.add_station(x=2.0, z=2.0)
+        with pytest.raises(supply_stations.StationLimitReached, match="limit"):
+            supply_stations.add_station(x=3.0, z=3.0)
+
     def test_add_bounds_respect_world_half_span(self, monkeypatch):
         """The registry pulls half_span from the active world, not a constant."""
 

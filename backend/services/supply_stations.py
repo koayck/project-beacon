@@ -24,6 +24,11 @@ HOME_STATION: Mapping[str, object] = MappingProxyType(
 # at origin, giving half_span = 50.0.
 _FALLBACK_HALF_SPAN = 50.0
 
+# Defensive cap on user-placed stations per backend process. Prevents runaway
+# growth from a buggy or malicious client POSTing in a tight loop. Real
+# operational use never approaches this limit; callers hit it with 429.
+MAX_USER_STATIONS = 50
+
 _lock = threading.Lock()
 _id_counter = count(1)
 _user_stations: list[dict] = []
@@ -57,11 +62,17 @@ def list_stations() -> list[dict]:
         return [dict(HOME_STATION)] + [dict(s) for s in _user_stations]
 
 
+class StationLimitReached(Exception):
+    """Raised when the per-process cap on user-placed stations is hit."""
+
+
 def add_station(*, x: float, z: float) -> dict:
     """Validate and append a user-placed station.
 
     Raises:
         ValueError: If placement is out of bounds or inside a building.
+        StationLimitReached: If the user-placed station count would exceed
+            MAX_USER_STATIONS.
     """
     half_span = _world_half_span()
     if abs(x) > half_span or abs(z) > half_span:
@@ -69,6 +80,10 @@ def add_station(*, x: float, z: float) -> dict:
 
     world = _get_world()
     with _lock:
+        if len(_user_stations) >= MAX_USER_STATIONS:
+            raise StationLimitReached(
+                f"Station limit reached ({MAX_USER_STATIONS}); remove an existing station first."
+            )
         # y=0 samples the ground plane. building_at returns the containing building
         # (AABB hit) or None for open ground.
         if world.building_at(x, 0.0, z) is not None:

@@ -780,9 +780,11 @@ async def get_supply_stations() -> dict:
 
 @app.post("/supply-stations")
 async def create_supply_station(req: SupplyStationCreateRequest) -> dict:
-    """Place a new user station. 400 on invalid placement."""
+    """Place a new user station. 400 on invalid placement, 429 at station cap."""
     try:
         result = add_supply_station(x=req.x, z=req.z)
+    except _supply_stations_registry.StationLimitReached as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     ws_broadcaster.broadcast({"type": "supply_station_added", "station": result["station"]})

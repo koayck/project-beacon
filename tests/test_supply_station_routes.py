@@ -88,6 +88,19 @@ class TestSupplyStationRoutes:
         assert "home" in resp.json()["detail"].lower()
         assert client.broadcasts == []
 
+    def test_post_over_station_limit_returns_429(self, client, monkeypatch):
+        """Hitting MAX_USER_STATIONS returns 429 and does not broadcast."""
+        monkeypatch.setattr(supply_stations, "MAX_USER_STATIONS", 1)
+        # First station succeeds.
+        first = client.post("/supply-stations", json={"x": 1.0, "z": 1.0})
+        assert first.status_code == 200
+        client.broadcasts.clear()
+
+        resp = client.post("/supply-stations", json={"x": 2.0, "z": 2.0})
+        assert resp.status_code == 429
+        assert "limit" in resp.json()["detail"].lower()
+        assert client.broadcasts == []
+
     def test_delete_unknown_returns_404(self, client):
         resp = client.delete("/supply-stations/station-999")
         assert resp.status_code == 404
