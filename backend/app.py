@@ -7,7 +7,7 @@ import re
 import socket
 import subprocess
 import time
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncGenerator
 from urllib.parse import urlparse
@@ -15,7 +15,6 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from fastmcp.utilities.lifespan import combine_lifespans
 from google.adk.errors.already_exists_error import AlreadyExistsError
 from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService
@@ -55,6 +54,17 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
+
+
+def combine_lifespans(*lifespans):
+    @asynccontextmanager
+    async def _combined_lifespan(app: FastAPI):
+        async with AsyncExitStack() as exit_stack:
+            for lifespan in lifespans:
+                await exit_stack.enter_async_context(lifespan(app))
+            yield
+
+    return _combined_lifespan
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
