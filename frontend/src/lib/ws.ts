@@ -1,4 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import type { SupplyStation } from './api'
+
+export type SupplyStationEvent =
+  | { type: 'supply_station_added'; station: SupplyStation }
+  | { type: 'supply_station_removed'; id: string }
 
 export interface TelemetryPayload {
   asset_id: string
@@ -52,6 +57,7 @@ const STALE_TIMEOUT_MS = 3000
 export function useTelemetry(
   url: string,
   onSystemEvent?: (event: SystemEvent) => void,
+  onSupplyStationEvent?: (event: SupplyStationEvent) => void,
 ): {
   drones: DroneMap
   exploredSectors: Set<string>
@@ -67,6 +73,10 @@ export function useTelemetry(
   useEffect(() => {
     onSystemEventRef.current = onSystemEvent
   }, [onSystemEvent])
+  const onSupplyStationEventRef = useRef<typeof onSupplyStationEvent>(onSupplyStationEvent)
+  useEffect(() => {
+    onSupplyStationEventRef.current = onSupplyStationEvent
+  }, [onSupplyStationEvent])
 
   useEffect(() => {
     let cancelled = false
@@ -90,6 +100,11 @@ export function useTelemetry(
 
           if (raw.type === 'system_event') {
             onSystemEventRef.current?.(raw as SystemEvent)
+            return
+          }
+
+          if (raw.type === 'supply_station_added' || raw.type === 'supply_station_removed') {
+            onSupplyStationEventRef.current?.(raw as SupplyStationEvent)
             return
           }
 

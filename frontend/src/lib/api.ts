@@ -251,6 +251,38 @@ export async function deployScout(): Promise<void> {
   await fetch(`${BASE}/scout/sweep`, { method: 'POST' })
 }
 
+export interface SupplyStation {
+  id: string
+  x: number
+  z: number
+}
+
+export async function fetchSupplyStations(): Promise<SupplyStation[]> {
+  const res = await fetch(`${BASE}/supply-stations`)
+  if (!res.ok) throw new Error(`Supply-stations fetch failed: ${res.status}`)
+  const body: { stations: SupplyStation[] } = await res.json()
+  return body.stations
+}
+
+export async function placeSupplyStation(x: number, z: number): Promise<SupplyStation> {
+  const res = await fetch(`${BASE}/supply-stations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ x, z }),
+  })
+  if (!res.ok) {
+    const detail = await res.text()
+    throw new Error(`Place station failed: ${res.status} ${detail}`)
+  }
+  const body: { station: SupplyStation } = await res.json()
+  return body.station
+}
+
+export async function removeSupplyStation(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/supply-stations/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`Remove station failed: ${res.status}`)
+}
+
 export async function healthCheck(): Promise<boolean> {
   try {
     const res = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(2000) })
