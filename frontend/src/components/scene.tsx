@@ -164,6 +164,7 @@ export default function SARScene() {
   const [rescanCommandPrompt, setRescanCommandPrompt] = useState<CommandDecisionPrompt | null>(null)
   // ── Performance metrics state ──────────────────────────────────────────────
   const [missionStartTs, setMissionStartTs] = useState<number | null>(null)
+  const [missionEndTs, setMissionEndTs]     = useState<number | null>(null)
   const [lastTtftMs, setLastTtftMs] = useState<number | null>(null)
   const survivorDetectionTsRef = useRef<Map<string, number>>(new Map())
   const [survivorDetectionTimestamps, setSurvivorDetectionTimestamps] = useState<Map<string, number>>(new Map())
@@ -921,11 +922,15 @@ export default function SARScene() {
     backendSupplyDispatchSeenRef.current = false
     addLog(`⬆ ${prompt}`)
     setAgentBusy(true)
-    setMissionStartTs(prev => prev ?? Date.now())
+    setMissionStartTs(Date.now())
+    setMissionEndTs(null)
     setActivities(prev => [...prev, { id: nextActivityId(), icon: '◆', label: prompt.length > 50 ? prompt.slice(0, 47) + '...' : prompt, ts: Date.now(), status: 'done', category: 'dispatch' as ActivityCategory }])
     const effectiveAssetId = assetIdOverride ?? ASSET_ID
     try {
         for await (const event of streamCommand(effectiveAssetId, prompt, simulationId ?? undefined, confirmRescan, ac.signal)) {
+          if (event.type === 'error' && !event.text.startsWith('RESCAN_CONFIRM_REQUIRED|')) {
+            setMissionEndTs(Date.now())
+          }
           if (event.type === 'error' && event.text.startsWith('RESCAN_CONFIRM_REQUIRED|')) {
             const message = event.text.split('|').slice(1).join('|').trim()
             onEvent({ type: 'error', text: message || 'Building already scanned. Confirm to rescan.' })
@@ -1056,11 +1061,13 @@ export default function SARScene() {
           if (event.ttft_ms !== null && event.ttft_ms !== undefined) {
             setLastTtftMs(event.ttft_ms)
           }
+          setMissionEndTs(Date.now())
         }
       }
     } catch (e: unknown) {
       if (e instanceof Error && e.name === 'AbortError') {
         addLog('⚠ Command aborted')
+        setMissionEndTs(Date.now())
         pendingSupplyPickupRef.current.clear()
         supplyInFlightByAssetRef.current = {}
         setCargoByDrone(new Set())
@@ -1603,6 +1610,7 @@ export default function SARScene() {
         <ActivityFeed items={activities} busy={agentBusy} onClear={() => setActivities([])} />
         <MetricsPanel
           missionStartTs={missionStartTs}
+          missionEndTs={missionEndTs}
           activities={activities}
           detectedCount={intelSurvivors.length}
           rescuedCount={deliveredTo.size}
