@@ -206,9 +206,9 @@ Deployment: Docker containers on bridge network beacon-net.
 
 ### 4.1 Primary Operational DB
 
-Name: Beacon SQLite DB
+Name: Beacon Supabase DB
 
-Type: SQLite (aiosqlite)
+Type: PostgreSQL (Supabase) via asyncpg
 
 Purpose: Stores registered assets/uplink data, mission logs, and pre-provisioned license records.
 
