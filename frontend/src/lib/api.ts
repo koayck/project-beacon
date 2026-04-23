@@ -4,6 +4,27 @@ export interface CommandResponse {
   asset_id: string
   response: string
   prompt: string
+  requires_confirmation?: boolean
+  already_scanned_buildings?: number[]
+}
+
+export interface SimulationSurvivor {
+  x: number
+  y: number
+  z: number
+  supplied: boolean
+}
+
+export interface SimulationBuilding {
+  building_id: number
+  detected_survivors: SimulationSurvivor[]
+}
+
+export interface SimulationState {
+  id: string
+  scanned_buildings: SimulationBuilding[]
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 export interface DetectedSurvivor {
@@ -81,13 +102,52 @@ export async function uplink(assetId: string): Promise<UplinkResponse> {
   return res.json()
 }
 
-export async function sendCommand(assetId: string, prompt: string): Promise<CommandResponse> {
+export async function sendCommand(
+  assetId: string,
+  prompt: string,
+  simulationId?: string,
+  confirmRescan = false,
+): Promise<CommandResponse> {
   const res = await fetch(`${BASE}/command`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ asset_id: assetId, prompt }),
+    body: JSON.stringify({
+      asset_id: assetId,
+      prompt,
+      simulation_id: simulationId,
+      confirm_rescan: confirmRescan,
+    }),
   })
   if (!res.ok) throw new Error(`Command failed: ${res.status}`)
+  return res.json()
+}
+
+export async function createSimulation(simulationId?: string): Promise<SimulationState> {
+  const res = await fetch(`${BASE}/simulation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ simulation_id: simulationId }),
+  })
+  if (!res.ok) throw new Error(`Simulation create failed: ${res.status}`)
+  return res.json()
+}
+
+export async function getSimulation(simulationId: string): Promise<SimulationState> {
+  const res = await fetch(`${BASE}/simulation/${simulationId}`)
+  if (!res.ok) throw new Error(`Simulation lookup failed: ${res.status}`)
+  return res.json()
+}
+
+export async function syncSimulationState(
+  simulationId: string,
+  scannedBuildings: SimulationBuilding[],
+): Promise<SimulationState> {
+  const res = await fetch(`${BASE}/simulation/${simulationId}/state`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scanned_buildings: scannedBuildings }),
+  })
+  if (!res.ok) throw new Error(`Simulation sync failed: ${res.status}`)
   return res.json()
 }
 
@@ -118,12 +178,19 @@ export async function getNetworkMockStatus(): Promise<NetworkMockStatus> {
 export async function* streamCommand(
   assetId: string,
   prompt: string,
+  simulationId?: string,
+  confirmRescan = false,
   signal?: AbortSignal,
 ): AsyncGenerator<AgentStreamEvent> {
   const res = await fetch(`${BASE}/command/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ asset_id: assetId, prompt }),
+    body: JSON.stringify({
+      asset_id: assetId,
+      prompt,
+      simulation_id: simulationId,
+      confirm_rescan: confirmRescan,
+    }),
     signal,
   })
   if (!res.ok) throw new Error(`Command stream failed: ${res.status}`)

@@ -220,7 +220,15 @@ Name: Telemetry + Session State
 
 Type: In-memory Python state
 
-Purpose: Latest telemetry snapshots per drone, connected websocket clients, and ADK session state for multi-step workflows.
+Purpose: Latest telemetry snapshots per drone and connected websocket clients.
+
+### 4.3 Persistent Agent Session Store
+
+Name: ADK Session Database
+
+Type: PostgreSQL (Supabase) via ADK DatabaseSessionService
+
+Purpose: Persists ADK user/session/app state and conversation events across backend restarts so multi-step mission context survives process lifecycle changes.
 
 ## 5. External Integrations and APIs
 
@@ -242,9 +250,13 @@ Purpose: Latest telemetry snapshots per drone, connected websocket clients, and 
 
 ## 6. Deployment and Infrastructure
 
-Cloud Provider: None required for core local workflow (offline/local-first design).
+Cloud Provider: GCP.
 
 Key Services Used: Docker bridge network, local FastAPI service, local SQLite file, local static frontend export.
+
+Runtime Configuration Notes:
+- `SUPABASE_DB_URL` is required for backend startup to initialize ADK `DatabaseSessionService`.
+- Session scope remains keyed by (`app_name`, `user_id`, `session_id`) and now persists in PostgreSQL.
 
 CI/CD Pipeline: No repository-local CI pipeline config found in .github at this time.
 

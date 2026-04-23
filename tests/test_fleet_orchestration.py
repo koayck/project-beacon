@@ -102,6 +102,27 @@ async def test_assign_no_eligible_drones_low_battery():
 
 
 @pytest.mark.asyncio
+async def test_assign_skips_scout_drone_for_building_scans():
+    """BEACON-SCOUT must never be assigned to building-scan work."""
+    buildings = [_make_building(0, 0.0, 0.0), _make_building(1, 20.0, 0.0)]
+    statuses = [
+        _make_status("BEACON-SCOUT", 0.0, 0.0, battery=95.0),
+        _make_status("BEACON-01", 1.0, 0.0, battery=90.0),
+        _make_status("BEACON-02", 18.0, 0.0, battery=85.0),
+    ]
+    mock_client = _mock_client(["BEACON-SCOUT", "BEACON-01", "BEACON-02"], statuses)
+
+    with patch("backend.services.api.control.grpc_client", mock_client):
+        result = await assign_fleet_to_buildings(buildings)
+
+    assert "error" not in result
+    assert result["total_assigned"] == 2
+    assigned_ids = {assignment["asset_id"] for assignment in result["assignments"]}
+    assert assigned_ids == {"BEACON-01", "BEACON-02"}
+    assert "BEACON-SCOUT" not in assigned_ids
+
+
+@pytest.mark.asyncio
 async def test_assign_no_drones_uplinked():
     """No drones registered at all: returns error."""
     buildings = [_make_building(0, 0.0, 0.0)]

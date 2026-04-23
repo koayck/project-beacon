@@ -79,10 +79,12 @@ def _is_eligible_idle_drone(status: dict) -> bool:
         battery = float(battery_raw)
     except (TypeError, ValueError):
         battery = 0.0
+    asset_id = str(status.get("asset_id", "")).upper()
     state = str(status.get("status", "")).upper()
     return (
         battery > _MIN_ELIGIBLE_BATTERY_PCT
         and state == "IDLE"
+        and asset_id != "BEACON-SCOUT"
     )
 
 

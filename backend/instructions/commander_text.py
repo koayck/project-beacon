@@ -49,7 +49,6 @@ Failed Mission: Navigation blocked, battery 35%, backup available
 
 GUIDELINES:
 - Always parse command first (no guessing)
-- Plan only when is_complex_mission() returns True
 - Execute using orchestrators (fast, deterministic)
 - Recover using recovery_agent (adaptive)
 - Report results clearly to operator

@@ -54,9 +54,9 @@ class DroneSnapshot:
 
 
 class DroneSimulator:
-    TICK_RATE = 0.1          # seconds per physics tick
-    DRAIN_MOVING = 0.005     # battery % per tick when mobile
-    DRAIN_IDLE = 0.0         # no drain while idle (preserves battery for missions)
+    TICK_RATE = 0.1          # seconds between loop updates
+    DRAIN_MOVING_PER_SEC = 0.05  # battery % per second while mobile
+    DRAIN_IDLE_PER_SEC = 0.0     # no drain while idle (preserves battery for missions)
     ARRIVAL_THRESHOLD = 0.05 # units — close enough to count as arrived
     DEFAULT_SPEED = 5.0      # units/sec
 
@@ -193,12 +193,33 @@ class DroneSimulator:
                         heading_deg=heading_deg, detection_range=detection_range, survivor_range=survivor_range)
 
     def _loop(self) -> None:
+        """Run the physics update loop using elapsed wall-clock time.
+
+        Returns:
+            None.
+        """
+        last_tick = time.monotonic()
         while self._running:
+            now = time.monotonic()
+            elapsed_s = max(0.0, now - last_tick)
+            last_tick = now
             with self._lock:
-                self._snapshot = self._tick(self._snapshot)
+                self._snapshot = self._tick(self._snapshot, elapsed_s)
             time.sleep(self.TICK_RATE)
 
-    def _tick(self, s: DroneSnapshot) -> DroneSnapshot:
+    def _tick(self, s: DroneSnapshot, elapsed_s: float) -> DroneSnapshot:
+        """Advance the drone simulation by an elapsed duration.
+
+        Args:
+            s: The current immutable drone snapshot.
+            elapsed_s: Elapsed wall-clock time in seconds since last update.
+
+        Returns:
+            The next immutable drone snapshot after physics and battery updates.
+        """
+        mobile_drain = self.DRAIN_MOVING_PER_SEC * elapsed_s
+        idle_drain = self.DRAIN_IDLE_PER_SEC * elapsed_s
+
         if s.battery <= 0.0 and s.status in (
             DroneStatus.MOVING, DroneStatus.SCANNING, DroneStatus.RETURNING,
         ):
@@ -229,12 +250,12 @@ class DroneSimulator:
                 return DroneSnapshot(
                     asset_id=s.asset_id,
                     position=s.target,
-                    battery=max(0.0, s.battery - self.DRAIN_MOVING),
+                    battery=max(0.0, s.battery - mobile_drain),
                     status=arrive_status,
                     target=s.target,
                     speed=s.speed,
                 )
-            new_pos = s.position.step_toward(s.target, s.speed * self.TICK_RATE)
+            new_pos = s.position.step_toward(s.target, s.speed * elapsed_s)
 
             # ── Collision check — stop before entering a building ─────────
             blocker = next_position_blocked(
@@ -245,7 +266,7 @@ class DroneSimulator:
                 return DroneSnapshot(
                     asset_id=s.asset_id,
                     position=s.position,  # stay put
-                    battery=max(0.0, s.battery - self.DRAIN_MOVING),
+                    battery=max(0.0, s.battery - mobile_drain),
                     status=DroneStatus.BLOCKED,
                     target=s.target,
                     speed=s.speed,
@@ -254,7 +275,7 @@ class DroneSimulator:
             return DroneSnapshot(
                 asset_id=s.asset_id,
                 position=new_pos,
-                battery=max(0.0, s.battery - self.DRAIN_MOVING),
+                battery=max(0.0, s.battery - mobile_drain),
                 status=s.status,
                 target=s.target,
                 speed=s.speed,
@@ -263,7 +284,7 @@ class DroneSimulator:
         return DroneSnapshot(
             asset_id=s.asset_id,
             position=s.position,
-            battery=max(0.0, s.battery - self.DRAIN_IDLE),
+            battery=max(0.0, s.battery - idle_drain),
             status=s.status,
             target=s.target,
             speed=s.speed,
