@@ -27,12 +27,21 @@ def plan_building_vertical_sweep(
     flood_clearance: float = 0.5,
     approach_x: float | None = None,
     approach_z: float | None = None,
+    entry_window: dict | None = None,
 ) -> dict:
     """Plan a perimeter sweep around a building across all heights above water level.
 
-    The sweep always enters at a lowest-floor window closest to
-    ``(approach_x, approach_z)`` and iterates floors ascending, ending at
-    the last floor's perimeter. No rooftop scan waypoint is emitted.
+    The sweep always enters at a lowest-floor window and iterates floors ascending,
+    ending at the last floor's perimeter. No rooftop scan waypoint is emitted.
+
+    Entry window selection:
+      - When ``entry_window`` is provided (typically the window chosen by
+        ``plan_route(entry_mode="ground_entry")``), it is used verbatim. This
+        guarantees agreement with the caller's approach route so the drone does
+        not have to traverse between two different windows.
+      - Otherwise, falls back to picking the lowest-floor window whose XZ is
+        closest to ``(approach_x, approach_z)`` — or the start corner if no
+        approach coordinates are given.
     """
     building = WORLD.building_near_xz(target_x, target_z, margin=BUILDING_PROXIMITY_MARGIN_M)
     if building is None:
@@ -123,7 +132,21 @@ def plan_building_vertical_sweep(
     waypoints: list[dict] = []
     levels: list[float] = []
 
-    entry_window: dict | None = None
+    # Use the externally supplied entry window verbatim when provided — this
+    # keeps the sweep's first waypoint identical to the route planner's ground
+    # entry target, preventing the drone from being commanded to fly between
+    # two windows on opposite faces (which would cross the footprint and get
+    # BLOCKED).
+    chosen_entry: dict | None = None
+    if entry_window is not None:
+        chosen_entry = {
+            "x": float(entry_window["x"]),
+            "y": float(entry_window["y"]),
+            "z": float(entry_window["z"]),
+            "face": str(entry_window.get("face", "")),
+            "floor": int(entry_window.get("floor", 1)),
+        }
+
     if floor_levels:
         first_level_y = floor_levels[0]
         first_level_windows = [w for w in above_flood if round(w["y"], 2) == first_level_y]
@@ -132,18 +155,20 @@ def plan_building_vertical_sweep(
         else:
             ref_x, ref_z = corners[_start_corner]
 
-        if first_level_windows:
-            entry_window = min(
+        if chosen_entry is None and first_level_windows:
+            chosen_entry = min(
                 first_level_windows,
                 key=lambda w: math.sqrt((float(w["x"]) - ref_x) ** 2 + (float(w["z"]) - ref_z) ** 2),
             )
+
+        if chosen_entry is not None:
             waypoints.append(
                 {
-                    "x": float(entry_window["x"]),
-                    "y": float(entry_window["y"]),
-                    "z": float(entry_window["z"]),
-                    "level_y": float(entry_window["y"]),
-                    "reason": f"window scan {entry_window['face']} floor {entry_window['floor']}",
+                    "x": float(chosen_entry["x"]),
+                    "y": float(chosen_entry["y"]),
+                    "z": float(chosen_entry["z"]),
+                    "level_y": float(chosen_entry["y"]),
+                    "reason": f"window scan {chosen_entry['face']} floor {chosen_entry['floor']}",
                 }
             )
         else:
@@ -163,10 +188,10 @@ def plan_building_vertical_sweep(
     # standoff distance.  Without this, picking the ring start by drone
     # approach direction independently of the entry window's face forces the
     # drone to cross the building footprint to reach the start corner.
-    if entry_window is not None and _serpentine:
-        face = entry_window["face"]
-        ex = float(entry_window["x"])
-        ez = float(entry_window["z"])
+    if chosen_entry is not None and _serpentine:
+        face = chosen_entry["face"]
+        ex = float(chosen_entry["x"])
+        ez = float(chosen_entry["z"])
         if face == "south":
             _start_corner = (
                 "SE"
@@ -214,14 +239,14 @@ def plan_building_vertical_sweep(
                 west_stop_z=west_stop_z if _nw_pushed_east else None,
                 p_min_x=p_min_x,
             )
-            if entry_window is not None and abs(level_y - float(entry_window["y"])) < 1e-3:
+            if chosen_entry is not None and abs(level_y - float(chosen_entry["y"])) < 1e-3:
                 ring_items = [
                     item
                     for item in ring_items
                     if not (
-                        item[2] == f"window scan {entry_window['face']} floor {entry_window['floor']}"
-                        and abs(item[0] - float(entry_window["x"])) < 1e-3
-                        and abs(item[1] - float(entry_window["z"])) < 1e-3
+                        item[2] == f"window scan {chosen_entry['face']} floor {chosen_entry['floor']}"
+                        and abs(item[0] - float(chosen_entry["x"])) < 1e-3
+                        and abs(item[1] - float(chosen_entry["z"])) < 1e-3
                     )
                 ]
             if level_y == floor_levels[0] and waypoints:
@@ -308,14 +333,14 @@ def plan_building_vertical_sweep(
                 ring.append((p_min_x, west_stop_z, "west face stop (adjacent building)"))
             ring.append((nw_x, nw_z, "close perimeter"))
 
-            if entry_window is not None and abs(level_y - float(entry_window["y"])) < 1e-3:
+            if chosen_entry is not None and abs(level_y - float(chosen_entry["y"])) < 1e-3:
                 ring = [
                     item
                     for item in ring
                     if not (
-                        item[2] == f"window scan {entry_window['face']} floor {entry_window['floor']}"
-                        and abs(item[0] - float(entry_window["x"])) < 1e-3
-                        and abs(item[1] - float(entry_window["z"])) < 1e-3
+                        item[2] == f"window scan {chosen_entry['face']} floor {chosen_entry['floor']}"
+                        and abs(item[0] - float(chosen_entry["x"])) < 1e-3
+                        and abs(item[1] - float(chosen_entry["z"])) < 1e-3
                     )
                 ]
 

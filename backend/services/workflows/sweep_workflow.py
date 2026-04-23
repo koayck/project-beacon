@@ -80,12 +80,18 @@ async def sweep_scan_building(
             "completed_waypoints": 0,
         }
 
-    # 2. Build the sweep plan. Both the route planner above and the sweep
-    #    planner below use the drone's pre-flight XZ to pick the nearest
-    #    lowest-floor entry window, so they typically agree on the entry.
-    #    They may diverge only in pathological entry routes where the drone
-    #    traverses significant XZ distance before reaching the building —
-    #    not observed in current world geometries.
+    # 2. Build the sweep plan. The route planner above applies an approach-side
+    #    face filter plus an LOS check when selecting the ground entry window,
+    #    while the sweep planner's raw-XZ nearest-window fallback does neither.
+    #    Forward the route planner's chosen window as ``entry_window`` so both
+    #    planners always agree, eliminating the bug where the drone had to fly
+    #    between two different windows on opposite faces (which crossed the
+    #    footprint and got stuck BLOCKED).
+    selected_window = (
+        entry_route.get("target_resolution", {}).get("selected_window_waypoint")
+        if isinstance(entry_route, dict)
+        else None
+    )
     plan = plan_building_vertical_sweep(
         target_x=target_x,
         target_z=target_z,
@@ -93,6 +99,7 @@ async def sweep_scan_building(
         standoff=standoff,
         approach_x=status.get("x"),
         approach_z=status.get("z"),
+        entry_window=selected_window if isinstance(selected_window, dict) else None,
     )
     if not plan.get("matched_building", False):
         return {

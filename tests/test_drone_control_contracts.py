@@ -31,6 +31,7 @@ def test_test_suite_contract_signatures() -> None:
         "flood_clearance",
         "approach_x",
         "approach_z",
+        "entry_window",
     ]
     assert _param_names(drone_control.assign_fleet_to_buildings) == ["buildings"]
     assert _param_names(drone_control.parallel_fleet_scan) == ["assignments", "unassigned_buildings"]
