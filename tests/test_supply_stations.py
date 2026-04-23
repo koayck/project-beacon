@@ -47,6 +47,10 @@ class TestRegistry:
         with pytest.raises(ValueError):
             supply_stations.remove_station("home")
 
+    def test_home_station_constant_is_immutable(self):
+        with pytest.raises(TypeError):
+            supply_stations.HOME_STATION["x"] = 999.0  # type: ignore[index]
+
 
 class TestPlacementValidation:
     def test_add_inside_building_raises(self, monkeypatch):

@@ -10,13 +10,17 @@ from __future__ import annotations
 import math
 import threading
 from itertools import count
-from typing import Iterable
+from types import MappingProxyType
+from typing import Iterable, Mapping
 
 HOME_STATION_ID = "home"
-HOME_STATION: dict = {"id": HOME_STATION_ID, "x": 0.0, "z": 0.0}
+HOME_STATION: Mapping[str, object] = MappingProxyType(
+    {"id": HOME_STATION_ID, "x": 0.0, "z": 0.0}
+)
 
 # Placement validity bounds. World2 is a 100×100 grid centered at origin.
-# A station must sit on walkable ground inside this square.
+# A station must sit on walkable ground inside or on the edge of this square
+# (|x| <= WORLD_HALF_SPAN and |z| <= WORLD_HALF_SPAN).
 WORLD_HALF_SPAN = 50.0
 
 _lock = threading.Lock()
@@ -54,12 +58,11 @@ def add_station(*, x: float, z: float) -> dict:
         raise ValueError(f"Placement out of bounds: ({x}, {z})")
 
     world = _get_world()
-    # y=0 samples the ground plane. building_at returns the containing building
-    # (AABB hit) or None for open ground.
-    if world.building_at(x, 0.0, z) is not None:
-        raise ValueError(f"Placement inside building at ({x}, {z})")
-
     with _lock:
+        # y=0 samples the ground plane. building_at returns the containing building
+        # (AABB hit) or None for open ground.
+        if world.building_at(x, 0.0, z) is not None:
+            raise ValueError(f"Placement inside building at ({x}, {z})")
         station = {"id": f"station-{next(_id_counter)}", "x": float(x), "z": float(z)}
         _user_stations.append(station)
         return dict(station)
