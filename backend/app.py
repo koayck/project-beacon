@@ -929,6 +929,16 @@ async def send_command(req: CommandRequest) -> dict:
                 "unscanned_buildings": unscanned_refs,
             }
 
+    accumulator = MissionRunAccumulator(
+        asset_id=req.asset_id or "FLEET",
+        prompt=req.prompt,
+        simulation_id=req.simulation_id,
+    )
+    stream_start = time.perf_counter()
+    first_token_time: float | None = None
+    status = "success"
+    error_text: str | None = None
+
     prompt = "Mission: " + req.prompt
     content = types.Content(
         role="user", parts=[types.Part(text=prompt)]
@@ -944,30 +954,59 @@ async def send_command(req: CommandRequest) -> dict:
     if runner is None:
         raise HTTPException(status_code=503, detail="ADK runner not initialised")
 
-    async for event in runner.run_async(
-        user_id=_ADK_USER_ID,
-        session_id=session_id,
-        new_message=content,
-    ):
-        if not event.content or not event.content.parts:
-            continue
+    try:
+        async for event in runner.run_async(
+            user_id=_ADK_USER_ID,
+            session_id=session_id,
+            new_message=content,
+        ):
+            if not event.content or not event.content.parts:
+                continue
 
-        for part in event.content.parts:
-            if part.text and part.text.strip():
-                text_candidates.append(part.text)
-            elif part.function_response:
-                resp = dict(part.function_response.response or {})
-                message = resp.get("message")
-                message_text = str(message).strip() if message is not None else ""
-                if message_text:
-                    text_candidates.append(message_text)
-                scanned_building_rows.extend(_extract_scanned_building_rows(resp))
-
-        if event.is_final_response():
             for part in event.content.parts:
-                if part.text and part.text.strip():
-                    response_text = part.text
-                    break
+                if part.function_call:
+                    accumulator.record_tool_call()
+                    if first_token_time is None:
+                        first_token_time = time.perf_counter()
+                elif part.text and part.text.strip():
+                    if first_token_time is None:
+                        first_token_time = time.perf_counter()
+                    text_candidates.append(part.text)
+                elif part.function_response:
+                    resp = dict(part.function_response.response or {})
+                    message = resp.get("message")
+                    message_text = str(message).strip() if message is not None else ""
+                    if message_text:
+                        text_candidates.append(message_text)
+                    scanned_building_rows.extend(_extract_scanned_building_rows(resp))
+                    survivors_payload = _extract_survivor_coords(resp)
+                    supply_dispatches = _extract_supply_dispatches(part.function_response.name, resp)
+                    if survivors_payload:
+                        accumulator.record_detections(survivors_payload)
+                    if supply_dispatches:
+                        accumulator.record_deliveries(supply_dispatches)
+
+            if event.is_final_response():
+                for part in event.content.parts:
+                    if part.text and part.text.strip():
+                        response_text = part.text
+                        break
+    except Exception as exc:
+        status = "failed"
+        error_text = _first_exception_message(exc)
+        raise
+    finally:
+        ttft_ms = round((first_token_time - stream_start) * 1000) if first_token_time else None
+        try:
+            run = accumulator.build(
+                status=status,
+                ttft_ms=ttft_ms,
+                final_text=response_text,
+                error=error_text,
+            )
+            await mission_run_repo.create(run)
+        except Exception as exc:
+            logging.getLogger(__name__).exception("Failed to persist mission_run: %s", exc)
 
     print(f"ADK final response: {response_text}")
     print(f"ADK text_candidates: {text_candidates}")
