@@ -30,6 +30,7 @@ import {
 import type { SupplyStationEvent } from '@/lib/ws'
 import { SupplyStations } from './scene-props/SupplyStations'
 import { StationGhost } from './scene-props/StationGhost'
+import { StationParachuteDrop } from './scene-props/StationParachuteDrop'
 import { BasePad, GridOverlay, Ground, MissionBuildings, Survivors } from './scene-props/SceneStructures'
 import { World2Environment } from './scene-props/World2Environment'
 import {
@@ -174,6 +175,10 @@ export default function SARScene() {
   const [placingStation, setPlacingStation] = useState(false)
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null)
   const [ghostPos, setGhostPos] = useState<THREE.Vector3 | null>(null)
+  // Stations currently mid-parachute-drop. Keyed by station id so each drop
+  // has a stable render instance. The static SupplyStations renderer hides
+  // ids in this set so the drop animation and the static mesh don't overlap.
+  const [droppingStationIds, setDroppingStationIds] = useState<Set<string>>(() => new Set())
   // ─────────────────────────────────────────────────────────────────────────────
   const copiedTimer               = useRef<ReturnType<typeof setTimeout> | null>(null)
   const orbitRef                  = useRef<OrbitControlsImpl | null>(null)
@@ -307,9 +312,24 @@ export default function SARScene() {
   const onSupplyStationEvent = useCallback((e: SupplyStationEvent) => {
     if (e.type === 'supply_station_added') {
       setStations(prev => (prev.some(s => s.id === e.station.id) ? prev : [...prev, e.station]))
+      // New station from the operator — play the parachute drop. Skip if we
+      // somehow already have it in-flight (idempotent on duplicate events).
+      setDroppingStationIds(prev => {
+        if (prev.has(e.station.id)) return prev
+        const next = new Set(prev)
+        next.add(e.station.id)
+        return next
+      })
     } else if (e.type === 'supply_station_removed') {
       setStations(prev => prev.filter(s => s.id !== e.id))
       setSelectedStationId(sel => (sel === e.id ? null : sel))
+      // If a drop was mid-flight for this id, cancel it.
+      setDroppingStationIds(prev => {
+        if (!prev.has(e.id)) return prev
+        const next = new Set(prev)
+        next.delete(e.id)
+        return next
+      })
     } else {
       // supply_stations_reset — backend wiped the registry (e.g., world switch).
       // Re-hydrate from REST so we pick up the fresh list (home-only post-reset).
@@ -319,7 +339,17 @@ export default function SARScene() {
       setSelectedStationId(null)
       setPlacingStation(false)
       setGhostPos(null)
+      setDroppingStationIds(new Set())
     }
+  }, [])
+
+  const handleDropComplete = useCallback((id: string) => {
+    setDroppingStationIds(prev => {
+      if (!prev.has(id)) return prev
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
   }, [])
 
   const { drones, exploredSectors, latestReveals } = useTelemetry(WS_URL, handleSystemEvent, onSupplyStationEvent)
@@ -1518,7 +1548,18 @@ export default function SARScene() {
           stations={stations}
           selectedId={selectedStationId}
           onSelect={setSelectedStationId}
+          droppingIds={droppingStationIds}
         />
+        {stations
+          .filter(s => droppingStationIds.has(s.id))
+          .map(s => (
+            <StationParachuteDrop
+              key={`drop-${s.id}`}
+              x={s.x}
+              z={s.z}
+              onComplete={() => handleDropComplete(s.id)}
+            />
+          ))}
         {placingStation && (
           <StationGhost
             position={ghostPos}
