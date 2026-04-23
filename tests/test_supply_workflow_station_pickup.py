@@ -109,42 +109,64 @@ async def test_pickup_uses_nearest_user_station():
 
 
 @pytest.mark.asyncio
-async def test_in_flight_dispatch_uses_captured_station_even_after_removal():
-    """Station removed mid-flight does not affect an in-flight dispatch."""
-    added = supply_stations.add_station(x=18.0, z=18.0)
-    kwargs = _make_async_kwargs()
+async def test_station_captured_at_dispatch_start_persists_across_waypoints():
+    """Each waypoint on the pickup leg references the station captured at
+    dispatch start, not re-queried from the registry. A mid-flight removal
+    between waypoints must not redirect later moves.
+    """
+    station = supply_stations.add_station(x=18.0, z=18.0)
 
-    # Remove the station BEFORE dispatch completes by simulating a removal
-    # after select_best_station has captured it. We achieve this by wrapping
-    # plan_route_fn so the first call triggers the removal synchronously.
-    removal_triggered = False
+    # Build a multi-waypoint route so there's a window between moves for removal.
+    async def _plan_route_fn(*, asset_id, target_x, target_z, target_y=None, snap_to_building_center=True):
+        return {
+            "waypoints": [
+                {"x": float(target_x) - 3.0, "y": 5.0, "z": float(target_z) - 3.0},
+                {"x": float(target_x),        "y": 5.0, "z": float(target_z)       },
+            ],
+            "to": {"x": float(target_x), "y": 5.0, "z": float(target_z)},
+        }
 
-    async def _plan_route_with_side_effect(**call_kwargs):
-        nonlocal removal_triggered
-        if not removal_triggered:
-            supply_stations.remove_station(added["id"])
-            removal_triggered = True
-        return await kwargs["plan_route_fn"](**call_kwargs)
+    moves: list[dict] = []
+    removed = False
+
+    async def _move(*, asset_id, x, y, z):
+        nonlocal removed
+        moves.append({"x": x, "y": y, "z": z})
+        # Remove the station after the first move so later moves must still
+        # reference the captured station's coords.
+        if not removed:
+            supply_stations.remove_station(station["id"])
+            removed = True
+        return {"success": True}
+
+    async def _wait(*_args, **_kwargs):
+        return {"ok": True}
+
+    async def _status(_aid):
+        return {"x": 0.0, "y": 2.0, "z": 0.0, "battery": 80.0, "status": "IDLE"}
 
     result = await dispatch_supply_to_building(
         asset_id="BEACON-01",
-        building={"id": 4, "x": 20.0, "z": 20.0},
+        building={"id": 5, "x": 20.0, "z": 20.0},
         resolve_scan_target=lambda x, z: {"building": None, "recommended_window_waypoint": None},
         world=_make_world(),
         window_scan_standoff_m=4.0,
         select_window_waypoint=lambda *a, **k: None,
         return_to_base_fn=AsyncMock(return_value={"success": True}),
-        plan_route_fn=_plan_route_with_side_effect,
-        move_drone_to_fn=kwargs["move_drone_to_fn"],
-        wait_until_waypoint_reached_fn=kwargs["wait_until_waypoint_reached_fn"],
-        get_status_fn=kwargs["get_status_fn"],
+        plan_route_fn=_plan_route_fn,
+        move_drone_to_fn=_move,
+        wait_until_waypoint_reached_fn=_wait,
+        get_status_fn=_status,
     )
 
     assert result.get("success") is True
-    # First call still uses the captured station coords, not home.
-    pickup_call = kwargs["plan_route_calls"][0]
-    assert pickup_call["target_x"] == 18.0
-    assert pickup_call["target_z"] == 18.0
+    # The pickup leg should have made 2 moves: (15, 15) then (18, 18).
+    # Removal happened after the first move. The second move must still use
+    # the captured station's coords (18, 18) even though the registry is now empty.
+    assert len(moves) >= 2, f"expected at least 2 moves, got {len(moves)}"
+    # First two moves are the pickup leg (to (15,15) then (18,18))
+    assert moves[0]["x"] == 15.0 and moves[0]["z"] == 15.0, "first pickup move should go to (15,15)"
+    assert moves[1]["x"] == 18.0 and moves[1]["z"] == 18.0, "second pickup move should go to (18,18) even after removal"
 
 
 @pytest.mark.asyncio

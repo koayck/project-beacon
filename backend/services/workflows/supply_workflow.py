@@ -144,6 +144,13 @@ async def dispatch_supply_to_building(
     wait_until_waypoint_reached_fn: Callable[..., Awaitable[dict]],
     get_status_fn: Callable[[str], Awaitable[dict]],
 ) -> dict:
+    """Dispatch a supply payload to `building` via the nearest supply station.
+
+    NOTE: `return_to_base_fn` is retained in the signature for v1 minimal-diff
+    stability but is NOT invoked. Pickup routing goes through the station
+    registry via `_go_to_station`; there is no longer an unconditional return
+    to (0,0,0) before dispatch.
+    """
     target_key = _supply_target_key(building)
     async with _SUPPLY_DISPATCH_GUARD_LOCK:
         supplied_keys = service_context.get_supplied_target_keys()
@@ -300,6 +307,7 @@ async def dispatch_supply_to_building(
                 return {
                     "asset_id": asset_id,
                     "error": route["error"],
+                    "pickup_station": station,
                     "building": building,
                     "route": route,
                 }
@@ -317,6 +325,7 @@ async def dispatch_supply_to_building(
                 return {
                     "asset_id": asset_id,
                     "error": move_result.get("message", "Failed while moving on supply route."),
+                    "pickup_station": station,
                     "building": building,
                     "waypoint": waypoint,
                     "move_result": move_result,
@@ -334,6 +343,7 @@ async def dispatch_supply_to_building(
                 return {
                     "asset_id": asset_id,
                     "error": wait_result.get("error", "Supply route waypoint not reached."),
+                    "pickup_station": station,
                     "building": building,
                     "waypoint": waypoint,
                     "failed_waypoint_index": index,
