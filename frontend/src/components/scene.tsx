@@ -28,7 +28,7 @@ import {
   type SupplyStation,
 } from '@/lib/api'
 import type { SupplyStationEvent } from '@/lib/ws'
-import { SupplyStations } from './scene-props/SupplyStations'
+import { STATION_PLATFORM_TOP_Y, SupplyStations } from './scene-props/SupplyStations'
 import { StationGhost } from './scene-props/StationGhost'
 import { StationParachuteDrop } from './scene-props/StationParachuteDrop'
 import { BasePad, GridOverlay, Ground, MissionBuildings, Survivors } from './scene-props/SceneStructures'
@@ -53,7 +53,6 @@ import { CameraTracker, FollowBeaconCamera } from './animation/CameraTracker'
 import { SupplyThrow } from './animation/ThrowAnimation'
 import {
   BASE_PICKUP_RANGE,
-  BASE_Y,
   DRONE_START,
   FLOOR_H,
   FLOOR_T,
@@ -893,41 +892,59 @@ export default function SARScene() {
   const pendingDeliveryKey = useRef<string | null>(null)
   const deliveryDroneId = useRef<string | null>(null)
 
-  // ── Cargo pickup at base ──────────────────────────────────────────────────
+  // ── Cargo pickup at supply station ────────────────────────────────────────
+  // A drone counts as "picked up" when it arrives within BASE_PICKUP_RANGE of
+  // any placed supply station's platform top. We don't know exactly which
+  // station the backend routed it to, but physically it only reaches one, so
+  // a match against the nearest station is sufficient.
+  const nearestStationDistance = useCallback(
+    (x: number, y: number, z: number): number => {
+      let best = Infinity
+      for (const s of stations) {
+        const d = distance3D(x, y, z, s.x, STATION_PLATFORM_TOP_Y, s.z)
+        if (d < best) best = d
+      }
+      return best
+    },
+    [stations],
+  )
+
   const cargoPickedUp = useRef(false)
   useEffect(() => {
     if (pendingSupplyPickupRef.current.size === 0) return
-    const reachedBase: string[] = []
+    if (stations.length === 0) return
+    const reachedStation: string[] = []
     for (const assetId of pendingSupplyPickupRef.current) {
       const telemetryEntry = drones[assetId]
       if (!telemetryEntry) continue
-      const distToBase = distance3D(telemetryEntry.x, telemetryEntry.y, telemetryEntry.z, 0, 0, 0)
-      if (distToBase < BASE_PICKUP_RANGE) reachedBase.push(assetId)
+      const dist = nearestStationDistance(telemetryEntry.x, telemetryEntry.y, telemetryEntry.z)
+      if (dist < BASE_PICKUP_RANGE) reachedStation.push(assetId)
     }
-    if (reachedBase.length === 0) return
+    if (reachedStation.length === 0) return
 
     setCargoByDrone(prev => {
       const next = new Set(prev)
-      for (const assetId of reachedBase) next.add(assetId)
+      for (const assetId of reachedStation) next.add(assetId)
       return next
     })
-  }, [drones])
+  }, [drones, stations, nearestStationDistance])
 
   useEffect(() => {
     if (backendSupplyDispatchSeenRef.current) return
     if (!deliveryTarget.current || cargoPickedUp.current) return
     if (!pendingDeliveryKey.current || !deliveryDroneId.current) return
+    if (stations.length === 0) return
 
     const t = drones[deliveryDroneId.current]
     if (!t) return
 
-    const distToBase = distance3D(t.x, t.y, t.z, 0, BASE_Y, 0)
-    if (distToBase < BASE_PICKUP_RANGE) {
+    const dist = nearestStationDistance(t.x, t.y, t.z)
+    if (dist < BASE_PICKUP_RANGE) {
       cargoPickedUp.current = true
       setHasCargo(true)
-      addLog(`📦 Supplies collected from base (${deliveryDroneId.current})`)
+      addLog(`📦 Supplies collected from station (${deliveryDroneId.current})`)
     }
-  }, [drones, addLog])
+  }, [drones, stations, nearestStationDistance, addLog])
 
   // ── Cargo throw trigger ───────────────────────────────────────────────────
 
