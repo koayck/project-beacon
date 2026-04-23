@@ -100,16 +100,34 @@ async def plan_route(
         target_z = nearby.cz
 
         if entry_mode == "ground_entry" and available_window_waypoints:
-            floors = {int(wp["floor"]) for wp in available_window_waypoints}
-            lowest_floor = min(floors)
-            ground_candidates: list[dict] = [
+            # Exclude windows whose y sits below the flood surface (or within
+            # the flood clearance band used by the sweep planner). Otherwise the
+            # drone would dive briefly underwater to reach a submerged first-
+            # floor window before starting the above-water sweep.
+            flood_level = context.get_flood_level()
+            _GROUND_ENTRY_FLOOD_CLEARANCE_M = 0.5  # matches sweep_planner default
+            min_entry_y = max(flood_level + _GROUND_ENTRY_FLOOD_CLEARANCE_M, 0.5)
+            above_flood_waypoints = [
                 wp for wp in available_window_waypoints
-                if int(wp["floor"]) == lowest_floor
+                if float(wp["y"]) >= min_entry_y
             ]
-            assert ground_candidates, (
-                "ground_entry candidate set is empty despite non-empty "
-                "available_window_waypoints — this is a logic error"
-            )
+
+            if above_flood_waypoints:
+                floors = {int(wp["floor"]) for wp in above_flood_waypoints}
+                lowest_floor = min(floors)
+                ground_candidates: list[dict] = [
+                    wp for wp in above_flood_waypoints
+                    if int(wp["floor"]) == lowest_floor
+                ]
+            else:
+                # Every window is submerged — no valid ground entry exists.
+                # Fall through to the nearest_floor fallback below so the caller
+                # can still produce a route (which will snap to an unreachable
+                # window and likely return an error, which is the right signal).
+                ground_candidates = []
+
+            if not ground_candidates:
+                entry_mode_fallback = True
 
             def _drone_dist_xz(wp: dict) -> float:
                 dx = float(wp["x"]) - cx

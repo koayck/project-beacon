@@ -130,9 +130,15 @@ class TestEntryModeGroundEntry:
 
         The test asserts east is chosen, which only holds when the distance
         function is XZ-only. Reverting to 3D would flip the result.
+
+        The flood filter in route_planner would normally skip the east window
+        (y=0.8 below the flood surface); this test disables it via a low
+        flood level so the XZ-vs-3D ranking is the only discriminator.
         """
         from backend.services.core import context
         from backend.world.model import Building, WindowAperture
+
+        monkeypatch.setattr(context, "get_flood_level", lambda: -10.0)
 
         two_face_building = Building(
             id=998,
@@ -438,4 +444,64 @@ class TestEntryModeGroundEntry:
         assert wp["face"] != "east", (
             f"drone on west side picked east-face window — approach-side filter failed. "
             f"Selected: face={wp['face']}, floor={wp['floor']}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_ground_entry_excludes_submerged_windows(self, _mock_client, monkeypatch):
+        """When the lowest floor's windows sit below the flood surface, ground
+        entry must skip them and pick the next floor up — otherwise the drone
+        would dive underwater on its approach before the above-water sweep.
+        """
+        from backend.services.core import context
+        from backend.world.model import Building, WindowAperture
+
+        # Flood sits at y=1.4 (default), clearance 0.5 → min entry y = 1.9.
+        # Ground-floor sill_y=0.0 → waypoint y=0.8 (SUBMERGED — must be skipped).
+        # Second-floor  sill_y=3.0 → waypoint y=3.8 (above flood).
+        submerged_ground_building = Building(
+            id=997,
+            cx=0.0, cz=0.0,
+            w=10.0, d=10.0, h=12.0,
+            windows=(
+                WindowAperture(face="south", axis_center=0.0, sill_y=0.0, width=2.0, height=1.6),
+                WindowAperture(face="south", axis_center=0.0, sill_y=3.0, width=2.0, height=1.6),
+            ),
+        )
+
+        class _FloodWorld:
+            buildings = (submerged_ground_building,)
+
+            def building_near_xz(self, x, z, margin=2.0):
+                return submerged_ground_building
+
+            def obstacles_in_path(self, *_args, **_kwargs):
+                return []
+
+            def buildings_near(self, *_args, **_kwargs):
+                return [submerged_ground_building]
+
+        monkeypatch.setattr(context, "get_world", lambda: _FloodWorld())
+        monkeypatch.setattr(context, "get_flood_level", lambda: 1.4)
+
+        _mock_client.get_status.return_value = {
+            "asset_id": "BEACON-01",
+            "x": 0.0, "y": 5.0, "z": 20.0,
+            "battery": 80, "status": "IDLE",
+        }
+        result = await plan_route(
+            "BEACON-01", 0.0, 0.0,
+            snap_to_building_center=True,
+            entry_mode="ground_entry",
+        )
+
+        tr = result.get("target_resolution", {})
+        wp = tr.get("selected_window_waypoint")
+        assert wp is not None, f"expected a selection; target_resolution={tr}"
+        assert wp["floor"] == 2, (
+            f"expected floor 2 (above-flood lowest), got floor={wp['floor']} "
+            f"at y={wp.get('y')}; flood filter not applied?"
+        )
+        assert float(wp["y"]) >= 1.9, (
+            f"selected window y={wp['y']} is at or below flood+clearance (1.9m) — "
+            "drone would go underwater"
         )
