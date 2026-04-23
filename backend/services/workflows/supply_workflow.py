@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from backend.services.core import context as service_context
+from backend.services.supply_stations import select_best_station
 
 
 _SUPPLY_DISPATCH_GUARD_LOCK = asyncio.Lock()
@@ -54,6 +55,79 @@ def _supply_target_key(target: dict) -> str:
     z = float(target_dict.get("z", 0.0) if target_dict is not None else 0.0)
     y_value = y if y is not None else 0.0
     return f"xyz:{x:.2f},{y_value:.2f},{z:.2f}"
+
+
+async def _go_to_station(
+    *,
+    asset_id: str,
+    station: dict,
+    plan_route_fn: Callable[..., Awaitable[dict]],
+    move_drone_to_fn: Callable[..., Awaitable[dict]],
+    wait_until_waypoint_reached_fn: Callable[..., Awaitable[dict]],
+) -> dict:
+    """Route the drone to a supply station's (x, z) at pickup altitude.
+
+    Uses the same move-and-wait pattern as the delivery leg, with a single
+    high-altitude retry on initial route failure.
+    """
+    pickup_y = 2.0  # Matches the home-pad landing altitude used by return_workflow.
+
+    route = await plan_route_fn(
+        asset_id=asset_id,
+        target_x=float(station["x"]),
+        target_z=float(station["z"]),
+        target_y=pickup_y,
+        snap_to_building_center=False,
+    )
+    if "error" in route:
+        retry_route = await plan_route_fn(
+            asset_id=asset_id,
+            target_x=float(station["x"]),
+            target_z=float(station["z"]),
+            target_y=max(pickup_y + 5.0, 15.0),
+            snap_to_building_center=False,
+        )
+        if "error" in retry_route:
+            return {
+                "error": route["error"],
+                "pickup_station": station,
+                "route": route,
+            }
+        route = retry_route
+
+    for index, waypoint in enumerate(route.get("waypoints", []), start=1):
+        move_result = await move_drone_to_fn(
+            asset_id=asset_id,
+            x=float(waypoint["x"]),
+            y=float(waypoint["y"]),
+            z=float(waypoint["z"]),
+        )
+        if not move_result.get("success", True):
+            return {
+                "error": move_result.get("message", "Failed while moving on pickup route."),
+                "pickup_station": station,
+                "waypoint": waypoint,
+                "move_result": move_result,
+            }
+
+        wait_result = await wait_until_waypoint_reached_fn(
+            asset_id,
+            float(waypoint["x"]),
+            float(waypoint["y"]),
+            float(waypoint["z"]),
+            timeout_s=90.0,
+            poll_s=0.2,
+        )
+        if not wait_result.get("ok", False):
+            return {
+                "error": wait_result.get("error", "Pickup waypoint not reached."),
+                "pickup_station": station,
+                "waypoint": waypoint,
+                "failed_waypoint_index": index,
+                "status": wait_result.get("status"),
+            }
+
+    return {"success": True, "pickup_station": station}
 
 
 async def dispatch_supply_to_building(
@@ -190,13 +264,21 @@ async def dispatch_supply_to_building(
             drop_y = max(target_height + 5.0, 10.0)
             drop_z = target_z_f
 
-        to_base = await return_to_base_fn(asset_id)
-        if "error" in to_base:
+        station = select_best_station(target_x=drop_x, target_z=drop_z)
+        pickup_result = await _go_to_station(
+            asset_id=asset_id,
+            station=station,
+            plan_route_fn=plan_route_fn,
+            move_drone_to_fn=move_drone_to_fn,
+            wait_until_waypoint_reached_fn=wait_until_waypoint_reached_fn,
+        )
+        if "error" in pickup_result:
             return {
                 "asset_id": asset_id,
-                "error": f"Failed to return to base before supply dispatch: {to_base['error']}",
+                "error": f"Failed to reach supply station before dispatch: {pickup_result['error']}",
                 "building": building,
-                "return_result": to_base,
+                "pickup_station": station,
+                "pickup_result": pickup_result,
             }
 
         route = await plan_route_fn(
@@ -274,6 +356,7 @@ async def dispatch_supply_to_building(
             "matched_building": matched_building,
             "target_key": target_key,
             "final_status": final_status,
+            "pickup_station": station,
         }
     finally:
         async with _SUPPLY_DISPATCH_GUARD_LOCK:
