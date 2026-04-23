@@ -116,13 +116,30 @@ async def plan_route_tool(
     target_z: float,
     target_y: float | None = None,
     snap_to_building_center: bool = False,
+    entry_mode: str = "nearest_floor",
 ) -> dict:
     """
     Pre-compute a collision-free route from the drone's current position to target
     (target_x, target_z). Returns ordered waypoints for the caller to execute via
     move_drone_to. Altitude (target_y) is auto-calculated when omitted.
+
+    ``entry_mode`` controls the window-waypoint selection when the target is a
+    building and ``snap_to_building_center`` is true:
+      - "nearest_floor" (default): pick the window closest in Y to ``target_y``.
+      - "ground_entry": restrict candidates to the lowest-floor windows only,
+        apply an approach-side face filter and line-of-sight check, then rank
+        by XZ distance to the drone. Use this for scan approaches where the
+        drone should enter at a ground-floor window instead of the roof.
     """
-    return await plan_route(asset_id, target_x, target_z, target_y, snap_to_building_center)
+    mode: str = entry_mode if entry_mode in ("nearest_floor", "ground_entry") else "nearest_floor"
+    return await plan_route(
+        asset_id,
+        target_x,
+        target_z,
+        target_y,
+        snap_to_building_center,
+        entry_mode=mode,  # type: ignore[arg-type]
+    )
 
 
 @beacon_mcp.tool(name="resolve_scan_target")
