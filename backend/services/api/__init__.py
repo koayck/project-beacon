@@ -1,6 +1,7 @@
 """Stable API facades consumed by app routes and MCP tools."""
 
 from backend.services.api.control import (
+    add_supply_station,
     assign_fleet_to_buildings,
     deploy_swarm,
     dispatch_supply_to_building,
@@ -9,12 +10,14 @@ from backend.services.api.control import (
     get_drone_status,
     get_drone_view,
     list_all_drones,
+    list_supply_stations,
     move_drone_to,
     parallel_fleet_scan,
     parallel_fleet_supply,
     plan_route,
     plan_sweep_pattern,
     recall_swarm,
+    remove_supply_station,
     resolve_scan_target,
     return_to_base,
     scan_area,
@@ -29,6 +32,7 @@ from backend.services.fleet import (
 )
 
 __all__ = [
+    "add_supply_station",
     "assign_fleet_to_buildings",
     "deploy_swarm",
     "discover_fleet",
@@ -39,12 +43,14 @@ __all__ = [
     "get_drone_status",
     "get_drone_view",
     "list_all_drones",
+    "list_supply_stations",
     "move_drone_to",
     "parallel_fleet_scan",
     "parallel_fleet_supply",
     "plan_route",
     "plan_sweep_pattern",
     "recall_swarm",
+    "remove_supply_station",
     "resolve_scan_target",
     "restore_registered_connections",
     "return_to_base",

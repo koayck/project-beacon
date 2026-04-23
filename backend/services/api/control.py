@@ -50,6 +50,7 @@ from backend.services.workflows.supply_workflow import (
 )
 from backend.services.workflows.return_workflow import return_to_base as _return_to_base_workflow
 from backend.services.workflows.sweep_workflow import sweep_scan_building as _sweep_scan_workflow
+from backend.services import supply_stations as _supply_stations_registry
 from backend.runtime import grpc_client as _runtime_grpc_client
 from backend.world.model import (
     WORLD,
@@ -495,3 +496,20 @@ async def parallel_fleet_supply(
         unassigned_buildings=unassigned_buildings,
         unassigned_targets=unassigned_targets,
     )
+
+
+def list_supply_stations() -> dict:
+    """Return all known supply stations (home + user-placed)."""
+    return {"stations": _supply_stations_registry.list_stations()}
+
+
+def add_supply_station(x: float, z: float) -> dict:
+    """Validate and append a user-placed station. Raises ValueError on invalid placement."""
+    station = _supply_stations_registry.add_station(x=x, z=z)
+    return {"station": station}
+
+
+def remove_supply_station(station_id: str) -> dict:
+    """Remove a user-placed station. Raises ValueError for 'home'. Returns {'ok': False} if unknown."""
+    removed = _supply_stations_registry.remove_station(station_id)
+    return {"ok": removed}
