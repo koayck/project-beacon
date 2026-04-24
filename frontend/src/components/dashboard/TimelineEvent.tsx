@@ -55,6 +55,8 @@ export function TimelineEvent({ event }: { event: MissionRunEvent }) {
     <div className="border-l-2 border-[rgba(40,140,180,0.25)] pl-4 py-2">
       <button
         type="button"
+        aria-expanded={open}
+        aria-controls={`timeline-event-${event.seq}-body`}
         className="flex w-full items-baseline gap-3 text-left"
         onClick={() => setOpen(!open)}
       >
@@ -72,9 +74,12 @@ export function TimelineEvent({ event }: { event: MissionRunEvent }) {
         <span className="ml-auto text-[10px] text-[#556677]">{open ? '▾' : '▸'}</span>
       </button>
       {open && (
-        <pre className={`mt-2 whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed ${
-          isSentinel ? 'text-[#667788]' : 'text-[#cde]'
-        }`}>
+        <pre
+          id={`timeline-event-${event.seq}-body`}
+          className={`mt-2 whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed ${
+            isSentinel ? 'text-[#667788]' : 'text-[#cde]'
+          }`}
+        >
           {body || '(empty)'}
         </pre>
       )}
