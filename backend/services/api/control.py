@@ -42,11 +42,11 @@ from backend.services.core import context as service_context
 from backend.services.scan_reporting import build_sweep_scan_report as _build_sweep_scan_report
 from backend.services.swarm_control import deploy_swarm as _deploy_swarm_service
 from backend.services.swarm_control import recall_swarm as _recall_swarm_service
-from backend.services.workflows.supply_agent import (
+from backend.services.workflows.supply_workflow import (
     dispatch_supply_to_building as _dispatch_supply_to_building_workflow,
 )
-from backend.services.workflows.supply_agent import (
-    parallel_fleet_supply as _parallel_fleet_supply_agent,
+from backend.services.workflows.supply_workflow import (
+    parallel_fleet_supply as _parallel_fleet_supply_workflow,
 )
 from backend.services.workflows.return_workflow import return_to_base as _return_to_base_workflow
 from backend.services.workflows.sweep_workflow import sweep_scan_building as _sweep_scan_agent
@@ -489,7 +489,7 @@ async def parallel_fleet_supply(
     unassigned_buildings: list[dict] | None = None,
     unassigned_targets: list[dict] | None = None,
 ) -> dict:
-    return await _parallel_fleet_supply_agent(
+    return await _parallel_fleet_supply_workflow(
         assignments,
         dispatch_supply_to_building_fn=dispatch_supply_to_building,
         unassigned_buildings=unassigned_buildings,
