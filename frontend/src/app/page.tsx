@@ -1,12 +1,14 @@
 import dynamic from 'next/dynamic'
 
-// Dynamic import with ssr:false — Three.js requires browser APIs
 const SARScene = dynamic(() => import('@/components/scene'), { ssr: false })
+const AppShell = dynamic(() => import('@/components/AppShell').then(m => ({ default: m.AppShell })), { ssr: false })
 
 export default function Home() {
   return (
-    <main style={{ width: '100vw', height: '100vh' }}>
-      <SARScene />
-    </main>
+    <AppShell>
+      <main style={{ width: '100vw', height: '100vh' }}>
+        <SARScene />
+      </main>
+    </AppShell>
   )
 }

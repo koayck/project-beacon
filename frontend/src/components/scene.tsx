@@ -53,6 +53,7 @@ import { CoordOverlay } from './panels/CoordOverlay'
 import { DroneStatusPanel } from './panels/DronePanel'
 import { FpvPanel } from './panels/FpvPanel'
 import { TopStatusBar } from './panels/TopStatusBar'
+import { SettingsModal } from './panels/SettingsModal'
 import { CameraTracker, FollowBeaconCamera } from './animation/CameraTracker'
 import { SupplyThrow } from './animation/ThrowAnimation'
 import {
@@ -131,6 +132,7 @@ export default function SARScene() {
   const [dronesVisible, setDronesVisible] = useState(true)
   const [fpvAssetId, setFpvAssetId] = useState<string | null>(ASSET_ID)
   const [transparentWalls, setTransparentWalls] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [deliveredTo, setDeliveredTo] = useState<Set<string>>(new Set())
   const [deliveringTo, setDeliveringTo] = useState<Set<string>>(new Set())
   const deliveredToRef = useRef<Set<string>>(new Set())
@@ -1791,7 +1793,11 @@ export default function SARScene() {
         activeWorld={activeWorld}
         onWorldChange={handleWorldChange}
         networkMockStatus={networkMockStatus}
+        onSettingsClick={() => setSettingsOpen(true)}
       />
+
+      {/* Settings Modal */}
+      <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       {/* Left panel — Mission Log + Metrics */}
       <div className="pointer-events-auto absolute left-4 top-[60px] flex max-h-[calc(100%-180px)] flex-col gap-2">

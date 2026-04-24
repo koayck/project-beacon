@@ -1,4 +1,12 @@
 import Link from 'next/link'
+import { useState, useEffect, useCallback } from 'react'
+import {
+  isTauriRuntime,
+  getNetworkStatus,
+  startNetworkWatcher,
+  stopNetworkWatcher,
+  type NetworkStatus,
+} from '@/lib/tauri'
 
 interface SurvivorPoint {
   x: number
@@ -19,6 +27,7 @@ export function TopStatusBar({
   activeWorld,
   onWorldChange,
   networkMockStatus,
+  onSettingsClick,
 }: {
   selectMode: boolean
   floodLevel: number
@@ -26,7 +35,47 @@ export function TopStatusBar({
   activeWorld: 1 | 2
   onWorldChange: (world: 1 | 2) => void
   networkMockStatus: NetworkMockStatus | null
+  onSettingsClick?: () => void
 }) {
+  const [isTauri, setIsTauri] = useState(false)
+  const [watcherStatus, setWatcherStatus] = useState<NetworkStatus | null>(null)
+  const [watcherLoading, setWatcherLoading] = useState(false)
+
+  useEffect(() => {
+    setIsTauri(isTauriRuntime())
+  }, [])
+
+  const refreshWatcherStatus = useCallback(async () => {
+    if (!isTauriRuntime()) return
+    try {
+      const status = await getNetworkStatus()
+      setWatcherStatus(status)
+    } catch {
+      setWatcherStatus(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isTauri) return
+    refreshWatcherStatus()
+    const interval = setInterval(refreshWatcherStatus, 5000)
+    return () => clearInterval(interval)
+  }, [isTauri, refreshWatcherStatus])
+
+  const toggleWatcher = async () => {
+    if (!isTauri || watcherLoading) return
+    setWatcherLoading(true)
+    try {
+      if (watcherStatus?.watcher_running) {
+        await stopNetworkWatcher()
+      } else {
+        await startNetworkWatcher()
+      }
+      await refreshWatcherStatus()
+    } finally {
+      setWatcherLoading(false)
+    }
+  }
   const submerged = survivors.filter(p => p.y < floodLevel - 0.2).length
   const networkMode = networkMockStatus?.mode ?? 'unknown'
   const hasWifiConnection = (networkMockStatus?.active_ssids?.length ?? 0) > 0
@@ -86,8 +135,25 @@ export function TopStatusBar({
           : 'rounded-[3px] border border-[rgba(255,170,70,0.32)] bg-[rgba(255,120,20,0.12)] px-2 py-0.5 tracking-[0.8px] text-[#ffc488]'
         }>
           {networkLabel}
-          {/* {networkMockStatus?.target_ssid ? ` • TARGET SSID ${networkMockStatus.target_ssid}` : ''} */}
         </span>
+        {isTauri && (
+          <button
+            onClick={toggleWatcher}
+            disabled={watcherLoading}
+            className={`rounded-[3px] border px-2 py-0.5 tracking-[0.8px] transition-all duration-200 ${
+              watcherStatus?.watcher_running
+                ? 'border-[rgba(0,255,120,0.4)] bg-[rgba(0,200,100,0.15)] text-[#7fff99] hover:bg-[rgba(0,200,100,0.25)]'
+                : 'border-[rgba(100,120,140,0.3)] bg-[rgba(60,80,100,0.1)] text-[#8899aa] hover:bg-[rgba(60,80,100,0.2)]'
+            } ${watcherLoading ? 'cursor-wait opacity-50' : 'cursor-pointer'}`}
+            title={watcherStatus?.note ?? 'Toggle Starlink WiFi watcher'}
+          >
+            {watcherLoading
+              ? 'LOADING...'
+              : watcherStatus?.watcher_running
+              ? 'WATCHER ON'
+              : 'WATCHER OFF'}
+          </button>
+        )}
         {/* {selectMode && (
           <span className="rounded-[3px] border border-[rgba(255,140,0,0.3)] bg-[rgba(255,100,0,0.1)] px-2 py-0.5 font-bold tracking-[1px] text-[#ff9933]">
             AREA SELECT
@@ -102,6 +168,15 @@ export function TopStatusBar({
         <span className="tracking-[0.5px] text-[#e87730]">
           FLOOD +{floodLevel.toFixed(1)}m
         </span>
+        {onSettingsClick && (
+          <button
+            onClick={onSettingsClick}
+            className="ml-2 rounded-[3px] border border-[rgba(100,120,140,0.3)] bg-[rgba(60,80,100,0.1)] px-2 py-0.5 tracking-[0.8px] text-[#8899aa] transition-all duration-200 hover:border-[rgba(100,120,140,0.5)] hover:bg-[rgba(60,80,100,0.2)] hover:text-[#aabbcc]"
+            title="Settings"
+          >
+            SETTINGS
+          </button>
+        )}
       </div>
     </div>
   )
