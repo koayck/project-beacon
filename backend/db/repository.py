@@ -9,7 +9,7 @@ from typing import Any
 
 import aiosqlite
 
-from backend.db.models import Asset, MissionLog, LicenseRecord, MissionRun
+from backend.db.models import Asset, MissionLog, LicenseRecord, MissionRun, MissionRunEvent
 
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text()
 
@@ -263,9 +263,44 @@ class _MissionRunRepository:
         return result
 
 
+# ── Mission Run Events ────────────────────────────────────────────────────────────
+
+
+class _MissionRunEventsRepository:
+    async def insert_many(self, events: list[MissionRunEvent]) -> None:
+        """Bulk-insert events for a mission run. No-op if the list is empty."""
+        if not events:
+            return
+        query = """
+            INSERT INTO mission_run_events (run_id, seq, ts, event_type, payload)
+            VALUES (?, ?, ?, ?, ?)
+        """
+        rows = [
+            (e.run_id, e.seq, e.ts, e.event_type, e.payload)
+            for e in events
+        ]
+        async with _connect() as conn:
+            await conn.executemany(query, rows)
+            await conn.commit()
+
+    async def list_for_run(self, run_id: int) -> list[MissionRunEvent]:
+        """Return all events for one run, ordered by seq ascending."""
+        query = """
+            SELECT id, run_id, seq, ts, event_type, payload, created_at
+            FROM mission_run_events
+            WHERE run_id = ?
+            ORDER BY seq ASC
+        """
+        async with _connect() as conn:
+            cur = await conn.execute(query, (run_id,))
+            rows = await cur.fetchall()
+        return [MissionRunEvent(**_row_to_dict(row)) for row in rows]
+
+
 # ── Singletons ────────────────────────────────────────────────────────────────
 
 asset_repo = _AssetRepository()
 mission_log_repo = _MissionLogRepository()
 license_repo = _LicenseRepository()
 mission_run_repo = _MissionRunRepository()
+mission_run_events_repo = _MissionRunEventsRepository()
