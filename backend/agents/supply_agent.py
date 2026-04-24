@@ -17,7 +17,6 @@ from backend.instructions.supply_agent_text import (
     SUPPLY_ASSIGNER_INSTRUCTION,
     SUPPLY_EXECUTOR_INSTRUCTION,
     SUPPLY_REPORT_INSTRUCTION,
-    SUPPLY_RESOLVER_INSTRUCTION,
 )
 from backend.services.core import context as service_context
 
@@ -668,19 +667,6 @@ def _set_active_parallel_supply_loops(asset_ids: list[str]) -> None:
     ]
 
 
-_SUPPLY_RESOLVER_INSTRUCTION = SUPPLY_RESOLVER_INSTRUCTION
-
-_supply_resolver_agent = Agent(
-    name="supply_resolver_agent",
-    model=QWEN3_INSTRUCT,
-    description="Resolves supply targets as a survivor list.",
-    generate_content_config=QWEN3_GEN_CONFIG,
-    output_key="supply_targets",
-    instruction=_SUPPLY_RESOLVER_INSTRUCTION,
-    tools=[make_toolset(["find_survivors_in_area"])],
-)
-
-
 _SUPPLY_ASSIGNER_INSTRUCTION = SUPPLY_ASSIGNER_INSTRUCTION
 
 _supply_assigner_agent = Agent(
@@ -716,12 +702,6 @@ _supply_report_agent = Agent(
     tools=[_build_supply_report_tool],
 )
 
-
-_supply_assignment_stage = SequentialAgent(
-    name="supply_assignment_stage",
-    description="Resolve survivor targets first, then perform fleet assignment.",
-    sub_agents=[_supply_resolver_agent, _supply_assigner_agent],
-)
 
 _supply_execution_stage = SequentialAgent(
     name="supply_execution_stage",
@@ -759,5 +739,5 @@ supply_agent = SequentialAgent(
         "Automatically assigns the closest available drones in parallel and keeps "
         "dispatching until all survivor targets in the selected area are processed."
     ),
-    sub_agents=[_supply_assignment_stage, _supply_execution_stage],
+    sub_agents=[_supply_assigner_agent, _supply_execution_stage],
 )

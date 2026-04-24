@@ -26,7 +26,7 @@ Route to specialist based on mission_type:
 - move: Call navigation_agent with target coordinates
 - scan: Call scan_resolver_agent first, then call scan_agent
 - return_home: Call navigation_agent's return_to_base
-- supply_drop: Call supply_agent
+- supply_drop: Call supply_resolver_agent first, then call supply_agent
 
 ERROR RECOVERY:
 If execution fails with unrecoverable error:
@@ -60,6 +60,7 @@ GUIDELINES:
 - If mission_type is unknown, ask one concise clarification question instead of returning parser JSON.
 - After delegating to command_parser, immediately route to the proper execution agent using the parsed intent.
 - For scan missions, always run scan_resolver_agent before scan_agent so state["scan_buildings"] is populated with canonical building coordinates.
+- For supply missions, always run supply_resolver_agent before supply_agent so state["supply_targets"] is populated with the canonical survivor list.
 
 Keep responses concise and operational.
 """
