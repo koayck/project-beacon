@@ -66,7 +66,6 @@ function RunRow({
         <td className="px-3 py-2"><StatusChip status={run.status} /></td>
         <td className="px-3 py-2 text-right tabular-nums text-[#cc88ff]">{fmtMs(run.ttft_ms)}</td>
         <td className="px-3 py-2 text-right tabular-nums text-[#55aaff]">{fmtMs(run.duration_ms)}</td>
-        <td className="px-3 py-2 text-right tabular-nums text-[#44ddff]">{run.tool_call_count}</td>
         <td className="px-3 py-2 text-right tabular-nums text-[#44ff66]">{run.survivors_detected}</td>
         <td className="px-3 py-2 text-right tabular-nums text-[#44dd88]">{run.survivors_rescued}</td>
         <td className="px-3 py-2 text-right tabular-nums text-[#e0e8ff]">{fmtTokens(run.total_tokens)}</td>
@@ -75,7 +74,7 @@ function RunRow({
       </tr>
       {expanded && (
         <tr className="border-b border-[rgba(40,140,180,0.08)] bg-[rgba(4,6,14,0.5)]">
-          <td colSpan={12} className="px-3 py-3 text-[11px] text-[#8899bb]">
+          <td colSpan={11} className="px-3 py-3 text-[11px] text-[#8899bb]">
             <div className="mb-2"><span className="text-[#556677]">PROMPT:</span> {run.prompt}</div>
             {run.result_summary && (
               <div className="mb-2"><span className="text-[#556677]">RESULT:</span> {run.result_summary}</div>
@@ -110,7 +109,6 @@ export function RunsTable({ runs }: { runs: DashboardRun[] }) {
             <th className="px-3 py-2 text-left">STATUS</th>
             <th className="px-3 py-2 text-right">TTFT</th>
             <th className="px-3 py-2 text-right">DURATION</th>
-            <th className="px-3 py-2 text-right">TOOLS</th>
             <th className="px-3 py-2 text-right">DETECT</th>
             <th className="px-3 py-2 text-right">RESCUE</th>
             <th className="px-3 py-2 text-right">TOKENS</th>

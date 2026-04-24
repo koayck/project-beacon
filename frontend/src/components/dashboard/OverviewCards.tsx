@@ -83,7 +83,6 @@ export function OverviewCards({ overview }: { overview: DashboardOverview }) {
           : undefined}
       />
       <Card label="AVG RESCUE TIME" value={formatSeconds(overview.avg_rescue_time_s)} accent="text-[#ffaa33]" />
-      <Card label="TOTAL TOOL CALLS" value={String(overview.total_tool_calls ?? '--')} accent="text-[#44ddff]" />
       <Card label="TOTAL TOKENS" value={formatTokens(overview.total_tokens)} accent="text-[#e0e8ff]" />
       <Card label="TOTAL COST" value={formatCost(overview.total_cost_usd)} accent="text-[#ffaa55]" />
       <Card

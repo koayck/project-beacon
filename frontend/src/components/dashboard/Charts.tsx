@@ -225,21 +225,6 @@ export function Charts({ runs }: { runs: DashboardRun[] }) {
         </ResponsiveContainer>
       </ChartCard>
 
-      <ChartCard title="TOOL CALLS PER RUN">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={trend}>
-            <CartesianGrid stroke="rgba(40,140,180,0.12)" strokeDasharray="3 3" />
-            <XAxis dataKey="idx" stroke="#556677" fontSize={10} />
-            <YAxis stroke="#556677" fontSize={10} allowDecimals={false} />
-            <Tooltip
-              contentStyle={TOOLTIP_STYLE}
-              labelFormatter={(value) => `Run #${trend[+value - 1]?.id ?? value}`}
-            />
-            <Bar dataKey="tool_calls" fill="#44ddff" radius={[2, 2, 0, 0]} name="Tool Calls" />
-          </BarChart>
-        </ResponsiveContainer>
-      </ChartCard>
-
       <ChartCard title="TIME-TO-RESCUE DISTRIBUTION">
         {!hasRescueData ? (
           <NoData />
