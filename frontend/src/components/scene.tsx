@@ -32,7 +32,7 @@ import {
   type SupplyStation,
 } from '@/lib/api'
 import type { SupplyStationEvent } from '@/lib/ws'
-import { STATION_PLATFORM_TOP_Y, SupplyStations } from './scene-props/SupplyStations'
+import { SupplyStations } from './scene-props/SupplyStations'
 import { StationGhost } from './scene-props/StationGhost'
 import { StationParachuteDrop } from './scene-props/StationParachuteDrop'
 import { BasePad, GridOverlay, Ground, MissionBuildings, Survivors } from './scene-props/SceneStructures'
@@ -1015,10 +1015,11 @@ export default function SARScene() {
     [stations],
   )
 
-  // Platform top is ~1.8; backend routes pickups to y=2.0. Allow a few metres
-  // above the platform so late descent / small sim jitter still counts.
+  // Backend pickups target y=2.0, but _plan_route_with_altitude_retry retries
+  // at y=15.0 when the low-altitude plan is blocked by buildings. Ceiling at
+  // 17m covers both modes while still rejecting high cruise passes.
   const isAtPickupAltitude = useCallback(
-    (y: number): boolean => y <= STATION_PLATFORM_TOP_Y + 2.5,
+    (y: number): boolean => y <= 17.0,
     [],
   )
 
@@ -1342,39 +1343,19 @@ export default function SARScene() {
   const handleAreaScan = useCallback(() => {
     if (!selection) return
 
-    // Detect which named buildings overlap the selected area.
-    // Exclude balcony enclosures — they are sub-parts of their parent building.
-    const overlapping = simBuildings.filter(b => {
-      if (b.name.endsWith(' balcony')) return false
-      const bb = buildingBounds(b)
-      return bb.minX <= selection.maxX && bb.maxX >= selection.minX &&
-             bb.minZ <= selection.maxZ && bb.maxZ >= selection.minZ
-    })
-    const buildingNames = overlapping
-      .map(buildingPromptName)
-      .filter(Boolean)
-
-    let prompt: string
-    if (buildingNames.length === 1) {
-      // Entire selection is dominated by one building — scan the building directly.
-      prompt = `scan the ${buildingNames[0]} at coordinates (${overlapping[0].cx.toFixed(1)}, 0, ${overlapping[0].cz.toFixed(1)}) for survivors`
-    } else if (buildingNames.length > 1) {
-      const buildingList = overlapping
-        .map(b => {
-          const name = buildingPromptName(b)
-          return `${name} at (${b.cx.toFixed(1)}, 0, ${b.cz.toFixed(1)})`
-        })
-        .join('; ')
-      prompt = `scan for survivors in each of the following buildings: ${buildingList}. Do not ask for coordinates — they are provided above. Scan each building in sequence.`
-    } else {
-      prompt = `scan area from (${selection.minX}, ${selection.minZ}) to (${selection.maxX}, ${selection.maxZ}) for survivors`
-    }
+    const width = selection.maxX - selection.minX
+    const depth = selection.maxZ - selection.minZ
+    const centerX = (selection.minX + selection.maxX) / 2
+    const centerZ = (selection.minZ + selection.maxZ) / 2
+    const radius = Math.max(width, depth) / 2
+    const prompt =
+      `scan for survivors in all buildings within ${radius.toFixed(1)}m ` +
+      `of (${centerX.toFixed(1)}, ${centerZ.toFixed(1)}). ` +
+      `Target area bounds: (${selection.minX}, ${selection.minZ}) to (${selection.maxX}, ${selection.maxZ}).`
 
     addLog(`📐 Area scan: (${selection.minX},${selection.minZ}) → (${selection.maxX},${selection.maxZ})`)
     clearAreaSelectionState()
-    // Inject prompt into CommandPanel; use "auto" asset for multi-building so the
-    // fleet assigner picks the closest available drones.
-    setPendingScanAssetId(buildingNames.length > 1 ? 'auto' : null)
+    setPendingScanAssetId('auto')
     setPendingScanPrompt(prompt)
   }, [selection, addLog, clearAreaSelectionState])
 
