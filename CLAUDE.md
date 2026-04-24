@@ -79,7 +79,7 @@ Operator
   → POST /command  (or SSE stream: /command/stream)
   → ADK Runner (shared PostgreSQL session)
     → commander agent (Gemini 3 Flash, temp=0.35, thinking enabled)
-      ├── sub_agents: [recovery_agent, navigation_agent, scan_workflow, supply_workflow]
+      ├── sub_agents: [recovery_agent, navigation_agent, scan_agent, supply_agent]
       └── tools: [AgentTool(command_parser), AgentTool(scan_resolver), McpToolset]
             → FastMCP server (/mcp/)
               → services/api/  (business logic)

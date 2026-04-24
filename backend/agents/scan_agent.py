@@ -3,14 +3,14 @@ Scan Workflow — fleet assignment first, then fleet scan loop until all assigne
 buildings are completed, then emit one consolidated final report.
 
 Workflow:
-  1) Commander routes mission command to scan_workflow.
+  1) Commander routes mission command to scan_agent.
     2) Fleet assignment stage assigns drones using pre-resolved scan_buildings.
   3) Parallel fleet scan stage prepares an interleaved mission queue.
   4) LoopAgent runs pick -> navigate -> sweep-scan repeatedly until done.
   5) Final report agent emits one consolidated operator report.
 
 Structure:
-    scan_workflow (SequentialAgent)
+    scan_agent (SequentialAgent)
     ├── fleet_assignment_stage    # assignment from pre-resolved targets
     └── fleet_scan_executor_agent # prepare queue + LoopAgent + final reporter
 
@@ -34,7 +34,7 @@ from google.adk.tools.tool_context import ToolContext
 
 from backend.agents._mcp import NAV_TOOLS, THERMAL_TOOLS, make_toolset
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
-from backend.instructions.scan_workflow_text import (
+from backend.instructions.scan_agent_text import (
     ASSET_SCAN_NAV_INSTRUCTION_TEMPLATE,
     ASSET_SCAN_PICKER_INSTRUCTION_TEMPLATE,
     ASSET_SCAN_THERMAL_INSTRUCTION_TEMPLATE,
@@ -1022,8 +1022,8 @@ _fleet_scan_executor_agent = SequentialAgent(
 
 # ── Top-level SequentialAgent ──────────────────────────────────────────────────
 
-scan_workflow = SequentialAgent(
-    name="scan_workflow",
+scan_agent = SequentialAgent(
+    name="scan_agent",
     description=(
         "Navigate a drone fleet to scan one or more buildings for heat signatures "
         "and emit a single consolidated final report. "

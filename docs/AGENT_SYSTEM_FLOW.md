@@ -36,8 +36,8 @@ Root commander sub-agents:
 - [backend/agents/mission_planner.py](backend/agents/mission_planner.py)
 - [backend/agents/recovery.py](backend/agents/recovery.py)
 - [backend/agents/navigation.py](backend/agents/navigation.py)
-- [backend/agents/scan_workflow.py](backend/agents/scan_workflow.py)
-- [backend/agents/supply_workflow.py](backend/agents/supply_workflow.py)
+- [backend/agents/scan_agent.py](backend/agents/scan_agent.py)
+- [backend/agents/supply_agent.py](backend/agents/supply_agent.py)
 
 Commander logic in plain language:
 1. Parse the operator command into structured intent.
@@ -111,7 +111,7 @@ This means navigation behavior is mostly deterministic while the agent handles i
 ## 7) Scan Workflow Internal Flow
 
 Scan workflow top-level:
-- [backend/agents/scan_workflow.py](backend/agents/scan_workflow.py)
+- [backend/agents/scan_agent.py](backend/agents/scan_agent.py)
 
 Current structure:
 1. Resolve scan targets
@@ -121,9 +121,9 @@ Current structure:
 5. Emit one consolidated report
 
 Key composed stages:
-- Fleet assignment stage: [backend/agents/scan_workflow.py](backend/agents/scan_workflow.py#L953)
-- Fleet execution stage: [backend/agents/scan_workflow.py](backend/agents/scan_workflow.py#L962)
-- Top-level scan_workflow: [backend/agents/scan_workflow.py](backend/agents/scan_workflow.py#L974)
+- Fleet assignment stage: [backend/agents/scan_agent.py](backend/agents/scan_agent.py#L953)
+- Fleet execution stage: [backend/agents/scan_agent.py](backend/agents/scan_agent.py#L962)
+- Top-level scan_agent: [backend/agents/scan_agent.py](backend/agents/scan_agent.py#L974)
 
 Important behavior:
 - Queue state is stored in session state.
@@ -133,7 +133,7 @@ Important behavior:
 ## 8) Supply Workflow Internal Flow
 
 Supply workflow top-level:
-- [backend/agents/supply_workflow.py](backend/agents/supply_workflow.py)
+- [backend/agents/supply_agent.py](backend/agents/supply_agent.py)
 
 Current structure:
 1. Resolve survivor targets
@@ -143,9 +143,9 @@ Current structure:
 5. Emit one consolidated supply report
 
 Key composed stages:
-- Assignment stage: [backend/agents/supply_workflow.py](backend/agents/supply_workflow.py#L611)
-- Execution stage: [backend/agents/supply_workflow.py](backend/agents/supply_workflow.py#L617)
-- Top-level supply_workflow: [backend/agents/supply_workflow.py](backend/agents/supply_workflow.py#L638)
+- Assignment stage: [backend/agents/supply_agent.py](backend/agents/supply_agent.py#L611)
+- Execution stage: [backend/agents/supply_agent.py](backend/agents/supply_agent.py#L617)
+- Top-level supply_agent: [backend/agents/supply_agent.py](backend/agents/supply_agent.py#L638)
 
 Dynamic behavior:
 - One initial target per drone is assigned first.
@@ -214,8 +214,8 @@ Suggested reading order:
 2. [backend/agents/commander.py](backend/agents/commander.py)
 3. [backend/agents/command_parser.py](backend/agents/command_parser.py)
 4. [backend/agents/navigation.py](backend/agents/navigation.py)
-5. [backend/agents/scan_workflow.py](backend/agents/scan_workflow.py)
-6. [backend/agents/supply_workflow.py](backend/agents/supply_workflow.py)
+5. [backend/agents/scan_agent.py](backend/agents/scan_agent.py)
+6. [backend/agents/supply_agent.py](backend/agents/supply_agent.py)
 7. [backend/agents/recovery.py](backend/agents/recovery.py)
 8. [backend/agents/_mcp.py](backend/agents/_mcp.py)
 

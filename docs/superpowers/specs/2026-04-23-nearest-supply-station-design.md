@@ -6,7 +6,7 @@
 
 ## Problem
 
-Today, `dispatch_supply_to_building` in `backend/services/workflows/supply_workflow.py` makes every drone fly back to the single home base at `(0,0,0)` via `return_to_base_fn(asset_id)` before heading to the survivor drop point. This simulates a supply pickup, but it always uses one fixed location. In a wider disaster zone, a drone delivering to a distant building wastes a round trip flying all the way home.
+Today, `dispatch_supply_to_building` in `backend/services/workflows/supply_agent.py` makes every drone fly back to the single home base at `(0,0,0)` via `return_to_base_fn(asset_id)` before heading to the survivor drop point. This simulates a supply pickup, but it always uses one fixed location. In a wider disaster zone, a drone delivering to a distant building wastes a round trip flying all the way home.
 
 ## Goal
 
@@ -84,7 +84,7 @@ Each mutating endpoint broadcasts a WebSocket event via the existing `ws_broadca
 {type: "supply_station_removed", id: str}
 ```
 
-#### 3. `backend/services/workflows/supply_workflow.py` (modify)
+#### 3. `backend/services/workflows/supply_agent.py` (modify)
 
 Replace the base-return step inside `dispatch_supply_to_building`:
 
@@ -178,7 +178,7 @@ User clicks valid spot
 ### Supply dispatch
 ```
 Operator: "deliver supplies to the apartment block"
-  → commander agent routes to supply_workflow
+  → commander agent routes to supply_agent
   → supply_resolver → supply_assigner → supply_prep → parallel supply loops
 For each dispatch:
   dispatch_supply_to_building(asset_id, building)
@@ -223,7 +223,7 @@ User clicks Remove
 - `add_station` inside a building footprint raises
 - `add_station` out of bounds raises
 
-### `tests/test_supply_workflow.py` (update)
+### `tests/test_supply_agent.py` (update)
 - Zero user stations → dispatch routes via `(0,0,0)` (regression check for today's behavior)
 - One user station placed closer to the target than home → pickup leg waypoints include that station's coordinates, not home
 - Two user stations, target closer to station B → station B chosen

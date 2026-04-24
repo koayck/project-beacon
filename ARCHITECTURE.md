@@ -54,8 +54,8 @@ backend/
 |   |-- mission_planner.py   Planning support (referenced by commander)
 |   |-- navigation.py        Navigation specialist agent
 |   |-- thermal.py           Thermal specialist agent
-|   |-- scan_workflow.py     Multi-drone scan workflow
-|   |-- supply_workflow.py   Multi-drone supply workflow
+|   |-- scan_agent.py     Multi-drone scan workflow
+|   |-- supply_agent.py   Multi-drone supply workflow
 |   |-- recovery.py          Error-recovery specialist
 |   |-- schemas.py           Pydantic mission/intent schemas
 |   |-- _mcp.py              MCP tool groups + toolset factory
@@ -73,7 +73,7 @@ backend/
 |   |   `-- target_resolution.py
 |   `-- workflows/
 |       |-- sweep_workflow.py
-|       |-- supply_workflow.py
+|       |-- supply_agent.py
 |       `-- return_workflow.py
 |-- telemetry/
 |   |-- udp_listener.py

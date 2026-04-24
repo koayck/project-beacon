@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.agents.supply_workflow import (
+from backend.agents.supply_agent import (
     _supply_execution_stage,
     _dedupe_targets,
     assign_drones_to_supply_targets,

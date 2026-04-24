@@ -42,14 +42,14 @@ from backend.services.core import context as service_context
 from backend.services.scan_reporting import build_sweep_scan_report as _build_sweep_scan_report
 from backend.services.swarm_control import deploy_swarm as _deploy_swarm_service
 from backend.services.swarm_control import recall_swarm as _recall_swarm_service
-from backend.services.workflows.supply_workflow import (
+from backend.services.workflows.supply_agent import (
     dispatch_supply_to_building as _dispatch_supply_to_building_workflow,
 )
-from backend.services.workflows.supply_workflow import (
-    parallel_fleet_supply as _parallel_fleet_supply_workflow,
+from backend.services.workflows.supply_agent import (
+    parallel_fleet_supply as _parallel_fleet_supply_agent,
 )
 from backend.services.workflows.return_workflow import return_to_base as _return_to_base_workflow
-from backend.services.workflows.sweep_workflow import sweep_scan_building as _sweep_scan_workflow
+from backend.services.workflows.sweep_workflow import sweep_scan_building as _sweep_scan_agent
 from backend.services import supply_stations as _supply_stations_registry
 from backend.runtime import grpc_client as _runtime_grpc_client
 from backend.world.model import (
@@ -417,7 +417,7 @@ async def sweep_scan_building(
     standoff: float = 2.0,
 ) -> dict:
     client = grpc_client
-    return await _sweep_scan_workflow(
+    return await _sweep_scan_agent(
         asset_id,
         target_x=target_x,
         target_z=target_z,
@@ -489,7 +489,7 @@ async def parallel_fleet_supply(
     unassigned_buildings: list[dict] | None = None,
     unassigned_targets: list[dict] | None = None,
 ) -> dict:
-    return await _parallel_fleet_supply_workflow(
+    return await _parallel_fleet_supply_agent(
         assignments,
         dispatch_supply_to_building_fn=dispatch_supply_to_building,
         unassigned_buildings=unassigned_buildings,

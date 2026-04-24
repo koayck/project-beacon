@@ -466,12 +466,12 @@ git commit -m "feat(supply): REST + WS API for placing and removing supply stati
 ## Task 3: Route the supply workflow pickup leg through the chosen station
 
 **Files:**
-- Modify: `backend/services/workflows/supply_workflow.py:59-223` — replace the `return_to_base_fn` call with `_go_to_station`; add the helper.
-- Test:   `tests/test_supply_workflow_station_pickup.py`
+- Modify: `backend/services/workflows/supply_agent.py:59-223` — replace the `return_to_base_fn` call with `_go_to_station`; add the helper.
+- Test:   `tests/test_supply_agent_station_pickup.py`
 
 ### Step 1: Write the failing test
 
-Create `tests/test_supply_workflow_station_pickup.py`:
+Create `tests/test_supply_agent_station_pickup.py`:
 
 ```python
 """Tests that dispatch_supply_to_building uses the nearest station for pickup."""
@@ -482,7 +482,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from backend.services import supply_stations
-from backend.services.workflows.supply_workflow import dispatch_supply_to_building
+from backend.services.workflows.supply_agent import dispatch_supply_to_building
 
 
 @pytest.fixture(autouse=True)
@@ -649,12 +649,12 @@ async def test_pickup_ignores_far_station_when_home_is_closer():
 
 ### Step 2: Run tests to verify they fail
 
-Run: `uv run pytest tests/test_supply_workflow_station_pickup.py -v`
+Run: `uv run pytest tests/test_supply_agent_station_pickup.py -v`
 Expected: FAIL — today's code calls `return_to_base_fn` and routes to (0,0,0), so `return_to_base_fn.assert_not_called()` fails and the user-station test sees `target_x=0.0`.
 
 ### Step 3: Add the `_go_to_station` helper and replace the pickup call
 
-In `backend/services/workflows/supply_workflow.py`:
+In `backend/services/workflows/supply_agent.py`:
 
 1. Add the import near the top, with the other `backend.services.*` imports:
 
@@ -778,14 +778,14 @@ The `return_to_base_fn` parameter stays on the signature (see spec decision — 
 
 ### Step 4: Run the new test plus the existing workflow tests
 
-Run: `uv run pytest tests/test_supply_workflow_station_pickup.py tests/test_supply_workflow.py -v`
+Run: `uv run pytest tests/test_supply_agent_station_pickup.py tests/test_supply_agent.py -v`
 
-Expected: all 4 new tests PASS. The existing `tests/test_supply_workflow.py` may have assertions that assumed `return_to_base_fn` was called — if so, update those tests to assert on the pickup-leg instead. Do **not** weaken assertions; replace them with equivalent checks against the new station-based flow.
+Expected: all 4 new tests PASS. The existing `tests/test_supply_agent.py` may have assertions that assumed `return_to_base_fn` was called — if so, update those tests to assert on the pickup-leg instead. Do **not** weaken assertions; replace them with equivalent checks against the new station-based flow.
 
 ### Step 5: Commit
 
 ```bash
-git add backend/services/workflows/supply_workflow.py tests/test_supply_workflow_station_pickup.py tests/test_supply_workflow.py
+git add backend/services/workflows/supply_agent.py tests/test_supply_agent_station_pickup.py tests/test_supply_agent.py
 git commit -m "feat(supply): route pickup leg through nearest station, replacing return-to-base"
 ```
 
@@ -1327,4 +1327,4 @@ git commit -m "feat(supply): click-to-place supply stations with ghost preview a
 
 - **Spec coverage check:** Backend module (Task 1), REST+WS API (Task 2), workflow integration (Task 3), frontend API/WS (Task 4), station renderer (Task 5), ghost preview (Task 6), scene wiring + remove HUD (Task 7). Every file listed in the spec's "Affected Files" section appears in at least one task. Deferred items (capacity, persistence, LLM placement, pickup animation) are not in scope, matching the spec.
 - **Fallback plan:** The "click-to-place feels clunky" fallback from the spec is surfaced in Task 7 Step 7. If triggered, the work to revert is deleting Tasks 6-7 changes and adding a seeded list in `World2Data.ts` — backend stays identical.
-- **`return_to_base_fn` parameter retention:** Kept on `dispatch_supply_to_building`'s signature per spec decision. Task 3 Step 4 notes that existing tests in `tests/test_supply_workflow.py` may need updating to match the new pickup flow, but the parameter's presence keeps the diff minimal.
+- **`return_to_base_fn` parameter retention:** Kept on `dispatch_supply_to_building`'s signature per spec decision. Task 3 Step 4 notes that existing tests in `tests/test_supply_agent.py` may need updating to match the new pickup flow, but the parameter's presence keeps the diff minimal.

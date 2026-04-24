@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.agents.scan_workflow import (
+from backend.agents.scan_agent import (
     assign_drones_to_buildings,
     build_aggregated_scan_report,
     pick_next_building_for_asset,

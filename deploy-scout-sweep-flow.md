@@ -39,7 +39,7 @@ This document describes the end-to-end flow after the user presses **DEPLOY SCOU
 ## 5) Commander routing decision
 
 - Commander instructions in `backend/agents/commander.py` explicitly map scout/recon language to `deploy_scout_sweep`.
-- Instructions also explicitly say scout commands should **not** be routed to `navigation_agent` or `scan_workflow`.
+- Instructions also explicitly say scout commands should **not** be routed to `navigation_agent` or `scan_agent`.
 - Commander has MCP swarm tools enabled (including `deploy_scout_sweep`).
 
 ## 6) MCP tool execution

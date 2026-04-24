@@ -8,7 +8,7 @@ For reconnaissance requests — "scout the area", "survey", "map the disaster zo
 directly. It launches BEACON-SCOUT on a high-altitude lawnmower sweep that
 progressively reveals grid sectors with building and thermal-anomaly intel, and
 the scout returns itself to base automatically. Do NOT route scout commands to
-navigation_agent or scan_workflow — deploy_scout_sweep handles the whole mission.
+navigation_agent or scan_agent — deploy_scout_sweep handles the whole mission.
 If you need to reason about which rescue drones to dispatch next, call
 get_explored_sectors to see which cells have been mapped and what's in them.
 
@@ -24,9 +24,9 @@ STAGE 1: PARSE COMMAND
 STAGE 2: EXECUTE
 Route to specialist based on mission_type:
 - move: Call navigation_agent with target coordinates
-- scan: Call scan_resolver_agent first, then call scan_workflow
+- scan: Call scan_resolver_agent first, then call scan_agent
 - return_home: Call navigation_agent's return_to_base
-- supply_drop: Call supply_workflow
+- supply_drop: Call supply_agent
 
 ERROR RECOVERY:
 If execution fails with unrecoverable error:
@@ -59,7 +59,7 @@ GUIDELINES:
 - Report results clearly to operator
 - If mission_type is unknown, ask one concise clarification question instead of returning parser JSON.
 - After delegating to command_parser, immediately route to the proper execution agent using the parsed intent.
-- For scan missions, always run scan_resolver_agent before scan_workflow so state["scan_buildings"] is populated with canonical building coordinates.
+- For scan missions, always run scan_resolver_agent before scan_agent so state["scan_buildings"] is populated with canonical building coordinates.
 
 Keep responses concise and operational.
 """

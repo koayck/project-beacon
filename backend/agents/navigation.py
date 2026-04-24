@@ -29,7 +29,7 @@ _DESCRIPTION = (
 def make_navigation_agent(name: str = "navigation_agent") -> Agent:
     """
     Factory — ADK requires each agent instance to have exactly one parent.
-    Call this once per parent (commander, scan_workflow) to get separate instances.
+    Call this once per parent (commander, scan_agent) to get separate instances.
     """
     return Agent(
         name=name,

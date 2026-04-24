@@ -9,7 +9,7 @@ from google.adk.agents import Agent
 
 from backend.agents._mcp import make_toolset
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
-from backend.instructions.scan_workflow_text import SCAN_RESOLVER_INSTRUCTION
+from backend.instructions.scan_agent_text import SCAN_RESOLVER_INSTRUCTION
 
 
 scan_resolver_agent = Agent(

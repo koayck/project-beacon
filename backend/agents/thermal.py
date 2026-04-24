@@ -27,7 +27,7 @@ _DESCRIPTION = (
 def make_thermal_agent(name: str = "thermal_agent") -> Agent:
     """
     Factory — ADK requires each agent instance to have exactly one parent.
-    Call this once per parent (scan_workflow, direct use) to get separate instances.
+    Call this once per parent (scan_agent, direct use) to get separate instances.
     """
     return Agent(
         name=name,

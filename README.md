@@ -113,7 +113,7 @@ Recall all drones to home.
 
 ---
 
-### Scan Workflows (scan_workflow → navigation + thermal)
+### Scan Workflows (scan_agent → navigation + thermal)
 
 The commander navigates the drone to the target first, then scans.
 It will automatically pick the best available drone if none is specified.
@@ -236,7 +236,7 @@ Deploy BEACON-01 to the south sector.
 ```
 Commander (temp=0.5)
 ├── select_best_drone()   ← picks nearest IDLE drone with battery > 20%
-├── scan_workflow         ← SequentialAgent: navigation_agent → thermal_agent
+├── scan_agent         ← SequentialAgent: navigation_agent → thermal_agent
 │     navigation_agent (temp=0.7)   move + obstacle avoidance
 │     thermal_agent     (temp=0.7)  scan + structured report
 ├── navigation_agent      ← movement-only commands

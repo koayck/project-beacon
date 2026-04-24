@@ -13,8 +13,8 @@ from backend.agents.command_parser import command_parser
 from backend.agents.scan_resolver import scan_resolver_agent
 from backend.agents.recovery import recovery_agent
 from backend.agents.navigation import navigation_agent
-from backend.agents.scan_workflow import scan_workflow
-from backend.agents.supply_workflow import supply_workflow
+from backend.agents.scan_agent import scan_agent
+from backend.agents.supply_agent import supply_agent
 # CommandIntent import was used by the now-disabled is_complex_mission tool
 # (see comment block below). Re-enable the import if the function is restored.
 # from backend.agents.schemas import CommandIntent
@@ -41,8 +41,8 @@ commander = Agent(
     sub_agents=[
         recovery_agent,
         navigation_agent,
-        scan_workflow,
-        supply_workflow,
+        scan_agent,
+        supply_agent,
     ],
     tools=[
         AgentTool(command_parser),

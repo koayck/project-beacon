@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from backend.services import supply_stations
-from backend.services.workflows.supply_workflow import dispatch_supply_to_building
+from backend.services.workflows.supply_agent import dispatch_supply_to_building
 
 
 @pytest.fixture(autouse=True)

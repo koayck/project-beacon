@@ -12,7 +12,7 @@ from google.adk.tools.tool_context import ToolContext
 
 from backend.agents._mcp import make_toolset
 from backend.agents._model import QWEN3_GEN_CONFIG, QWEN3_INSTRUCT
-from backend.instructions.supply_workflow_text import (
+from backend.instructions.supply_agent_text import (
     ASSET_SUPPLY_WORKER_INSTRUCTION_TEMPLATE,
     SUPPLY_ASSIGNER_INSTRUCTION,
     SUPPLY_EXECUTOR_INSTRUCTION,
@@ -752,8 +752,8 @@ def _set_supply_execution_enabled(enabled: bool) -> None:
         _supply_execution_stage.sub_agents = []
 
 
-supply_workflow = SequentialAgent(
-    name="supply_workflow",
+supply_agent = SequentialAgent(
+    name="supply_agent",
     description=(
         "Dispatch emergency supplies to one or more survivors and emit one final report. "
         "Automatically assigns the closest available drones in parallel and keeps "
