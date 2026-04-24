@@ -12,6 +12,9 @@ from backend.services.mission_summary import pick_best_summary
 _INT_MAX = 2_147_483_647
 _RESULT_SUMMARY_MAX_CHARS = 500
 _TEXT_EVENT_TYPES: frozenset[str] = frozenset({"text", "final"})
+_VALID_EVENT_TYPES: frozenset[str] = frozenset({
+    "tool_call", "tool_result", "thinking", "text", "final", "error",
+})
 
 
 def _round_key(value: Any) -> float | None:
@@ -98,8 +101,7 @@ class MissionRunAccumulator:
         record-time. Unknown event types are silently dropped — keep the call
         site cheap for the SSE hot path.
         """
-        valid_types = {"tool_call", "tool_result", "thinking", "text", "final", "error"}
-        if event_type not in valid_types:
+        if event_type not in _VALID_EVENT_TYPES:
             return
         self.events.append(
             BufferedEvent(
