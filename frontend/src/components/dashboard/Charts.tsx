@@ -54,16 +54,16 @@ function classifyPrompt(prompt: string): (typeof PROMPT_TYPE_ORDER)[number] {
 
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col rounded-lg border border-[rgba(40,140,180,0.2)] bg-[linear-gradient(135deg,rgba(6,8,16,0.88),rgba(4,6,14,0.82))] p-4 shadow-[inset_0_1px_0_rgba(50,136,204,0.06)]">
-      <span className="mb-3 text-[10px] font-bold tracking-[1.5px] text-[#556677]">{title}</span>
-      <div className="h-[220px] w-full">{children}</div>
+    <div className="flex flex-col rounded-lg border border-[rgba(40,140,180,0.2)] bg-[linear-gradient(135deg,rgba(6,8,16,0.88),rgba(4,6,14,0.82))] p-5 shadow-[inset_0_1px_0_rgba(50,136,204,0.06)]">
+      <span className="mb-4 text-[11px] font-bold tracking-[1.5px] text-[#556677]">{title}</span>
+      <div className="h-[320px] w-full">{children}</div>
     </div>
   )
 }
 
 function NoData() {
   return (
-    <div className="flex h-full items-center justify-center text-[11px] text-[#556677]">
+    <div className="flex h-full items-center justify-center text-[12px] text-[#556677]">
       Not enough data yet
     </div>
   )
@@ -152,15 +152,15 @@ export function Charts({ runs }: { runs: DashboardRun[] }) {
                 data={statusData}
                 dataKey="value"
                 nameKey="name"
-                innerRadius={50}
-                outerRadius={85}
+                innerRadius={70}
+                outerRadius={115}
                 paddingAngle={2}
                 stroke="rgba(6,8,16,0.8)"
               >
                 {statusData.map(entry => <Cell key={entry.name} fill={entry.fill} />)}
               </Pie>
               <Tooltip contentStyle={TOOLTIP_STYLE} />
-              <Legend wrapperStyle={{ fontSize: 10, fontFamily: 'monospace', color: '#8899bb', letterSpacing: 1 }} />
+              <Legend wrapperStyle={{ fontSize: 11, fontFamily: 'monospace', color: '#8899bb', letterSpacing: 1 }} />
             </PieChart>
           </ResponsiveContainer>
         )}
@@ -176,15 +176,15 @@ export function Charts({ runs }: { runs: DashboardRun[] }) {
                 data={droneData}
                 dataKey="value"
                 nameKey="name"
-                innerRadius={50}
-                outerRadius={85}
+                innerRadius={70}
+                outerRadius={115}
                 paddingAngle={2}
                 stroke="rgba(6,8,16,0.8)"
               >
                 {droneData.map(entry => <Cell key={entry.name} fill={entry.fill} />)}
               </Pie>
               <Tooltip contentStyle={TOOLTIP_STYLE} />
-              <Legend wrapperStyle={{ fontSize: 10, fontFamily: 'monospace', color: '#8899bb', letterSpacing: 1 }} />
+              <Legend wrapperStyle={{ fontSize: 11, fontFamily: 'monospace', color: '#8899bb', letterSpacing: 1 }} />
             </PieChart>
           </ResponsiveContainer>
         )}
@@ -197,8 +197,8 @@ export function Charts({ runs }: { runs: DashboardRun[] }) {
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={promptTypeData} layout="vertical" margin={{ left: 12, right: 12 }}>
               <CartesianGrid stroke="rgba(40,140,180,0.12)" strokeDasharray="3 3" horizontal={false} />
-              <XAxis type="number" stroke="#556677" fontSize={10} allowDecimals={false} />
-              <YAxis type="category" dataKey="name" stroke="#556677" fontSize={10} width={70} />
+              <XAxis type="number" stroke="#556677" fontSize={12} allowDecimals={false} />
+              <YAxis type="category" dataKey="name" stroke="#556677" fontSize={11} width={70} />
               <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(40,140,180,0.08)' }} />
               <Bar dataKey="value" radius={[0, 3, 3, 0]}>
                 {promptTypeData.map(entry => <Cell key={entry.name} fill={entry.fill} />)}
@@ -212,8 +212,8 @@ export function Charts({ runs }: { runs: DashboardRun[] }) {
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={trend}>
             <CartesianGrid stroke="rgba(40,140,180,0.12)" strokeDasharray="3 3" />
-            <XAxis dataKey="idx" stroke="#556677" fontSize={10} />
-            <YAxis stroke="#556677" fontSize={10} />
+            <XAxis dataKey="idx" stroke="#556677" fontSize={11} />
+            <YAxis stroke="#556677" fontSize={11} />
             <Tooltip
               contentStyle={TOOLTIP_STYLE}
               labelFormatter={(value) => `Run #${trend[+value - 1]?.id ?? value}`}
@@ -232,8 +232,8 @@ export function Charts({ runs }: { runs: DashboardRun[] }) {
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={rescueHistogramData}>
               <CartesianGrid stroke="rgba(40,140,180,0.12)" strokeDasharray="3 3" />
-              <XAxis dataKey="name" stroke="#556677" fontSize={10} />
-              <YAxis stroke="#556677" fontSize={10} allowDecimals={false} />
+              <XAxis dataKey="name" stroke="#556677" fontSize={11} />
+              <YAxis stroke="#556677" fontSize={12} allowDecimals={false} />
               <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(40,140,180,0.08)' }} />
               <Bar dataKey="value" fill="#44dd88" radius={[2, 2, 0, 0]} name="Rescues" />
             </BarChart>

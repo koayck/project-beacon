@@ -39,7 +39,7 @@ function StatusChip({ status }: { status: DashboardRun['status'] }) {
     status === 'failed'  ? 'bg-[rgba(255,85,85,0.15)] text-[#ff5555] border-[rgba(255,85,85,0.3)]' :
                             'bg-[rgba(255,170,51,0.15)] text-[#ffaa33] border-[rgba(255,170,51,0.3)]'
   return (
-    <span className={`inline-block rounded border px-2 py-0.5 text-[10px] font-bold tracking-[1px] ${style}`}>
+    <span className={`inline-block rounded border px-2.5 py-1 text-[11px] font-bold tracking-[1px] ${style}`}>
       {status.toUpperCase()}
     </span>
   )
@@ -60,21 +60,21 @@ function RunRow({
         className="cursor-pointer border-b border-[rgba(40,140,180,0.08)] text-[#8899bb] hover:bg-[rgba(40,140,180,0.05)]"
         onClick={onToggle}
       >
-        <td className="px-3 py-2 tabular-nums">{run.id}</td>
-        <td className="px-3 py-2 max-w-[360px] truncate text-[#cde]">{run.prompt}</td>
-        <td className="px-3 py-2">{run.asset_id}</td>
-        <td className="px-3 py-2"><StatusChip status={run.status} /></td>
-        <td className="px-3 py-2 text-right tabular-nums text-[#cc88ff]">{fmtMs(run.ttft_ms)}</td>
-        <td className="px-3 py-2 text-right tabular-nums text-[#55aaff]">{fmtMs(run.duration_ms)}</td>
-        <td className="px-3 py-2 text-right tabular-nums text-[#44ff66]">{run.survivors_detected}</td>
-        <td className="px-3 py-2 text-right tabular-nums text-[#44dd88]">{run.survivors_rescued}</td>
-        <td className="px-3 py-2 text-right tabular-nums text-[#e0e8ff]">{fmtTokens(run.total_tokens)}</td>
-        <td className="px-3 py-2 text-right tabular-nums text-[#ffaa55]">{fmtCost(run.cost_usd)}</td>
-        <td className="px-3 py-2 text-right text-[#556677]">{timeAgo(run.started_at)}</td>
+        <td className="px-4 py-3 tabular-nums">{run.id}</td>
+        <td className="px-4 py-3 max-w-[420px] truncate text-[#cde]">{run.prompt}</td>
+        <td className="px-4 py-3">{run.asset_id}</td>
+        <td className="px-4 py-3"><StatusChip status={run.status} /></td>
+        <td className="px-4 py-3 text-right tabular-nums text-[#cc88ff]">{fmtMs(run.ttft_ms)}</td>
+        <td className="px-4 py-3 text-right tabular-nums text-[#55aaff]">{fmtMs(run.duration_ms)}</td>
+        <td className="px-4 py-3 text-right tabular-nums text-[#44ff66]">{run.survivors_detected}</td>
+        <td className="px-4 py-3 text-right tabular-nums text-[#44dd88]">{run.survivors_rescued}</td>
+        <td className="px-4 py-3 text-right tabular-nums text-[#e0e8ff]">{fmtTokens(run.total_tokens)}</td>
+        <td className="px-4 py-3 text-right tabular-nums text-[#ffaa55]">{fmtCost(run.cost_usd)}</td>
+        <td className="px-4 py-3 text-right text-[#556677]">{timeAgo(run.started_at)}</td>
       </tr>
       {expanded && (
         <tr className="border-b border-[rgba(40,140,180,0.08)] bg-[rgba(4,6,14,0.5)]">
-          <td colSpan={11} className="px-3 py-3 text-[11px] text-[#8899bb]">
+          <td colSpan={11} className="px-4 py-4 text-[13px] text-[#8899bb]">
             <div className="mb-2"><span className="text-[#556677]">PROMPT:</span> {run.prompt}</div>
             {run.result_summary && (
               <div className="mb-2"><span className="text-[#556677]">RESULT:</span> {run.result_summary}</div>
@@ -100,20 +100,20 @@ export function RunsTable({ runs }: { runs: DashboardRun[] }) {
   }
   return (
     <section className="overflow-x-auto rounded-lg border border-[rgba(40,140,180,0.2)] bg-[rgba(6,8,16,0.7)]">
-      <table className="w-full font-mono text-[12px]">
+      <table className="w-full font-mono text-[14px]">
         <thead>
-          <tr className="border-b border-[rgba(40,140,180,0.15)] text-[10px] tracking-[1px] text-[#556677]">
-            <th className="px-3 py-2 text-left">#</th>
-            <th className="px-3 py-2 text-left">PROMPT</th>
-            <th className="px-3 py-2 text-left">ASSET</th>
-            <th className="px-3 py-2 text-left">STATUS</th>
-            <th className="px-3 py-2 text-right">TTFT</th>
-            <th className="px-3 py-2 text-right">DURATION</th>
-            <th className="px-3 py-2 text-right">DETECT</th>
-            <th className="px-3 py-2 text-right">RESCUE</th>
-            <th className="px-3 py-2 text-right">TOKENS</th>
-            <th className="px-3 py-2 text-right">COST</th>
-            <th className="px-3 py-2 text-right">WHEN</th>
+          <tr className="border-b border-[rgba(40,140,180,0.15)] text-[11px] tracking-[1.5px] text-[#556677]">
+            <th className="px-4 py-3 text-left">#</th>
+            <th className="px-4 py-3 text-left">PROMPT</th>
+            <th className="px-4 py-3 text-left">ASSET</th>
+            <th className="px-4 py-3 text-left">STATUS</th>
+            <th className="px-4 py-3 text-right">TTFT</th>
+            <th className="px-4 py-3 text-right">DURATION</th>
+            <th className="px-4 py-3 text-right">DETECT</th>
+            <th className="px-4 py-3 text-right">RESCUE</th>
+            <th className="px-4 py-3 text-right">TOKENS</th>
+            <th className="px-4 py-3 text-right">COST</th>
+            <th className="px-4 py-3 text-right">WHEN</th>
           </tr>
         </thead>
         <tbody>

@@ -32,19 +32,19 @@ export default function DashboardPage() {
   }
 
   return (
-    <main className="h-screen overflow-y-auto bg-[#040612] p-6 font-mono text-[#cde]">
-      <header className="mb-6 flex items-center justify-between">
+    <main className="h-screen overflow-y-auto bg-[#040612] px-8 py-6 font-mono text-[#cde]">
+      <header className="mb-8 flex items-end justify-between border-b border-[rgba(40,140,180,0.15)] pb-5">
         <div>
-          <h1 className="text-lg font-bold tracking-[2px] text-[#5599bb]">
+          <h1 className="text-[28px] font-bold leading-none tracking-[3px] text-[#5599bb] drop-shadow-[0_0_24px_rgba(85,153,187,0.35)]">
             PROJECT BEACON — PERFORMANCE
           </h1>
-          <p className="text-[11px] text-[#556677]">
+          <p className="mt-3 text-[13px] tracking-[1px] text-[#556677]">
             Historical mission telemetry · {data.runs.length} recent runs
           </p>
         </div>
         <Link
           href="/"
-          className="rounded border border-[rgba(50,136,204,0.3)] px-3 py-1 text-[11px] tracking-[1px] text-[#88ccee] hover:bg-[rgba(40,140,180,0.1)]"
+          className="rounded-md border border-[rgba(50,136,204,0.4)] bg-[rgba(40,140,180,0.06)] px-4 py-2 text-[12px] font-bold tracking-[1.5px] text-[#88ccee] hover:bg-[rgba(40,140,180,0.15)]"
         >
           ← BACK TO SCENE
         </Link>
