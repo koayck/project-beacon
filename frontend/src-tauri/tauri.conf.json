@@ -25,7 +25,16 @@
     }
   },
   "bundle": {
-    "active": false,
-    "targets": "all"
+    "active": true,
+    "targets": "all",
+    "resources": {
+      "../../scripts/watch_starlink_wifi.sh": "scripts/watch_starlink_wifi.sh",
+      "../../scripts/toggle_starlink_tc.sh": "scripts/toggle_starlink_tc.sh"
+    },
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
   }
 }

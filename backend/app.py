@@ -33,6 +33,7 @@ from backend.output_format import (
 from backend.telemetry.udp_listener import UDPTelemetryListener
 from backend.telemetry.ws_bridge import TelemetryBroadcaster
 from backend.licensing.routes import router as license_router
+from backend.config.routes import router as config_router, load_and_apply_config_on_startup
 from backend.mcp.server import beacon_mcp
 from backend.runtime import grpc_client, udp_listener, ws_broadcaster
 from backend.services.api import (
@@ -386,6 +387,7 @@ async def app_lifespan(app: FastAPI):
     global _adk_runner, _auto_recall_monitor, _simulation_store
 
     await init_db()
+    load_and_apply_config_on_startup()
     _auto_recall_monitor = AutoRecallMonitor(
         enabled=_AUTO_RECALL_ENABLED,
         battery_threshold=_AUTO_RECALL_BATTERY_THRESHOLD,
@@ -468,6 +470,7 @@ app.add_middleware(
 
 app.mount("/mcp", _mcp_http_app)
 app.include_router(license_router, prefix="/license", tags=["license"])
+app.include_router(config_router, prefix="/config", tags=["config"])
 
 
 class SpawnRequest(BaseModel):
