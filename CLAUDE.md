@@ -146,3 +146,10 @@ Change the active model in `backend/agents/_model.py` — the `model` variable a
 - Parameterized queries only in repository layer — never interpolate strings into SQL
 - ADK agents are single-responsibility; no shared mutable state between agents
 - Each `McpToolset` instance must be owned by exactly one agent
+
+## Code commit guidelines
+- make frequent, small, focused commits, with each commit addressing a single, logical change or task. This makes changes easy to review and debug.
+- Utilize the Conventional Commits format (e.g., feat:, fix:, docs:) to provide a clear, standardized history of changes. Messages should be in the imperative mood and kept short
+
+## Architecture Change guidelines
+- for every architecture change, update ./ARCHITECTURE.md to reflect the latest architecture
