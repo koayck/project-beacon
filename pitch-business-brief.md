@@ -12,6 +12,56 @@
 
 ---
 
+## 1B. VALUE PROPOSITION
+
+### The headline (XYZ form)
+
+> **For disaster-response agencies operating in comms-denied ASEAN zones**
+> who need to find survivors inside the golden 72-hour window,
+> **Beacon is a natural-language drone-swarm commander**
+> that turns a single non-pilot responder into a multi-drone operator
+> with Starlink-grade resilience and fully auditable AI decisions —
+> **unlike defense swarm platforms (Shield AI, Anduril) that are export-locked and classified,
+> or consumer GCS tools (DJI, QGroundControl) that require one pilot per drone.**
+
+### Customer jobs → Pains → Beacon's gain
+
+| Customer job | Current pain | Beacon's gain |
+|---|---|---|
+| Locate survivors in 72h | Ground teams are slow; 1 pilot = 1 drone; pilot training takes months | **3–5× force multiplier** — one responder commands a swarm in plain English |
+| Coordinate across disaster zones | Cell towers and fiber are down; radios have limited range | **Starlink satellite backhaul** keeps command-and-control alive |
+| Justify every tactical choice post-incident | GCS software is a black box; agent AI is "classified by design" | **Every decision trace is persisted** — replay for insurers, press, inquiries |
+| Procure inside a small agency budget | Enterprise GCS licenses cost USD 10M+; defense autonomy is ITAR-locked | **BYOC model, sim-first procurement** — fits a DRRMO/NGO budget |
+| Interoperate with existing drones | Vendor lock-in to proprietary airframes | **Protobuf + MAVLink path** — hardware-agnostic |
+
+### Three value pillars for the deck
+
+**Pillar 1 — Speed of command**
+Plain-English mission intent ("scan the south-east quadrant for thermal signatures") is parsed by the Commander Agent, decomposed across Navigation + Scan + Recovery sub-agents, and executed across the swarm in seconds. No mission planner. No waypoint chart.
+
+**Pillar 2 — Resilience by default**
+Starlink-backed uplink + local agent reasoning + offline-ready sim + LLM-agnostic routing (LiteLLM) means Beacon stays operational when terrestrial infrastructure, a specific vendor, or a specific model goes dark.
+
+**Pillar 3 — Transparency as a right**
+Agents publish their reasoning as structured traces to an auditable log. Commanders, press, and insurers can replay the mission frame-by-frame. Civilian disaster response demands accountability that military platforms refuse to provide.
+
+### Value prop by stakeholder
+
+- **To a DRRMO / NADMA commander:** *"Command more drones with the staff you already have — without new training, new radios, or a new cloud contract."*
+- **To a Red Cross / UN OCHA operations lead:** *"Operate with dignity and accountability — every decision auditable, every deployment budget-safe."*
+- **To a ministry CIO:** *"Sovereign-friendly, vendor-neutral, explainable AI in a mission-critical workflow — without ITAR or China-export risk."*
+- **To a first responder on the ground:** *"Tell your swarm what to do. In your language. Even when the towers are down."*
+
+### The "why now"
+
+- **LLM agentic capability** is finally reliable enough for mission-critical (sub-2s decision latency, 92% contextual accuracy — arXiv 2509.13352).
+- **Starlink ASEAN availability** is broad and battle-tested (Tonga, Turkey, Masbate).
+- **BVLOS regulation** unlocks in 2026 (FAA Part 108; ASEAN authorities tracking).
+- **Consumer drone costs** have collapsed — sub-USD 1k drones now carry thermal.
+- **ASEAN disaster losses** are compounding with climate; governments are *looking* for procurable disaster-tech (e.g., PH's RA 12287, Sep 2025, pre-event funding release).
+
+---
+
 ## 2. MARKET POTENTIAL & DEMAND (Judging Criterion 1)
 
 ### TAM / SAM / SOM — slide-ready numbers
