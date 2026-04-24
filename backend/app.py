@@ -838,7 +838,9 @@ async def get_dashboard() -> dict:
     runs = await mission_run_repo.list_recent(limit=50)
 
     run_dicts = [run.model_dump(mode="json") for run in runs]
-    trace_ids = [r.get("langfuse_trace_id") for r in run_dicts if r.get("langfuse_trace_id")]
+    trace_ids: list[str] = [
+        str(tid) for r in run_dicts if (tid := r.get("langfuse_trace_id"))
+    ]
     trace_metrics = await fetch_trace_metrics(trace_ids)
 
     total_cost = 0.0
@@ -1109,7 +1111,7 @@ async def send_command(req: CommandRequest) -> dict:
                             text_candidates.append(message_text)
                         scanned_building_rows.extend(_extract_scanned_building_rows(resp))
                         survivors_payload = _extract_survivor_coords(resp)
-                        supply_dispatches = _extract_supply_dispatches(part.function_response.name, resp)
+                        supply_dispatches = _extract_supply_dispatches(part.function_response.name or "", resp)
                         if survivors_payload:
                             accumulator.record_detections(survivors_payload)
                         if supply_dispatches:
@@ -1407,7 +1409,7 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                 run = accumulator.build(
                     status=final_status,
                     ttft_ms=ttft_ms_int,
-                    final_text=final_text,
+                    final_text=final_text or "",
                     error=error_text,
                     langfuse_trace_id=langfuse_trace_id,
                 )

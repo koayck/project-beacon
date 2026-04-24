@@ -34,6 +34,9 @@ dev = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
+[tool.pyright]
+extraPaths = ["drone-sim"]
+
 [dependency-groups]
 dev = [
     "grpcio-tools>=1.78.0",
