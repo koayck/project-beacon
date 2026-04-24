@@ -54,8 +54,10 @@ backend/
 |   |-- mission_planner.py   Planning support (referenced by commander)
 |   |-- navigation.py        Navigation specialist agent
 |   |-- thermal.py           Thermal specialist agent
-|   |-- scan_agent.py     Multi-drone scan workflow
-|   |-- supply_agent.py   Multi-drone supply workflow
+|   |-- scan_resolver.py     Resolves scan targets into canonical buildings list
+|   |-- scan_agent.py        Multi-drone scan workflow
+|   |-- supply_resolver.py   Resolves supply targets into canonical survivors list
+|   |-- supply_agent.py      Multi-drone supply workflow
 |   |-- recovery.py          Error-recovery specialist
 |   |-- schemas.py           Pydantic mission/intent schemas
 |   |-- _mcp.py              MCP tool groups + toolset factory
@@ -176,7 +178,7 @@ Deployment: Local Python process (uv run python -m backend.app).
 
 Name: ADK Agent Graph
 
-Description: Hybrid LLM-driven orchestration with specialist sub-agents and deterministic tool execution. Root commander routes requests to navigation, scan workflow, supply workflow, and recovery.
+Description: Hybrid LLM-driven orchestration with specialist sub-agents and deterministic tool execution. Root commander routes requests to navigation, scan workflow, supply workflow, and recovery. Scan and supply missions first run a resolver agent at commander level (scan_resolver_agent, supply_resolver_agent) that populates state["scan_buildings"] or state["supply_targets"] before the execution workflow runs.
 
 Technologies: Google ADK, LiteLLM-compatible model configuration, FastMCP toolsets.
 
@@ -277,6 +279,10 @@ Operational Notes:
 - Input validation is handled via Pydantic and explicit validators.
 - SQL statements are parameterized in repository layer.
 - Ensure environment secrets (if used for observability/model backends) are injected via env vars only.
+
+## 7a. Mission Reporting (Dashboard)
+
+The dashboard exposes a per-run timeline view backed by the `mission_run_events` SQLite table. Every agent event yielded during `/command/stream` (`tool_call`, `tool_result`, `thinking`, `text`, `final`, `error`) is buffered in `MissionRunAccumulator` and bulk-inserted alongside the `mission_runs` row at stream end. The events insert is wrapped in a nested try/except so a persistence failure cannot break the live demo flow. The `pick_best_summary()` helper in `backend/services/mission_summary.py` derives `result_summary` from the full text-event history, filtering known sentinels (e.g. `"Report emitted."`) and preferring strings with structured markers (`═══`, `COMPLETE`, `TOTAL`). The frontend `dashboard/page.tsx` exposes two tabs — Performance (existing OverviewCards/Charts/RunsTable) and Mission Report (new run picker + summary card + agent timeline) — with the timeline rendered from `GET /dashboard/runs/{id}/events`.
 
 ## 8. Development and Testing Environment
 
