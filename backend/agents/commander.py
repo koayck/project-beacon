@@ -11,6 +11,7 @@ from google.adk.tools import AgentTool
 from backend.agents._model import QWEN3_GEN_CONFIG_COMMANDER, QWEN3_INSTRUCT
 from backend.agents.command_parser import command_parser
 from backend.agents.scan_resolver import scan_resolver_agent
+from backend.agents.supply_resolver import supply_resolver_agent
 from backend.agents.recovery import recovery_agent
 from backend.agents.navigation import navigation_agent
 from backend.agents.scan_agent import scan_agent
@@ -47,6 +48,7 @@ commander = Agent(
     tools=[
         AgentTool(command_parser),
         AgentTool(scan_resolver_agent),
+        AgentTool(supply_resolver_agent),
         make_toolset(["deploy_scout_sweep", "get_explored_sectors"]),
     ],
 )

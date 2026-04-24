@@ -78,3 +78,36 @@ def test_build_clamps_negative_duration() -> None:
     acc.started_at = datetime.now(timezone.utc).replace(year=9999)  # future start
     run = acc.build(status="success", ttft_ms=None, final_text="")
     assert run.duration_ms == 0
+
+
+def test_record_event_buffers_in_order() -> None:
+    acc = MissionRunAccumulator(asset_id="FLEET", prompt="p", simulation_id=None)
+    acc.record_event("tool_call", {"name": "scan"})
+    acc.record_event("text", {"text": "hello"})
+    assert len(acc.events) == 2
+    assert acc.events[0].event_type == "tool_call"
+    assert acc.events[0].seq == 0
+    assert acc.events[1].seq == 1
+    assert acc.events[1].event_type == "text"
+
+
+def test_build_uses_pick_best_summary_over_all_text_events() -> None:
+    acc = MissionRunAccumulator(asset_id="FLEET", prompt="p", simulation_id=None)
+    acc.record_event("text", {"text": "═══ AREA SCAN COMPLETE ═══ details"})
+    acc.record_event("final", {"text": "Report emitted."})
+    run = acc.build(status="success", ttft_ms=None, final_text="Report emitted.")
+    assert run.result_summary == "═══ AREA SCAN COMPLETE ═══ details"
+
+
+def test_build_falls_back_to_final_text_when_no_events_recorded() -> None:
+    acc = MissionRunAccumulator(asset_id="FLEET", prompt="p", simulation_id=None)
+    run = acc.build(status="success", ttft_ms=None, final_text="just this")
+    assert run.result_summary == "just this"
+
+
+def test_build_returns_none_summary_when_only_sentinels() -> None:
+    acc = MissionRunAccumulator(asset_id="FLEET", prompt="p", simulation_id=None)
+    acc.record_event("text", {"text": "Report emitted."})
+    acc.record_event("final", {"text": "Report emitted."})
+    run = acc.build(status="success", ttft_ms=None, final_text="Report emitted.")
+    assert run.result_summary is None

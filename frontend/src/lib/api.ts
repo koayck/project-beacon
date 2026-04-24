@@ -168,6 +168,26 @@ export interface DashboardPayload {
   currentMission: DashboardCurrentMission | null
 }
 
+export type MissionRunEventType =
+  | 'tool_call'
+  | 'tool_result'
+  | 'thinking'
+  | 'text'
+  | 'final'
+  | 'error'
+
+export interface MissionRunEvent {
+  seq: number
+  ts: string
+  event_type: MissionRunEventType
+  payload: Record<string, unknown>
+}
+
+export interface MissionRunEventsResponse {
+  run_id: number
+  events: MissionRunEvent[]
+}
+
 export async function uplink(assetId: string): Promise<UplinkResponse> {
   const res = await fetch(`${BASE}/uplink/${assetId}`, { method: 'POST' })
   if (!res.ok) throw new Error(`Uplink failed: ${res.status}`)
@@ -367,5 +387,11 @@ export async function healthCheck(): Promise<boolean> {
 export async function fetchDashboard(): Promise<DashboardPayload> {
   const res = await fetch(`${BASE}/dashboard`)
   if (!res.ok) throw new Error(`Dashboard fetch failed: ${res.status}`)
+  return res.json()
+}
+
+export async function fetchMissionEvents(runId: number): Promise<MissionRunEventsResponse> {
+  const res = await fetch(`${BASE}/dashboard/runs/${runId}/events`)
+  if (!res.ok) throw new Error(`Mission events fetch failed: ${res.status}`)
   return res.json()
 }

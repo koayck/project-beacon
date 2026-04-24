@@ -14,7 +14,7 @@ def test_initial_state():
     sim = DroneSimulator("TEST-01")
     s = sim.get_snapshot()
     assert s.asset_id == "TEST-01"
-    assert s.position == Vec3(0.0, 0.0, 0.0)
+    assert s.position == Vec3(0.0, 2.0, 0.0)
     assert s.battery == 100.0
     assert s.status == DroneStatus.IDLE
 
@@ -33,7 +33,7 @@ def test_return_to_base_sets_returning():
     sim.return_to_base()
     s = sim.get_snapshot()
     assert s.status == DroneStatus.RETURNING
-    assert s.target == Vec3(0.0, 0.0, 0.0)
+    assert s.target == Vec3(0.0, 2.0, 0.0)
 
 
 def test_scan_area_sets_scanning():

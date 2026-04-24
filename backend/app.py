@@ -22,8 +22,14 @@ from google.genai import types
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
-from backend.db.repository import init_db, asset_repo, mission_log_repo, mission_run_repo
-from backend.db.models import Asset, MissionLog, MissionRun
+from backend.db.repository import (
+    init_db,
+    asset_repo,
+    mission_log_repo,
+    mission_run_repo,
+    mission_run_events_repo,
+)
+from backend.db.models import Asset, MissionLog, MissionRun, MissionRunEvent
 from backend.grpc.client import DroneGrpcClient
 from backend.output_format import (
     is_structured_sweep_report,
@@ -841,7 +847,9 @@ async def get_dashboard() -> dict:
     runs = await mission_run_repo.list_recent(limit=50)
 
     run_dicts = [run.model_dump(mode="json") for run in runs]
-    trace_ids = [r.get("langfuse_trace_id") for r in run_dicts if r.get("langfuse_trace_id")]
+    trace_ids: list[str] = [
+        str(tid) for r in run_dicts if (tid := r.get("langfuse_trace_id"))
+    ]
     trace_metrics = await fetch_trace_metrics(trace_ids)
 
     total_cost = 0.0
@@ -869,6 +877,34 @@ async def get_dashboard() -> dict:
         "runs": run_dicts,
         "currentMission": None,
     }
+
+
+@app.get("/dashboard/runs/{run_id}/events")
+async def get_mission_run_events(run_id: int) -> dict:
+    """Return the recorded agent event timeline for one mission run.
+
+    Args:
+        run_id: Database ID of the mission run.
+
+    Returns:
+        {"run_id": int, "events": [{"seq", "ts", "event_type", "payload"}, ...]}
+        where `payload` is the parsed JSON object (or {"raw": str} if the stored
+        blob fails to parse — never crash on malformed payloads).
+    """
+    rows = await mission_run_events_repo.list_for_run(run_id)
+    out_events: list[dict] = []
+    for row in rows:
+        try:
+            parsed = json.loads(row.payload)
+        except (TypeError, ValueError):
+            parsed = {"raw": row.payload}
+        out_events.append({
+            "seq": row.seq,
+            "ts": row.ts,
+            "event_type": row.event_type,
+            "payload": parsed,
+        })
+    return {"run_id": run_id, "events": out_events}
 
 
 @app.post("/fleet/recall")
@@ -1112,7 +1148,7 @@ async def send_command(req: CommandRequest) -> dict:
                             text_candidates.append(message_text)
                         scanned_building_rows.extend(_extract_scanned_building_rows(resp))
                         survivors_payload = _extract_survivor_coords(resp)
-                        supply_dispatches = _extract_supply_dispatches(part.function_response.name, resp)
+                        supply_dispatches = _extract_supply_dispatches(part.function_response.name or "", resp)
                         if survivors_payload:
                             accumulator.record_detections(survivors_payload)
                         if supply_dispatches:
@@ -1300,7 +1336,9 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                 if kind == "error":
                     status = "failed"
                     error_text = str(data)
-                    yield f"data: {json.dumps({'type': 'error', 'text': str(data)})}\n\n"
+                    payload = {"type": "error", "text": error_text}
+                    accumulator.record_event(payload["type"], payload)
+                    yield f"data: {json.dumps(payload)}\n\n"
                     break
 
                 if kind == "end":
@@ -1312,6 +1350,7 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                 for part in event.content.parts:
                     if getattr(part, "thought", False) and part.text and part.text.strip():
                         payload = {"type": "thinking", "text": part.text, "agent": event.author}
+                        accumulator.record_event(payload["type"], payload)
                         yield f"data: {json.dumps(payload)}\n\n"
                         continue
                     if part.function_call:
@@ -1322,6 +1361,7 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                             "args": dict(part.function_call.args or {}),
                             "agent": event.author,
                         }
+                        accumulator.record_event(payload["type"], payload)
                         yield f"data: {json.dumps(payload)}\n\n"
                     elif part.function_response:
                         resp = dict(part.function_response.response or {})
@@ -1348,6 +1388,7 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                                 payload["survivors"] = survivors_payload
                             if supply_dispatches:
                                 payload["supply_dispatches"] = supply_dispatches
+                            accumulator.record_event(payload["type"], payload)
                             yield f"data: {json.dumps(payload)}\n\n"
                             continue
                         payload = {
@@ -1360,6 +1401,7 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                             payload["survivors"] = survivors_payload
                         if supply_dispatches:
                             payload["supply_dispatches"] = supply_dispatches
+                        accumulator.record_event(payload["type"], payload)
                         yield f"data: {json.dumps(payload)}\n\n"
                     elif part.text and part.text.strip():
                         if sweep_prompt and is_structured_sweep_report(part.text):
@@ -1369,6 +1411,7 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                                     first_token_time = time.perf_counter()
                                 total_chars += len(part.text)
                                 payload = {"type": "text", "text": part.text, "agent": event.author}
+                                accumulator.record_event(payload["type"], payload)
                                 yield f"data: {json.dumps(payload)}\n\n"
                             final_text = preferred_sweep_report
                             continue
@@ -1387,6 +1430,7 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                             payload = {"type": "final", "text": part.text, "agent": event.author}
                         else:
                             payload = {"type": "text", "text": part.text, "agent": event.author}
+                        accumulator.record_event(payload["type"], payload)
                         yield f"data: {json.dumps(payload)}\n\n"
         finally:
             hb_task.cancel()
@@ -1410,11 +1454,22 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                 run = accumulator.build(
                     status=final_status,
                     ttft_ms=ttft_ms_int,
-                    final_text=final_text,
+                    final_text=final_text or "",
                     error=error_text,
                     langfuse_trace_id=langfuse_trace_id,
                 )
-                await mission_run_repo.create(run)
+                run_id = await mission_run_repo.create(run)
+                if run_id and accumulator.events:
+                    try:
+                        rows = [
+                            MissionRunEvent(**row)
+                            for row in accumulator.serialise_events(run_id)
+                        ]
+                        await mission_run_events_repo.insert_many(rows)
+                    except Exception as exc:
+                        logging.getLogger(__name__).exception(
+                            "Failed to persist mission_run_events: %s", exc
+                        )
             except Exception as exc:
                 logging.getLogger(__name__).exception("Failed to persist mission_run: %s", exc)
 

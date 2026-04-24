@@ -40,7 +40,12 @@ export function DroneMesh({
   const groupRef = useRef<THREE.Group>(null)
   const cargoRef = useRef<THREE.Mesh>(null)
   const coneRef = useRef<THREE.Mesh>(null)
+  const spotlightRef = useRef<THREE.Group>(null)
   const lerpPos = useRef(DRONE_START.clone())
+
+  // Scout spotlight shows only once the drone reaches cruise altitude
+  // (SCOUT_ALTITUDE = 35m in backend/services/scout.py). 28m ≈ 80% climb.
+  const SCOUT_SPOTLIGHT_MIN_Y = 28
 
   const statusRef = useRef(status)
   const headingDegRef = useRef(headingDeg)
@@ -91,6 +96,10 @@ export function DroneMesh({
     if (cargoRef.current) {
       cargoRef.current.position.set(0, -0.55, 0)
       cargoRef.current.visible = hasCargo
+    }
+
+    if (spotlightRef.current) {
+      spotlightRef.current.visible = isScout && lerpPos.current.y >= SCOUT_SPOTLIGHT_MIN_Y
     }
 
     let bodyColor: number
@@ -173,7 +182,7 @@ export function DroneMesh({
             the scout's cruise altitude (~35m). Lives inside the drone group
             so it translates with the scout. */}
         {isScout && (
-          <group position={[0, -17.5, 0]}>
+          <group ref={spotlightRef} position={[0, -17.5, 0]} visible={false}>
             <mesh>
               <coneGeometry args={[14, 35, 32, 1, true]} />
               <meshBasicMaterial

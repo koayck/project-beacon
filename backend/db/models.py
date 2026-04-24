@@ -51,3 +51,13 @@ class MissionRun(BaseModel):
     error_message: Optional[str] = None
     langfuse_trace_id: Optional[str] = None
     created_at: Optional[str] = None
+
+
+class MissionRunEvent(BaseModel):
+    id: Optional[int] = None
+    run_id: int
+    seq: int
+    ts: str
+    event_type: Literal["tool_call", "tool_result", "thinking", "text", "final", "error"]
+    payload: str  # JSON-encoded blob; the API layer parses it
+    created_at: Optional[str] = None
