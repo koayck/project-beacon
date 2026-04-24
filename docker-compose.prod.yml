@@ -10,9 +10,11 @@ services:
       - "8000:8000"
     environment:
       PYTHONUNBUFFERED: "1"
+      BEACON_DB_PATH: /data/beacon.db
       # OLLAMA_HOST: "host.docker.internal:11434"  # Adjust if running Ollama
     volumes:
       - ./shared:/app/shared:ro
+      - beacon_data:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -42,3 +44,6 @@ services:
 networks:
   beacon:
     driver: bridge
+
+volumes:
+  beacon_data:

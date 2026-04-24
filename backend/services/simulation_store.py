@@ -4,11 +4,16 @@ import json
 import math
 import re
 from collections.abc import Iterable
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import asyncpg
+import aiosqlite
+
+from backend.db.repository import _get_db_path
 
 
 @dataclass(frozen=True)
@@ -25,7 +30,7 @@ class ParsedScanTargets:
 
 
 class SimulationStore:
-    """Supabase-backed simulation state store.
+    """SQLite-backed simulation state store.
 
     The store persists simulation snapshots keyed by a stable simulation ID so
     frontend refreshes and backend command loops can share mission intel.
@@ -40,27 +45,24 @@ class SimulationStore:
         re.IGNORECASE,
     )
 
-    def __init__(self, db_url: str) -> None:
-        """Initialize the simulation store.
+    def __init__(self, db_path: Path | str | None = None) -> None:
+        self._db_path: Path | None = Path(db_path) if db_path is not None else None
 
-        Args:
-            db_url: SQLAlchemy-style or plain Postgres DSN.
-        """
-        self._dsn = self._normalize_dsn(db_url)
-        self._pool: asyncpg.Pool | None = None
+    def _resolve_path(self) -> Path:
+        return self._db_path if self._db_path is not None else _get_db_path()
+
+    @asynccontextmanager
+    async def _connect(self) -> AsyncIterator[aiosqlite.Connection]:
+        async with aiosqlite.connect(str(self._resolve_path())) as conn:
+            conn.row_factory = aiosqlite.Row
+            await conn.execute("PRAGMA foreign_keys=ON")
+            yield conn
 
     async def start(self) -> None:
-        """Open the asyncpg pool and ensure schema objects exist."""
-        if self._pool is not None:
-            return
-        self._pool = await asyncpg.create_pool(dsn=self._dsn, min_size=1, max_size=4)
+        """No-op — kept for lifecycle symmetry with app.py."""
 
     async def stop(self) -> None:
-        """Close the asyncpg pool if it is active."""
-        if self._pool is None:
-            return
-        await self._pool.close()
-        self._pool = None
+        """No-op — kept for lifecycle symmetry with app.py."""
 
     async def create(self, simulation_id: str | None = None) -> str:
         """Create a simulation row if missing and return its ID.
@@ -72,16 +74,16 @@ class SimulationStore:
             Simulation ID persisted in the table.
         """
         sim_id = simulation_id.strip() if isinstance(simulation_id, str) and simulation_id.strip() else str(uuid4())
-        pool = self._require_pool()
-        async with pool.acquire() as conn:
+        async with self._connect() as conn:
             await conn.execute(
                 """
                 INSERT INTO simulation (id, scanned_buildings)
-                VALUES ($1, '[]'::jsonb)
+                VALUES (?, '[]')
                 ON CONFLICT (id) DO NOTHING
                 """,
-                sim_id,
+                (sim_id,),
             )
+            await conn.commit()
         return sim_id
 
     async def get(self, simulation_id: str) -> dict[str, Any] | None:
@@ -93,24 +95,24 @@ class SimulationStore:
         Returns:
             Simulation payload with JSON-decoded scanned buildings, or None.
         """
-        pool = self._require_pool()
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow(
+        async with self._connect() as conn:
+            cur = await conn.execute(
                 """
                 SELECT id, scanned_buildings, created_at, updated_at
                 FROM simulation
-                WHERE id = $1
+                WHERE id = ?
                 """,
-                simulation_id,
+                (simulation_id,),
             )
+            row = await cur.fetchone()
         if row is None:
             return None
         scanned_buildings = self._decode_json(row["scanned_buildings"], fallback=[])
         return {
             "id": row["id"],
             "scanned_buildings": scanned_buildings,
-            "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
-            "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
         }
 
     async def mark_buildings_scanned(self, simulation_id: str, building_ids: Iterable[int]) -> None:
@@ -274,47 +276,25 @@ class SimulationStore:
             simulation_id: Stable simulation ID.
             scanned_buildings: Validated building rows to store.
         """
-        pool = self._require_pool()
         payload = json.dumps(scanned_buildings)
-        async with pool.acquire() as conn:
+        async with self._connect() as conn:
             await conn.execute(
                 """
                 UPDATE simulation
-                SET scanned_buildings = $2::jsonb,
-                    updated_at = NOW()
-                WHERE id = $1
+                SET scanned_buildings = ?,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                WHERE id = ?
                 """,
-                simulation_id,
-                payload,
+                (payload, simulation_id),
             )
-
-    def _require_pool(self) -> asyncpg.Pool:
-        """Return active pool or raise when store is not initialized."""
-        if self._pool is None:
-            raise RuntimeError("SimulationStore is not started")
-        return self._pool
-
-    @staticmethod
-    def _normalize_dsn(db_url: str) -> str:
-        """Normalize SQLAlchemy-style Postgres DSN into asyncpg-compatible DSN.
-
-        Args:
-            db_url: Raw DSN from environment.
-
-        Returns:
-            asyncpg-compatible Postgres DSN.
-        """
-        stripped = db_url.strip()
-        if stripped.startswith("postgresql+asyncpg://"):
-            return "postgresql://" + stripped[len("postgresql+asyncpg://") :]
-        return stripped
+            await conn.commit()
 
     @staticmethod
     def _decode_json(value: Any, fallback: Any) -> Any:
-        """Decode JSON from asyncpg value safely.
+        """Decode JSON from a SQLite TEXT column safely.
 
         Args:
-            value: JSON/JSONB value from asyncpg row.
+            value: JSON text value from an aiosqlite row.
             fallback: Value returned for invalid payloads.
 
         Returns:

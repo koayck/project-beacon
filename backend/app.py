@@ -80,7 +80,11 @@ _simulation_store: SimulationStore | None = None
 _ADK_APP_NAME = "beacon"
 _ADK_USER_ID = "gcs"
 _ADK_SHARED_SESSION_ID = "gcs-shared-session"
-_ADK_SESSION_DB_URL = os.environ.get("SUPABASE_DB_URL", "").strip()
+_BEACON_DB_PATH = (
+    Path(os.environ.get("BEACON_DB_PATH", "./beacon.db")).expanduser().resolve()
+)
+_BEACON_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+_ADK_SESSION_DB_URL = f"sqlite+aiosqlite:///{_BEACON_DB_PATH}"
 
 _ASSET_ID_PATTERN = re.compile(r"^BEACON-(\d+)$")
 _DOCKER_IMAGE = "project-beacon-drone-sim"
@@ -412,7 +416,7 @@ async def app_lifespan(app: FastAPI):
     from backend.agents.commander import commander
 
     try:
-        _simulation_store = SimulationStore(_ADK_SESSION_DB_URL)
+        _simulation_store = SimulationStore(_BEACON_DB_PATH)
         await _simulation_store.start()
     except Exception as exc:
         logging.getLogger(__name__).warning(
@@ -597,18 +601,11 @@ async def _ensure_adk_shared_session(runner: Runner) -> str:
 
 
 def _create_adk_session_service() -> DatabaseSessionService:
-    """Create a persistent ADK session service backed by Supabase Postgres.
+    """Create a persistent ADK session service backed by the SQLite database.
 
     Returns:
-        Configured DatabaseSessionService instance using the Supabase DB URL.
-
-    Raises:
-        RuntimeError: If SUPABASE_DB_URL is missing from the environment.
+        Configured DatabaseSessionService instance using the SQLite DB URL.
     """
-    if not _ADK_SESSION_DB_URL:
-        raise RuntimeError(
-            "SUPABASE_DB_URL is required for persistent ADK session storage"
-        )
     return DatabaseSessionService(db_url=_ADK_SESSION_DB_URL)
 
 

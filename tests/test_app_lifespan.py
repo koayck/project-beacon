@@ -61,7 +61,7 @@ async def test_app_lifespan_closes_adk_runner(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(
         app_module,
         "_ADK_SESSION_DB_URL",
-        "postgresql+asyncpg://test-user:test-pass@localhost:5432/test-db",
+        "sqlite+aiosqlite:///:memory:",
     )
     monkeypatch.setattr(app_module.udp_listener, "start", fake_udp_start)
     monkeypatch.setattr(app_module, "restore_registered_connections", fake_restore_connections)
