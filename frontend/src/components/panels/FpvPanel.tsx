@@ -155,6 +155,7 @@ export function FpvPanel({
   transparentWalls,
 }: FpvPanelProps) {
   const [fullMode, setFullMode] = useState(false)
+  const [expanded, setExpanded] = useState(true)
   const gridCells  = W2_GRID_CELLS
   const gridSpacing = W2_GRID_SPACING
   const worldSpan  = gridCells * gridSpacing
@@ -184,23 +185,34 @@ export function FpvPanel({
   return (
     <>
       <div className="pointer-events-auto min-w-[300px] overflow-hidden rounded-lg border border-[rgba(70,155,210,0.28)] bg-[linear-gradient(135deg,rgba(5,12,20,0.94),rgba(4,8,16,0.92))] p-[8px] font-mono shadow-[0_10px_26px_rgba(0,0,0,0.5)] backdrop-blur-[10px]">
-        <div className="mb-2 flex items-center justify-between tracking-[1px] text-[#99c4e8]">
+        <div className={`flex items-center justify-between tracking-[1px] text-[#99c4e8] ${expanded ? 'mb-2' : ''}`}>
           <span className="text-[12px] font-bold">FPV FEED</span>
-          <button
-            onClick={() => setFullMode(true)}
-            className="cursor-pointer rounded border border-[rgba(120,170,220,0.35)] bg-[rgba(10,20,35,0.55)] px-2 py-[3px] text-[10px] text-[#b8d7ef]"
-          >
-            FULL MODE
-          </button>
+          <div className="flex items-center gap-2">
+            {expanded && (
+              <button
+                onClick={() => setFullMode(true)}
+                className="cursor-pointer rounded border border-[rgba(120,170,220,0.35)] bg-[rgba(10,20,35,0.55)] px-2 py-[3px] text-[10px] text-[#b8d7ef]"
+              >
+                FULL MODE
+              </button>
+            )}
+            <button
+              onClick={() => setExpanded((prev) => !prev)}
+              className="cursor-pointer border-none bg-transparent p-0 font-mono"
+              title={expanded ? 'Collapse FPV feed' : 'Expand FPV feed'}
+            >
+              <span className="text-[10px] text-[#556]">{expanded ? '▾' : '▸'}</span>
+            </button>
+          </div>
         </div>
 
-        {droneList.length === 0 && (
+        {expanded && droneList.length === 0 && (
           <div className="rounded border border-[rgba(90,120,150,0.25)] bg-[rgba(8,12,22,0.45)] px-2 py-[6px] text-[11px] text-[#7f93a8]">
             No drone telemetry available.
           </div>
         )}
 
-        {droneList.length > 0 && (
+        {expanded && droneList.length > 0 && (
           <>
             <div className="mb-2 flex flex-wrap gap-1.5">
               {droneList.map((d) => {

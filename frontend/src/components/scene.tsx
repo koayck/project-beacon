@@ -1830,7 +1830,7 @@ export default function SARScene() {
       </div>
       {!selectMode && <CoordOverlay point={hoverPt} copied={copied} />}
       <CompassLabels northAngleRef={northAngleRef} />
-      <div className="pointer-events-auto absolute right-4 top-[60px] flex max-h-[calc(100%-180px)] max-w-[400px] flex-col gap-2">
+      <div className="pointer-events-auto absolute right-4 top-[60px] flex max-h-[calc(100%-180px)] max-w-[400px] flex-col gap-2 overflow-y-auto pr-1 [&>*]:shrink-0 [scrollbar-color:rgba(80,140,180,0.4)_transparent] [scrollbar-width:thin]">
         <Controls
           followBeacon={followBeacon}
           onToggleFollow={toggleFollowBeacon}
