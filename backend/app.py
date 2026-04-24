@@ -1333,7 +1333,9 @@ async def send_command_stream(req: CommandRequest, request: Request) -> Streamin
                 if kind == "error":
                     status = "failed"
                     error_text = str(data)
-                    yield f"data: {json.dumps({'type': 'error', 'text': str(data)})}\n\n"
+                    payload = {"type": "error", "text": error_text}
+                    accumulator.record_event(payload["type"], payload)
+                    yield f"data: {json.dumps(payload)}\n\n"
                     break
 
                 if kind == "end":
