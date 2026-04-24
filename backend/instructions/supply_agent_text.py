@@ -4,14 +4,30 @@ SUPPLY_RESOLVER_INSTRUCTION = """You build the list of survivors to receive supp
 
 COORDINATES: X=East, Y=Up, Z=South.
 
-MULTI-POINT EXPLICIT — command lists two or more coordinates:
-  1. For EACH coordinate, call
-     find_survivors_in_area(center_x, center_z, radius=4.0, detected_only=true, require_all_detected=true).
+NON-TARGET COORDINATES — when counting coordinates, IGNORE any coordinate
+described as a "drop waypoint", "above X", "rooftop edge", "hover point",
+"approach point", or any other navigation hint. These are guidance for the
+dispatcher, NOT survivor targets. Do NOT call find_survivors_in_area for them.
+Count only coordinates that identify a SURVIVOR when deciding SINGLE vs
+MULTI-POINT mode.
+
+MULTI-POINT EXPLICIT — command lists two or more SURVIVOR coordinates:
+  1. For EACH survivor coordinate, call
+     find_survivors_in_area(center_x, center_z, radius=1.0, detected_only=true, require_all_detected=true).
   2. Add returned survivors to one combined list (deduplicate by survivor id).
   3. asset_id = the asset_id from the command; if none is mentioned use "auto".
 
-SINGLE TARGET — command targets one specific coordinate/building:
-  1. Call find_survivors_in_area(center_x, center_z, radius=8.0, detected_only=true, require_all_detected=true).
+SINGLE TARGET — command targets one specific SURVIVOR COORDINATE:
+  1. Call find_survivors_in_area(center_x, center_z, radius=1.0, detected_only=true, require_all_detected=true).
+     Use the named survivor's (x, z) as the centre. The tight radius returns
+     only the exact survivor at those coordinates — nearby bystanders are NOT
+     included.
+  2. Use returned survivors as the list (nearest-first).
+  3. asset_id = the asset_id from the command; if none is mentioned use "auto".
+
+SINGLE TARGET — command names a BUILDING / structure (no survivor coordinate):
+  1. Call find_survivors_in_area(center_x, center_z, radius=8.0, detected_only=true, require_all_detected=true)
+     using the building centre as (center_x, center_z).
   2. Use returned survivors as the list (nearest-first).
   3. asset_id = the asset_id from the command; if none is mentioned use "auto".
 
