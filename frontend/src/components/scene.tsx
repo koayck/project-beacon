@@ -107,7 +107,6 @@ import { SCOUT_ASSET_ID } from '@/lib/fogOfWar'
 // ── Main scene ────────────────────────────────────────────────────────────────
 
 const ASSET_ID = 'BEACON-01'
-const AUTO_RECALL_UI_DELAY_MS = 5000
 const SIMULATION_ID_STORAGE_KEY = 'beacon.simulationId'
 
 export default function SARScene() {
@@ -156,9 +155,6 @@ export default function SARScene() {
   const [autoRecallThreshold, setAutoRecallThreshold] = useState<number | null>(null)
   const [networkMockStatus, setNetworkMockStatus] = useState<NetworkMockStatus | null>(null)
   const [networkReconnectPopupPhase, setNetworkReconnectPopupPhase] = useState<'lost' | 'attempting' | 'success' | null>(null)
-  const [autoRecallPrompt, setAutoRecallPrompt] = useState<{ assetId: string; battery: number } | null>(null)
-  const [autoRecallCountdown, setAutoRecallCountdown] = useState(5)
-  const autoRecallDismissedRef = useRef<Set<string>>(new Set())
   const autoRecallTriggeredRef = useRef<Set<string>>(new Set())
   const autoRecallInFlightRef = useRef<Set<string>>(new Set())
   const previousWifiConnectedRef = useRef<boolean | null>(null)
@@ -634,8 +630,6 @@ export default function SARScene() {
   }, [latestReveals, activeWorld])
 
   const executeAutoRecall = useCallback(async (assetId: string, batteryPct: number) => {
-    setAutoRecallPrompt(current => (current?.assetId === assetId ? null : current))
-    autoRecallDismissedRef.current.add(assetId)
     autoRecallTriggeredRef.current.add(assetId)
     autoRecallInFlightRef.current.add(assetId)
     addLog(`⚠ ${assetId} battery ${batteryPct.toFixed(1)}% — auto recall initiated`)
@@ -649,13 +643,6 @@ export default function SARScene() {
       autoRecallInFlightRef.current.delete(assetId)
     }
   }, [addLog])
-
-  const cancelAutoRecall = useCallback(() => {
-    if (!autoRecallPrompt) return
-    autoRecallDismissedRef.current.add(autoRecallPrompt.assetId)
-    setAutoRecallPrompt(null)
-    addLog(`⏸ Auto recall cancelled for ${autoRecallPrompt.assetId}`)
-  }, [autoRecallPrompt, addLog])
 
   const toggleFollowBeacon = useCallback(() => {
     if (followBeacon) {
@@ -910,52 +897,20 @@ export default function SARScene() {
 
   useEffect(() => {
     if (autoRecallThreshold === null) return
-    const lowBatteryIdle = Object.values(drones)
-      .filter(entry => entry.status === 'IDLE' && entry.battery <= autoRecallThreshold)
-      .sort((a, b) => a.asset_id.localeCompare(b.asset_id))
-    const lowBatteryIdleIds = new Set(lowBatteryIdle.map(entry => entry.asset_id))
-
-    for (const assetId of [...autoRecallDismissedRef.current]) {
-      if (!lowBatteryIdleIds.has(assetId)) autoRecallDismissedRef.current.delete(assetId)
+    // Once a drone has been auto-recalled it must never re-trigger in this
+    // session, so autoRecallTriggeredRef is intentionally never cleared.
+    const next = Object.values(drones)
+      .filter(entry =>
+        entry.status === 'IDLE'
+        && entry.battery <= autoRecallThreshold
+        && !autoRecallTriggeredRef.current.has(entry.asset_id)
+        && !autoRecallInFlightRef.current.has(entry.asset_id)
+      )
+      .sort((a, b) => a.asset_id.localeCompare(b.asset_id))[0]
+    if (next) {
+      void executeAutoRecall(next.asset_id, next.battery)
     }
-    // NOTE: do NOT clear autoRecallTriggeredRef — once a drone has been
-    // auto-recalled it must never re-trigger the popup in this session.
-
-    if (autoRecallPrompt && !lowBatteryIdleIds.has(autoRecallPrompt.assetId)) {
-      setAutoRecallPrompt(null)
-      return
-    }
-    if (autoRecallPrompt) return
-
-    const nextPrompt = lowBatteryIdle.find(entry =>
-      !autoRecallDismissedRef.current.has(entry.asset_id)
-      && !autoRecallTriggeredRef.current.has(entry.asset_id)
-      && !autoRecallInFlightRef.current.has(entry.asset_id)
-    )
-    if (nextPrompt) {
-      setAutoRecallPrompt({ assetId: nextPrompt.asset_id, battery: nextPrompt.battery })
-    }
-  }, [drones, autoRecallPrompt, autoRecallThreshold])
-
-  useEffect(() => {
-    if (!autoRecallPrompt) return
-    const deadline = Date.now() + AUTO_RECALL_UI_DELAY_MS
-    setAutoRecallCountdown(Math.ceil(AUTO_RECALL_UI_DELAY_MS / 1000))
-
-    const interval = setInterval(() => {
-      const remainingMs = Math.max(0, deadline - Date.now())
-      setAutoRecallCountdown(Math.ceil(remainingMs / 1000))
-    }, 200)
-
-    const timeout = setTimeout(() => {
-      void executeAutoRecall(autoRecallPrompt.assetId, autoRecallPrompt.battery)
-    }, AUTO_RECALL_UI_DELAY_MS)
-
-    return () => {
-      clearInterval(interval)
-      clearTimeout(timeout)
-    }
-  }, [autoRecallPrompt, executeAutoRecall])
+  }, [drones, autoRecallThreshold, executeAutoRecall])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1919,29 +1874,6 @@ export default function SARScene() {
                 <span className="text-xs text-[#ffb36b]">connecting...</span>
               </div>
             )}
-          </div>
-        </div>
-      )}
-      {autoRecallPrompt && (
-        <div className="pointer-events-auto absolute inset-0 z-40 flex items-center justify-center bg-[rgba(2,4,10,0.55)]">
-          <div className="w-[420px] rounded-lg border border-l-[3px] border-[rgba(255,90,90,0.5)] border-l-[#ff4d4d] bg-[linear-gradient(135deg,rgba(20,7,7,0.96),rgba(12,3,3,0.95))] p-[14px_16px] font-mono text-[#ffd2d2] shadow-[0_12px_48px_rgba(0,0,0,0.55)]">
-            <div className="mb-2 font-bold tracking-[1.2px] text-[#ff8a8a]">
-              LOW BATTERY AUTO RECALL
-            </div>
-            <div className="text-[13px] leading-[1.5] text-[#ffb1b1]">
-              {autoRecallPrompt.assetId} is IDLE at {autoRecallPrompt.battery.toFixed(1)}% battery.
-            </div>
-            <div className="mt-1.5 text-xs text-[#ff8a8a]">
-              Auto recall in {autoRecallCountdown}s unless cancelled.
-            </div>
-            <div className="mt-3 flex justify-end">
-              <button
-                onClick={cancelAutoRecall}
-                className="cursor-pointer rounded border border-[rgba(255,110,110,0.45)] bg-[rgba(255,70,70,0.12)] px-3 py-1 font-inherit text-xs tracking-[0.6px] text-[#ffd2d2]"
-              >
-                CANCEL
-              </button>
-            </div>
           </div>
         </div>
       )}
