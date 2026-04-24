@@ -17,6 +17,7 @@ from backend.services.api import (
     parallel_fleet_scan,
     plan_route,
     plan_sweep_pattern,
+    recall_low_battery_drones,
     recall_swarm,
     resolve_scan_target,
     return_to_base,
@@ -94,6 +95,14 @@ async def deploy_swarm_tool(asset_ids: list[str], formation: str = "spread") -> 
 async def recall_swarm_tool(asset_ids: list[str]) -> dict:
     """Recall all listed drones to base."""
     return await recall_swarm(asset_ids)
+
+
+@beacon_mcp.tool(name="recall_low_battery_drones")
+async def recall_low_battery_drones_tool(threshold: float = 30.0) -> dict:
+    """Fleet-wide check: recall every drone whose battery is ≤ threshold and
+    that is not already at base or returning. Call after a mission ends so
+    low-battery stragglers get charged before the next tasking."""
+    return await recall_low_battery_drones(threshold=threshold)
 
 
 @beacon_mcp.tool(name="plan_sweep_pattern")

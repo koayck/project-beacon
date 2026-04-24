@@ -24,6 +24,7 @@ services:
       - ASSET_ID=BEACON-01
       - GRPC_PORT=50051
       - TELEMETRY_HOST=host.docker.internal
+      - INITIAL_BATTERY=${BEACON_01_BATTERY:-100}
       - PYTHONUNBUFFERED=1
     networks:
       beacon-net:
@@ -43,6 +44,7 @@ services:
       - ASSET_ID=BEACON-02
       - GRPC_PORT=50051
       - TELEMETRY_HOST=host.docker.internal
+      - INITIAL_BATTERY=${BEACON_02_BATTERY:-100}
       - PYTHONUNBUFFERED=1
     networks:
       beacon-net:
@@ -62,6 +64,7 @@ services:
       - ASSET_ID=BEACON-03
       - GRPC_PORT=50051
       - TELEMETRY_HOST=host.docker.internal
+      - INITIAL_BATTERY=${BEACON_03_BATTERY:-100}
       - PYTHONUNBUFFERED=1
     networks:
       beacon-net:
@@ -81,6 +84,7 @@ services:
       - ASSET_ID=BEACON-04
       - GRPC_PORT=50051
       - TELEMETRY_HOST=host.docker.internal
+      - INITIAL_BATTERY=${BEACON_04_BATTERY:-100}
       - PYTHONUNBUFFERED=1
     networks:
       beacon-net:
@@ -100,6 +104,7 @@ services:
       - ASSET_ID=BEACON-05
       - GRPC_PORT=50051
       - TELEMETRY_HOST=host.docker.internal
+      - INITIAL_BATTERY=${BEACON_05_BATTERY:-100}
       - PYTHONUNBUFFERED=1
     networks:
       beacon-net:
@@ -119,6 +124,7 @@ services:
       - ASSET_ID=BEACON-SCOUT
       - GRPC_PORT=50051
       - TELEMETRY_HOST=host.docker.internal
+      - INITIAL_BATTERY=${BEACON_SCOUT_BATTERY:-100}
       - PYTHONUNBUFFERED=1
     networks:
       beacon-net:

@@ -28,6 +28,14 @@ Route to specialist based on mission_type:
 - return_home: Call navigation_agent's return_to_base
 - supply_drop: Call supply_resolver_agent first, then call supply_agent
 
+POST-MISSION FLEET CHECK:
+After every successful mission execution (scan, supply, move, return_home),
+call recall_low_battery_drones with the default threshold (30%). It returns
+which drones were recalled, which were skipped (already at base / already
+returning / above threshold), and why. Mention any recalls briefly in your
+operator-facing summary ("BEACON-03 recalled for charging at 24%"). Skip this
+step only if the mission itself was a return_home for every fielded drone.
+
 ERROR RECOVERY:
 If execution fails with unrecoverable error:
 - Call recovery_agent with error context

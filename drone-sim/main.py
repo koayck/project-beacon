@@ -10,12 +10,13 @@ from telemetry import start_telemetry
 
 ASSET_ID = os.environ.get("ASSET_ID", "BEACON-01")
 GRPC_PORT = int(os.environ.get("GRPC_PORT", "50051"))
+INITIAL_BATTERY = float(os.environ.get("INITIAL_BATTERY", "100"))
 
 
 def main() -> None:
-    print(f"[{ASSET_ID}] Starting drone simulation")
+    print(f"[{ASSET_ID}] Starting drone simulation (battery={INITIAL_BATTERY:.0f}%)")
 
-    sim = DroneSimulator(asset_id=ASSET_ID)
+    sim = DroneSimulator(asset_id=ASSET_ID, initial_battery=INITIAL_BATTERY)
     sim.start()
 
     grpc_server = serve(sim, port=GRPC_PORT)

@@ -56,18 +56,20 @@ class DroneSnapshot:
 class DroneSimulator:
     TICK_RATE = 0.1          # seconds between loop updates
     DRAIN_MOVING_PER_SEC = 0.05  # battery % per second while mobile
-    DRAIN_IDLE_PER_SEC = 0.0     # no drain while idle (preserves battery for missions)
+    DRAIN_IDLE_PER_SEC = 0.03    # battery % per second while idle off the pad (hovering)
+    CHARGE_PER_SEC = 1.0     # battery % per second while idle on the helipad
+    BASE_CHARGE_RADIUS = 2.0 # units — distance from base at which charging engages
     ARRIVAL_THRESHOLD = 0.05 # units — close enough to count as arrived
     DEFAULT_SPEED = 5.0      # units/sec
 
     BASE_Y = 2.0  # Matches helipad top (platform 1.8m + deck 0.15m ≈ 1.95m) so drones rest on the pad, not in floodwater
 
-    def __init__(self, asset_id: str) -> None:
+    def __init__(self, asset_id: str, initial_battery: float = 100.0) -> None:
         origin = Vec3(0.0, self.BASE_Y, 0.0)
         self._snapshot = DroneSnapshot(
             asset_id=asset_id,
             position=origin,
-            battery=100.0,
+            battery=max(0.0, min(100.0, initial_battery)),
             status=DroneStatus.IDLE,
             target=origin,
             speed=self.DEFAULT_SPEED,
@@ -281,10 +283,18 @@ class DroneSimulator:
                 speed=s.speed,
             )
 
+        # Idle / grounded. Recharge on the pad; otherwise apply idle drain.
+        base = Vec3(0.0, self.BASE_Y, 0.0)
+        at_base = s.position.distance_to(base) <= self.BASE_CHARGE_RADIUS
+        if at_base and s.status == DroneStatus.IDLE:
+            new_battery = min(100.0, s.battery + self.CHARGE_PER_SEC * elapsed_s)
+        else:
+            new_battery = max(0.0, s.battery - idle_drain)
+
         return DroneSnapshot(
             asset_id=s.asset_id,
             position=s.position,
-            battery=max(0.0, s.battery - idle_drain),
+            battery=new_battery,
             status=s.status,
             target=s.target,
             speed=s.speed,

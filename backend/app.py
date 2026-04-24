@@ -95,11 +95,11 @@ _ADK_SESSION_DB_URL = f"sqlite+aiosqlite:///{_BEACON_DB_PATH}"
 _ASSET_ID_PATTERN = re.compile(r"^BEACON-(\d+)$")
 _DOCKER_IMAGE = "project-beacon-drone-sim"
 _DOCKER_NETWORK = "beacon-net"
-_AUTO_RECALL_ENABLED = os.environ.get("AUTO_RECALL_ENABLED", "false").strip().lower() in {
+_AUTO_RECALL_ENABLED = os.environ.get("AUTO_RECALL_ENABLED", "true").strip().lower() in {
     "1", "true", "yes", "on",
 }
 _AUTO_RECALL_BATTERY_THRESHOLD = float(
-    os.environ.get("AUTO_RECALL_BATTERY_THRESHOLD", "10")
+    os.environ.get("AUTO_RECALL_BATTERY_THRESHOLD", "25")
 )
 _AUTO_RECALL_COOLDOWN_SECONDS = float(
     os.environ.get("AUTO_RECALL_COOLDOWN_SECONDS", "60")

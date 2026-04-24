@@ -49,6 +49,6 @@ commander = Agent(
         AgentTool(command_parser),
         AgentTool(scan_resolver_agent),
         AgentTool(supply_resolver_agent),
-        make_toolset(["deploy_scout_sweep", "get_explored_sectors"]),
+        make_toolset(["deploy_scout_sweep", "get_explored_sectors", "recall_low_battery_drones"]),
     ],
 )

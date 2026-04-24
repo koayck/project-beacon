@@ -28,7 +28,7 @@ class AutoRecallMonitor:
         self,
         *,
         enabled: bool = True,
-        battery_threshold: float = 10.0,
+        battery_threshold: float = 25.0,
         cooldown_seconds: float = 60.0,
         recall_fn: Callable[[str], Awaitable[dict]] = return_to_base,
         registered_asset_ids_fn: Callable[[], list[str]] = grpc_client.registered_asset_ids,

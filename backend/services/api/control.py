@@ -60,7 +60,7 @@ from backend.world.model import (
 grpc_client: DroneGrpcClient = _runtime_grpc_client
 
 _NORMAL_SPEED = 5.0
-_MIN_ELIGIBLE_BATTERY_PCT = 20
+_MIN_ELIGIBLE_BATTERY_PCT = 35
 # _FAST_SPEED = 20.0
 _drone_speeds: dict[str, float] = {}
 # Default sweep radius should cover window-standoff waypoints (~6m to interior
@@ -273,6 +273,71 @@ async def deploy_swarm(asset_ids: list[str], formation: str = "spread") -> dict:
 
 async def recall_swarm(asset_ids: list[str]) -> dict:
     return await _recall_swarm_service(asset_ids, return_to_base_fn=return_to_base)
+
+
+# Home-pad footprint — mirrors mission_recall.py so both recall paths agree
+# on what "already at base" means.
+_HOME_XZ_RADIUS_SQ_M = 4.0
+_DEFAULT_LOW_BATTERY_THRESHOLD = 30.0
+
+
+async def recall_low_battery_drones(threshold: float = _DEFAULT_LOW_BATTERY_THRESHOLD) -> dict:
+    """Recall every registered drone whose battery is at or below ``threshold``.
+
+    Skips drones that are already returning or already within the home pad
+    footprint. Intended to be called by the commander after a mission ends so
+    that stragglers get charged proactively, ahead of the telemetry-driven
+    ``AutoRecallMonitor`` safety net.
+    """
+    fleet = await list_all_drones()
+    drones = fleet.get("drones", [])
+
+    recalled: list[dict] = []
+    skipped: list[dict] = []
+    for status in drones:
+        asset_id = str(status.get("asset_id", "")).upper()
+        if not asset_id:
+            continue
+        if status.get("error"):
+            skipped.append({"asset_id": asset_id, "reason": "status_unavailable"})
+            continue
+
+        try:
+            battery = float(status.get("battery", 0.0))
+        except (TypeError, ValueError):
+            skipped.append({"asset_id": asset_id, "reason": "invalid_battery"})
+            continue
+
+        state = str(status.get("status", "")).upper()
+        if state == "RETURNING":
+            skipped.append({"asset_id": asset_id, "reason": "already_returning", "battery": battery})
+            continue
+
+        try:
+            x = float(status.get("x", 0.0))
+            z = float(status.get("z", 0.0))
+        except (TypeError, ValueError):
+            x, z = 0.0, 0.0
+        if (x * x + z * z) < _HOME_XZ_RADIUS_SQ_M:
+            skipped.append({"asset_id": asset_id, "reason": "at_base", "battery": battery})
+            continue
+
+        if battery > threshold:
+            skipped.append({"asset_id": asset_id, "reason": "above_threshold", "battery": battery})
+            continue
+
+        try:
+            result = await return_to_base(asset_id)
+            recalled.append({"asset_id": asset_id, "battery": battery, "result": result})
+        except Exception as exc:  # noqa: BLE001
+            recalled.append({"asset_id": asset_id, "battery": battery, "error": f"{type(exc).__name__}: {exc}"})
+
+    return {
+        "threshold": threshold,
+        "recalled": recalled,
+        "skipped": skipped,
+        "total_recalled": len(recalled),
+    }
 
 
 
