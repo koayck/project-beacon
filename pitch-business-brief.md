@@ -64,16 +64,36 @@ Agents publish their reasoning as structured traces to an auditable log. Command
 
 ## 2. MARKET POTENTIAL & DEMAND (Judging Criterion 1)
 
-### TAM / SAM / SOM — slide-ready numbers
+### TAM / SAM / SOM — slide-ready numbers (niche-sharpened)
 
-| Market layer | 2025 Size | Forecast | CAGR | Source |
+Built around what Beacon actually sells: **AI-agent-driven GCS software for public-safety drone swarms** — not drone hardware.
+
+| Ring | 2025 / latest | 2030 projection | CAGR | Source |
 |---|---|---|---|---|
-| **Global UAV Ground Control Station (GCS)** — TAM | **USD 9.6 B** | USD 60.1 B by 2034 | **22.6%** | Fortune Business Insights |
-| **Public Safety Drones** — SAM (our wedge) | USD 2.3 B (2023) | USD 9.9 B by 2033 | **15.7%** | Allied Market Research |
-| **Search & Rescue Drones** — narrow SAM | USD 1.2 B (2025) | — | **18.5%** | Market Research Future |
-| **Safety & Security Drones** | USD 2.76 B (2025) | USD 7.33 B by 2032 | **15.0%** | ReAnIn |
-| **Malaysia drone market** — primary SOM anchor | **USD 129.4 M (2024)** | USD 315.5 M by 2033 | **10.4%** | IMARC Group |
-| **Indonesia drone market** — secondary SOM anchor | USD 9.5 M (2025) | USD 12.8 M by 2030 | 6.3% | Knowledge Sourcing |
+| **TAM — Global Drone Software Market** | USD 9.27 B | **USD 24.4 B** | **16.0%** | Grand View Research |
+| **SAM — Drone Swarm Systems Market** (matches hackathon track) | USD 2.5 B | **USD 8.3 B** | **27.0%** | Research and Markets |
+| **SOM — ASEAN civilian-SAR swarm-software slice** | — | **~USD 40 M by 2030** | — | Derived from IMARC Malaysia drone market × disaster-response share × software share |
+
+### SOM derivation (for Q&A defense)
+
+```
+Malaysia drone market (2030 proj, IMARC)          ~USD 240 M
+× Public safety / disaster slice (~12%)            ~USD 29 M
+× ASEAN multiplier (PH + ID + VN + TH)            ~USD 100 M
+× Software-only share of program cost (~30%)      ~USD 30 M
+× 3-yr addressable window                         ~USD 90 M
+→ Realistic capture at 30–40% share              ~USD 30–40 M
+```
+
+### Supporting / adjacent niche markets (for depth in Q&A)
+
+| Market | 2025 | 2030/later | CAGR | Source |
+|---|---|---|---|---|
+| **AI in Drones** | USD 821 M | USD 2.75 B (2030) | **27.4%** | MarketsandMarkets |
+| **Autonomous Drone Platform** | USD 10.6 B | USD 35.4 B (2035) | 12.8% | Future Market Insights |
+| **Emergency Management Software** (adjacent buyer budget) | USD 408 M | USD 964 M (2033) | 11.3% | GlobalGrowth Insights |
+| **Public Safety Drones** (hardware-inclusive) | USD 2.3 B (2023) | USD 9.9 B (2033) | 15.7% | Allied Market Research |
+| **Malaysia drone market** (primary go-to-market anchor) | USD 129.4 M (2024) | USD 315.5 M (2033) | 10.4% | IMARC Group |
 
 > **Slide take:** A $60B GCS market by 2034, growing 22.6% CAGR. Public safety is the fastest-adopting vertical. We play in the AI-agent layer that every other vendor is now scrambling to add.
 
@@ -249,13 +269,23 @@ Every real deployment adds **typhoon-, flood-, and earthquake-specific mission t
 
 ## SOURCES
 
-**Market sizing**
+**Market sizing — niche-sharpened (software / AI / swarm)**
+- [Grand View Research — Drone Software Market (TAM)](https://www.grandviewresearch.com/industry-analysis/drone-software-market-report)
+- [Research and Markets — Drone Swarm Systems Market (SAM)](https://www.researchandmarkets.com/reports/6215539/drone-swarm-systems-market-report)
+- [MarketsandMarkets — AI in Drones](https://www.marketsandmarkets.com/Market-Reports/artificial-intelligence-drones-market-43722301.html)
+- [Future Market Insights — Autonomous Drone Platform Market](https://www.futuremarketinsights.com/reports/autonomous-drone-platform-market)
+- [GlobalGrowth Insights — Emergency Management Software](https://www.globalgrowthinsights.com/market-reports/emergency-management-software-market-105680)
+- [Fortune Business Insights — Swarm Drone Market](https://www.fortunebusinessinsights.com/swarm-drone-market-114319)
+- [Mordor Intelligence — Drone Software Market](https://www.mordorintelligence.com/industry-reports/drone-software-market)
+
+**Market sizing — adjacent / broader markets**
 - [Fortune Business Insights — UAV GCS Market](https://www.fortunebusinessinsights.com/unmanned-aerial-vehicle-uav-ground-control-stations-gcs-market-108813)
 - [Allied Market Research — Public Safety Drones Market](https://www.alliedmarketresearch.com/public-safety-drones-market-A10140)
 - [Market Research Future — Search and Rescue Drone Market](https://www.marketresearchfuture.com/reports/search-and-rescue-drone-market-24838)
 - [IMARC Group — Malaysia Drones Market](https://www.imarcgroup.com/malaysia-drones-market)
 - [Knowledge Sourcing — Malaysia Drone Market Outlook](https://www.knowledge-sourcing.com/report/malaysia-drone-market)
 - [Knowledge Sourcing — Indonesia Drone Market](https://www.knowledge-sourcing.com/report/indonesia-drone-market)
+- [Mordor Intelligence — Emergency and Disaster Response Market](https://www.mordorintelligence.com/industry-reports/emergency-and-disaster-response-market)
 
 **Malaysia disaster-response context**
 - [Portal NADMA — Robots & drones in flood mitigation](https://www.nadma.gov.my/bi/media-en/news/848-robots-drones-used-in-flood-mitigation-study)
